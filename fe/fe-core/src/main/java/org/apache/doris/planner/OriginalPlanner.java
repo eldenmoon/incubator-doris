@@ -28,6 +28,7 @@ import org.apache.doris.analysis.QueryStmt;
 import org.apache.doris.analysis.SelectStmt;
 import org.apache.doris.analysis.SlotDescriptor;
 import org.apache.doris.analysis.SlotId;
+import org.apache.doris.analysis.SlotRef;
 import org.apache.doris.analysis.StatementBase;
 import org.apache.doris.analysis.StorageBackend;
 import org.apache.doris.analysis.TupleDescriptor;
@@ -48,6 +49,7 @@ import org.apache.logging.log4j.Logger;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.Map;
 
 /**
  * The planner is responsible for turning parse trees into plan fragments that can be shipped off to backends for
@@ -141,11 +143,9 @@ public class OriginalPlanner extends Planner {
         } else {
             queryStmt = (QueryStmt) statement;
         }
-
         plannerContext = new PlannerContext(analyzer, queryStmt, queryOptions, statement);
         singleNodePlanner = new SingleNodePlanner(plannerContext);
         PlanNode singleNodePlan = singleNodePlanner.createSingleNodePlan();
-
         // TODO change to vec should happen after distributed planner
         if (VectorizedUtil.isVectorized()) {
             singleNodePlan.convertToVectorized();
@@ -194,7 +194,7 @@ public class OriginalPlanner extends Planner {
         analyzer.getDescTbl().computeMemLayout();
         singleNodePlan.finalize(analyzer);
 
-        if (queryOptions.num_nodes == 1) {
+        if (queryOptions.num_nodes == 1 || queryStmt.isPointQuery()) {
             // single-node execution; we're almost done
             singleNodePlan = addUnassignedConjuncts(analyzer, singleNodePlan);
             fragments.add(new PlanFragment(plannerContext.getNextFragmentId(), singleNodePlan,
@@ -255,6 +255,7 @@ public class OriginalPlanner extends Planner {
                 isBlockQuery = false;
                 LOG.debug("this isn't block query");
             }
+            checkPoingQuery(analyzer, selectStmt, singleNodePlan, rootFragment);
         }
     }
 
@@ -338,7 +339,6 @@ public class OriginalPlanner extends Planner {
             PlanNode node = fragment.getPlanRoot();
             PlanNode parent = null;
 
-            // OlapScanNode is the last node.
             // So, just get the last two node and check if they are SortNode and OlapScan.
             while (node.getChildren().size() != 0) {
                 parent = node;
@@ -451,5 +451,24 @@ public class OriginalPlanner extends Planner {
     @Override
     public DescriptorTable getDescTable() {
         return analyzer.getDescTbl();
+    }
+
+    // Optimize for point query like: SELECT * FROM t1 WHERE pk1 = 1 and pk2 = 2
+    // such query will use direct RPC to do point query
+    private boolean checkPoingQuery(Analyzer anlyzer, SelectStmt stmt, PlanNode node, PlanFragment rootFragment) {
+        if (stmt.checkAndSetPointQuery()) {
+            LOG.debug("it's a point query");
+            Map<SlotRef, Expr> eqConjuncts = ((SelectStmt) stmt).getPointQueryEQPredicates();
+            OlapScanNode olapScanNode = (OlapScanNode) node;
+            olapScanNode.setDescTable(analyzer.getDescTbl());
+            olapScanNode.setPointQueryEqualPredicates(eqConjuncts);
+            if (analyzer.getPrepareStmt() != null) {
+                // Cache them for later request better performance
+                analyzer.getPrepareStmt().cacheSerializedDescriptorTable(olapScanNode.getDescTable());
+                analyzer.getPrepareStmt().cacheSerializedOutputExprs(rootFragment.getOutputExprs());
+            }
+            return true;
+        }
+        return false;
     }
 }

@@ -23,6 +23,7 @@
 
 #include "common/config.h"
 #include "gen_cpp/BackendService.h"
+#include "gen_cpp/PaloInternalService_types.h"
 #include "gen_cpp/internal_service.pb.h"
 #include "http/http_client.h"
 #include "olap/rowset/rowset_factory.h"
@@ -38,6 +39,7 @@
 #include "runtime/runtime_state.h"
 #include "runtime/thread_context.h"
 #include "service/brpc.h"
+#include "service/tablet_lookup_metric.h"
 #include "util/brpc_client_cache.h"
 #include "util/md5.h"
 #include "util/proto_util.h"
@@ -389,6 +391,25 @@ void PInternalServiceImpl::fetch_table_schema(google::protobuf::RpcController* c
         col_types[idx].to_protobuf(type_desc);
     }
     st.to_protobuf(result->mutable_status());
+}
+
+Status PInternalServiceImpl::_tablet_fetch_data(const PTabletKeyLookupRequest* request,
+                                                PTabletKeyLookupResponse* response) {
+    TabletLookupMetric lookup_util;
+    RETURN_IF_ERROR(lookup_util.init(request, response));
+    RETURN_IF_ERROR(lookup_util.lookup_up());
+    LOG(INFO) << lookup_util.print_profile();
+    return Status::OK();
+}
+
+void PInternalServiceImpl::tablet_fetch_data(google::protobuf::RpcController* controller,
+                                             const PTabletKeyLookupRequest* request,
+                                             PTabletKeyLookupResponse* response,
+                                             google::protobuf::Closure* done) {
+    [[maybe_unused]] brpc::Controller* cntl = static_cast<brpc::Controller*>(controller);
+    brpc::ClosureGuard guard(done);
+    Status st = _tablet_fetch_data(request, response);
+    st.to_protobuf(response->mutable_status());
 }
 
 void PInternalServiceImpl::get_info(google::protobuf::RpcController* controller,

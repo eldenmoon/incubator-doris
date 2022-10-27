@@ -215,4 +215,8 @@ struct TExpr {
   1: required list<TExprNode> nodes
 }
 
+struct TExprList {
+  1: required list<TExpr> exprs
+}
+
 

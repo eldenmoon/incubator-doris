@@ -244,6 +244,7 @@ Status SegmentIterator::_get_row_ranges_by_keys() {
         auto row_range = RowRanges::create_single(lower_rowid, upper_rowid);
         RowRanges::ranges_union(result_ranges, row_range, &result_ranges);
     }
+
     // pre-condition: _row_ranges == [0, num_rows)
     size_t pre_size = _row_bitmap.cardinality();
     _row_bitmap = RowRanges::ranges_to_roaring(result_ranges);
@@ -648,6 +649,7 @@ Status SegmentIterator::_init_return_column_iterators() {
     if (_cur_rowid >= num_rows()) {
         return Status::OK();
     }
+
     for (auto cid : _schema.column_ids()) {
         int32_t unique_id = _opts.tablet_schema->column(cid).unique_id();
         if (_column_iterators.count(unique_id) < 1) {
@@ -1222,6 +1224,7 @@ Status SegmentIterator::_read_columns_by_rowids(std::vector<ColumnId>& read_colu
     for (size_t i = 0; i < select_size; ++i) {
         rowids[i] = rowid_vector[sel_rowid_idx[i]];
     }
+
     for (auto cid : read_column_ids) {
         RETURN_IF_ERROR(_column_iterators[_schema.unique_id(cid)]->read_by_rowids(
                 rowids.data(), select_size, _current_return_columns[cid]));

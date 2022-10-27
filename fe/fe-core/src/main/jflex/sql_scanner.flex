@@ -478,6 +478,8 @@ import org.apache.doris.qe.SqlModeHelper;
         keywordMap.put("write", new Integer(SqlParserSymbols.KW_WRITE));
         keywordMap.put("year", new Integer(SqlParserSymbols.KW_YEAR));
         keywordMap.put("mtmv", new Integer(SqlParserSymbols.KW_MTMV));
+        keywordMap.put("prepare", new Integer(SqlParserSymbols.KW_PREPARE));
+        keywordMap.put("execute", new Integer(SqlParserSymbols.KW_EXECUTE));
    }
     
   // map from token id to token description
@@ -526,6 +528,7 @@ import org.apache.doris.qe.SqlModeHelper;
     tokenIdMap.put(new Integer(SqlParserSymbols.error), "ERROR");
     tokenIdMap.put(new Integer(SqlParserSymbols.BITXOR), "^");
     tokenIdMap.put(new Integer(SqlParserSymbols.NUMERIC_OVERFLOW), "NUMERIC OVERFLOW");
+    tokenIdMap.put(new Integer(SqlParserSymbols.PLACEHOLDER), "?");
   }
 
   public static boolean isKeyword(Integer tokenId) {
@@ -662,6 +665,7 @@ EndOfLineComment = "--" !({HintContent}|{ContainsLineTerminator}) {LineTerminato
 "\"" { return newToken(SqlParserSymbols.UNMATCHED_STRING_LITERAL, null); }
 "'" { return newToken(SqlParserSymbols.UNMATCHED_STRING_LITERAL, null); }
 "`" { return newToken(SqlParserSymbols.UNMATCHED_STRING_LITERAL, null); }
+"?" { return newToken(SqlParserSymbols.PLACEHOLDER, null); }
 
 {QuotedIdentifier} {
     // Remove the quotes

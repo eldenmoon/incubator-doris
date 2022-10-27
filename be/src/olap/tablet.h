@@ -313,6 +313,10 @@ public:
     Status lookup_row_key(const Slice& encoded_key, const RowsetIdUnorderedSet* rowset_ids,
                           RowLocation* row_location, uint32_t version);
 
+    // Lookup a row with TupleDescriptor and fill Block
+    Status lookup_row_data(const RowLocation& row_location, const TupleDescriptor* desc,
+                           vectorized::Block* block);
+
     // calc delete bitmap when flush memtable, use a fake version to calc
     // For example, cur max version is 5, and we use version 6 to calc but
     // finally this rowset publish version with 8, we should make up data
@@ -347,6 +351,8 @@ public:
                              CompactionType compaction_type = CompactionType::CUMULATIVE_COMPACTION,
                              int64_t start = -1);
     bool should_skip_compaction(CompactionType compaction_type, int64_t now);
+
+    RowsetSharedPtr get_rowset(const RowsetId& rowset_id);
 
 private:
     Status _init_once_action();

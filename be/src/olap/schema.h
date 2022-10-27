@@ -19,6 +19,7 @@
 
 #include <vector>
 
+#include "common/consts.h"
 #include "olap/aggregate_func.h"
 #include "olap/field.h"
 #include "olap/row_cursor_cell.h"
@@ -39,6 +40,10 @@ class Schema {
 public:
     Schema(TabletSchemaSPtr tablet_schema) {
         size_t num_columns = tablet_schema->num_columns();
+        // ignore this column
+        if (tablet_schema->columns().back().name() == BeConsts::SOURCE_COL) {
+            --num_columns;
+        }
         std::vector<ColumnId> col_ids(num_columns);
         _unique_ids.resize(num_columns);
         std::vector<TabletColumn> columns;

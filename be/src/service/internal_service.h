@@ -152,11 +152,19 @@ public:
                                            PTabletWriteSlaveDoneResult* response,
                                            google::protobuf::Closure* done) override;
 
+    void tablet_fetch_data(google::protobuf::RpcController* controller,
+                           const PTabletKeyLookupRequest* request,
+                           PTabletKeyLookupResponse* response,
+                           google::protobuf::Closure* done) override;
+
 private:
     Status _exec_plan_fragment(const std::string& s_request, PFragmentRequestVersion version,
                                bool compact);
 
     Status _fold_constant_expr(const std::string& ser_request, PConstantExprResult* response);
+
+    Status _tablet_fetch_data(const PTabletKeyLookupRequest* request,
+                              PTabletKeyLookupResponse* response);
 
     void _transmit_data(::google::protobuf::RpcController* controller,
                         const ::doris::PTransmitDataParams* request,
