@@ -687,7 +687,7 @@ public class StmtExecutor implements ProfileWriter {
                     context.getStmtId(), context.getForwardedStmtId());
         }
 
-        boolean reanalyzed = false;
+        boolean preparedStmtReanalyzed = false;
         PrepareStmtContext preparedStmtCtx = null;
         if (parsedStmt instanceof ExecuteStmt) {
             ExecuteStmt execStmt = (ExecuteStmt) parsedStmt;
@@ -706,8 +706,7 @@ public class StmtExecutor implements ProfileWriter {
                 return;
             }
             // continue analyze
-            reanalyzed = true;
-            parsedStmt.reset();
+            preparedStmtReanalyzed = true;
         }
 
         parse();
@@ -801,8 +800,9 @@ public class StmtExecutor implements ProfileWriter {
                 throw new AnalysisException("Unexpected exception: " + e.getMessage());
             }
         }
-        if (reanalyzed) {
+        if (preparedStmtReanalyzed) {
             LOG.debug("update planner and analyzer after prepared statement reanalyzed");
+            preparedStmtCtx.stmt.analyze(analyzer);
             preparedStmtCtx.planner = planner;
             preparedStmtCtx.analyzer = analyzer;
         }
