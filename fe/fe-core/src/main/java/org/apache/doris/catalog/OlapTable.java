@@ -1962,9 +1962,9 @@ public class OlapTable extends Table {
 
     // for light schema change
     public void initSchemaColumnUniqueId() {
-        // if (!getEnableLightSchemaChange()) {
-        //     return;
-        // }
+        if (!getEnableLightSchemaChange()) {
+            return;
+        }
 
         for (MaterializedIndexMeta indexMeta : indexIdToMeta.values()) {
             indexMeta.initSchemaColumnUniqueId();
