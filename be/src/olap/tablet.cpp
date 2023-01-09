@@ -61,6 +61,7 @@
 #include "olap/tablet_meta_manager.h"
 #include "olap/tablet_schema.h"
 #include "segment_loader.h"
+#include "service/point_query_executor.h"
 #include "util/defer_op.h"
 #include "util/path_util.h"
 #include "util/pretty_printer.h"
@@ -69,6 +70,7 @@
 #include "util/trace.h"
 #include "vec/data_types/data_type_factory.hpp"
 #include "vec/jsonb/serialize.h"
+
 namespace doris {
 using namespace ErrorCode;
 
@@ -1860,8 +1862,9 @@ RowsetSharedPtr Tablet::get_rowset(const RowsetId& rowset_id) {
     return nullptr;
 }
 
-Status Tablet::lookup_row_data(const RowLocation& row_location, const TupleDescriptor* desc,
-                               vectorized::Block* block) {
+Status Tablet::lookup_row_data(const Slice& encoded_key, const RowLocation& row_location,
+                               const TupleDescriptor* desc, vectorized::Block* block,
+                               bool write_to_cache) {
     // read row data
     BetaRowsetSharedPtr rowset =
             std::static_pointer_cast<BetaRowset>(get_rowset(row_location.rowset_id));
@@ -1892,7 +1895,6 @@ Status Tablet::lookup_row_data(const RowLocation& row_location, const TupleDescr
         LOG_EVERY_N(INFO, 500) << "get a single_row, cost(us):" << watch.elapsed_time() / 1000
                                << ", row_size:" << row_size;
     });
-    // TODO(lhy) too long, refacor
     if (tablet_schema->store_row_column()) {
         // create _source column
         segment_v2::ColumnIterator* column_iterator = nullptr;
@@ -1914,6 +1916,11 @@ Status Tablet::lookup_row_data(const RowLocation& row_location, const TupleDescr
         RETURN_IF_ERROR(column_iterator->read_by_rowids(rowids.data(), 1, column_ptr));
         assert(column_ptr->size() == 1);
         auto string_column = static_cast<vectorized::ColumnString*>(column_ptr.get());
+        if (write_to_cache) {
+            StringRef value = string_column->get_data_at(0);
+            RowCache::instance()->insert({tablet_id(), encoded_key},
+                                         Slice {value.data, value.size});
+        }
         vectorized::JsonbSerializeUtil::jsonb_to_block(*desc, *string_column, *block);
         return Status::OK();
     }
