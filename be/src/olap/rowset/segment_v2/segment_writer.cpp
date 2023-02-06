@@ -192,8 +192,7 @@ void SegmentWriter::_maybe_invalid_row_cache(const std::string& key) {
     // Just invalid row cache for simplicity, since the rowset is not visible at present.
     // If we update/insert cache, if load failed rowset will not be visible but cached data
     // will be visible, and lead to inconsistency.
-    if (!config::disable_storage_row_cache && _tablet_schema->store_row_column() &&
-        _opts.is_direct_write) {
+    if (!config::disable_storage_row_cache && _tablet_schema->store_row_column()) {
         // invalidate cache
         RowCache::instance()->erase({_opts.rowset_ctx->tablet_id, key});
     }
