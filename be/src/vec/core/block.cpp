@@ -489,7 +489,6 @@ Block Block::clone_empty() const {
     for (const auto& elem : data) {
         res.insert(elem.clone_empty());
     }
-    res.set_block_type(_type);
     return res;
 }
 
@@ -544,7 +543,6 @@ Block Block::clone_with_columns(MutableColumns&& columns) const {
     for (size_t i = 0; i < num_columns; ++i) {
         res.insert({std::move(columns[i]), data[i].type, data[i].name});
     }
-    res.set_block_type(_type);
 
     return res;
 }
@@ -564,7 +562,6 @@ Block Block::clone_with_columns(const Columns& columns) const {
     for (size_t i = 0; i < num_columns; ++i) {
         res.insert({columns[i], data[i].type, data[i].name});
     }
-    res.set_block_type(_type);
     return res;
 }
 
@@ -575,7 +572,6 @@ Block Block::clone_without_columns() const {
     for (size_t i = 0; i < num_columns; ++i) {
         res.insert({nullptr, data[i].type, data[i].name});
     }
-    res.set_block_type(_type);
     return res;
 }
 
@@ -699,10 +695,6 @@ Block Block::copy_block(const std::vector<int>& column_offset) const {
 }
 
 void Block::append_block_by_selector(MutableBlock* dst, const IColumn::Selector& selector) const {
-    if (UNLIKELY(dst->get_block_type() == BlockType::DYNAMIC)) {
-        schema_util::align_append_block_by_selector(dst, this, selector);
-        return;
-    }
     DCHECK(data.size() == dst->mutable_columns().size());
     for (size_t i = 0; i < data.size(); i++) {
         data[i].column->append_data_by_selector(dst->mutable_columns()[i], selector);
@@ -890,10 +882,6 @@ void MutableBlock::add_row(const Block* block, int row) {
 }
 
 void MutableBlock::add_rows(const Block* block, const int* row_begin, const int* row_end) {
-    if (UNLIKELY(_type == BlockType::DYNAMIC)) {
-        schema_util::align_block_by_name_and_type(this, block, row_begin, row_end);
-        return;
-    }
     auto& block_data = block->get_columns_with_type_and_name();
     for (size_t i = 0; i < _columns.size(); ++i) {
         auto& dst = _columns[i];
@@ -903,10 +891,6 @@ void MutableBlock::add_rows(const Block* block, const int* row_begin, const int*
 }
 
 void MutableBlock::add_rows(const Block* block, size_t row_begin, size_t length) {
-    if (UNLIKELY(_type == BlockType::DYNAMIC)) {
-        schema_util::align_block_by_name_and_type(this, block, row_begin, length);
-        return;
-    }
     auto& block_data = block->get_columns_with_type_and_name();
     for (size_t i = 0; i < _columns.size(); ++i) {
         auto& dst = _columns[i];

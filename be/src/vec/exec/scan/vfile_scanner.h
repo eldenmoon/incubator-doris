@@ -115,8 +115,6 @@ protected:
 
     VExprContext* _push_down_expr = nullptr;
     bool _is_dynamic_schema = false;
-    // for tracing dynamic schema
-    std::unique_ptr<vectorized::schema_util::FullBaseSchemaView> _full_base_schema_view;
 
     std::unique_ptr<FileCacheStatistics> _file_cache_statistics;
     std::unique_ptr<IOContext> _io_ctx;
@@ -138,7 +136,6 @@ private:
     Status _pre_filter_src_block();
     Status _convert_to_output_block(Block* block);
     Status _generate_fill_columns();
-    Status _handle_dynamic_block(Block* block);
 
     void _reset_counter() {
         _counter.num_rows_unselected = 0;
