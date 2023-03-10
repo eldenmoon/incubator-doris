@@ -466,6 +466,15 @@ public class ExternalFileScanNode extends ExternalScanNode {
             }
             SlotDescriptor slotDesc = desc.getSlot(slot.getSlotId());
             String colName = slotDesc.getColumn().getName();
+            if (colName == Column.DYNAMIC_COLUMN_NAME) {
+                // dynamic slot not exist in table columns
+                if (desc.getSlots().get(desc.getSlots().size() - 1) != slotDesc) {
+                    throw new UserException(Column.DYNAMIC_COLUMN_NAME + " should be the last column to select");
+                }
+                int idx = tbl.getBaseSchema().size();
+                columnIdxs.add(idx);
+                continue;
+            }
             int idx = tbl.getBaseColumnIdxByName(colName);
             if (idx == -1) {
                 throw new UserException("Column " + colName + " not found in table " + tbl.getName());

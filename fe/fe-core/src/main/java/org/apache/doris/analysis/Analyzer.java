@@ -23,6 +23,7 @@ package org.apache.doris.analysis;
 import org.apache.doris.catalog.Column;
 import org.apache.doris.catalog.DatabaseIf;
 import org.apache.doris.catalog.Env;
+import org.apache.doris.catalog.FunctionGenTable;
 import org.apache.doris.catalog.OlapTable;
 import org.apache.doris.catalog.OlapTable.OlapTableState;
 import org.apache.doris.catalog.Partition.PartitionState;
@@ -904,7 +905,13 @@ public class Analyzer {
                                                 newTblName == null ? "table list" : newTblName.toString());
         }
 
-        Column col = d.getTable() == null ? new Column(colName, ScalarType.BOOLEAN) : d.getTable().getColumn(colName);
+        Column col = null;
+        if (colName.equalsIgnoreCase("_auto_columns_")) {
+            col = new Column(Column.DYNAMIC_COLUMN_NAME, Type.VARIANT, false, null, false, "",
+                                    "stream load auto dynamic column");
+        } else {
+            col = d.getTable() == null ? new Column(colName, ScalarType.BOOLEAN) : d.getTable().getColumn(colName);
+        }
         if (col == null) {
             ErrorReport.reportAnalysisException(ErrorCode.ERR_BAD_FIELD_ERROR, colName,
                                                 newTblName == null ? d.getTable().getName() : newTblName.toString());
@@ -967,11 +974,16 @@ public class Analyzer {
                 ErrorReport.reportAnalysisException(ErrorCode.ERR_ILLEGAL_COLUMN_REFERENCE_ERROR,
                         Joiner.on(".").join(tblName.getTbl(), colName));
             }
-            Column col = desc.getTable().getColumn(colName);
+            TableIf table = desc.getTable();
+            Column col = table.getColumn(colName);
             if (col != null) {
                 if (result != null) {
                     ErrorReport.reportAnalysisException(ErrorCode.ERR_NON_UNIQ_ERROR, colName);
                 }
+                result = desc;
+            }
+            // Handle tvf dynamic columns
+            if (table instanceof FunctionGenTable && colName.equalsIgnoreCase("_auto_columns_")) {
                 result = desc;
             }
         }
@@ -994,6 +1006,10 @@ public class Analyzer {
                 } else {
                     result = desc;
                 }
+            }
+            // Handle tvf dynamic columns
+            if (desc.getTable() instanceof FunctionGenTable && colName.equalsIgnoreCase("_auto_columns_")) {
+                result = desc;
             }
         }
         return result;

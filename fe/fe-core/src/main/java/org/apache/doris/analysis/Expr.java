@@ -774,6 +774,7 @@ public abstract class Expr extends TreeNode<Expr> implements ParseNode, Cloneabl
         try {
             return trySubstituteList(exprs, smap, analyzer, preserveRootTypes);
         } catch (Exception e) {
+            e.printStackTrace();
             throw new IllegalStateException("Failed analysis after expr substitution: " + e.getMessage());
         }
     }
@@ -1712,6 +1713,11 @@ public abstract class Expr extends TreeNode<Expr> implements ParseNode, Cloneabl
                     && !(this.children.get(0) instanceof LiteralExpr)) {
                 throw new AnalysisException("The param of rand function must be literal");
             }
+        }
+        if (f == null && fnName.getFunction().equalsIgnoreCase("auto_columns")) {
+            List<Type> args = new ArrayList<Type>();
+            // args.add(Type.VARIANT);
+            return new Function(new FunctionName("auto_columns"), args, Type.VARIANT, false, true);
         }
         return f;
     }

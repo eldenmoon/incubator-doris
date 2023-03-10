@@ -43,6 +43,7 @@ public class SchemaChangeExpr extends Expr {
     public SchemaChangeExpr(SlotRef sourceSlot, int tableId) {
         super();
         Preconditions.checkNotNull(sourceSlot);
+        Preconditions.checkState(sourceSlot.getType() == Type.VARIANT);
         variantSlot = sourceSlot;
         this.tableId = tableId;
     }
@@ -70,19 +71,19 @@ public class SchemaChangeExpr extends Expr {
 
     @Override
     public Expr clone() {
-        return new SchemaChangeExpr((SlotRef) getChild(0), tableId);
+        return new SchemaChangeExpr(variantSlot, tableId);
     }
 
     @Override
     public String toSqlImpl() {
-        return "SCHEMA_CHANGE(" + getChild(0).toSql() + ")";
+        return "SCHEMA_CHANGE(" + variantSlot.toSql() + ")";
     }
 
     @Override
     public void analyzeImpl(Analyzer analyzer) throws AnalysisException {
-        Type childType = getChild(0).getType();
+        Type childType = variantSlot.getType();
         if (childType.getPrimitiveType() != PrimitiveType.VARIANT) {
-            throw new AnalysisException("Invalid column " + getChild(0).toSql());
+            throw new AnalysisException("Invalid column " + variantSlot.toSql());
         }
     }
 }

@@ -31,6 +31,7 @@ import org.apache.doris.catalog.Partition;
 import org.apache.doris.catalog.PartitionType;
 import org.apache.doris.catalog.Table;
 import org.apache.doris.catalog.TableIf;
+import org.apache.doris.catalog.Type;
 import org.apache.doris.catalog.external.JdbcExternalDatabase;
 import org.apache.doris.catalog.external.JdbcExternalTable;
 import org.apache.doris.common.AnalysisException;
@@ -126,6 +127,9 @@ public class InsertStmt extends DdlStmt {
 
     private List<Column> targetColumns = Lists.newArrayList();
 
+    // Dynamic table auto columns
+    private boolean isDynamicLoad = false;
+
     /*
      * InsertStmt may be analyzed twice, but transaction must be only begun once.
      * So use a boolean to check if transaction already begun.
@@ -189,6 +193,10 @@ public class InsertStmt extends DdlStmt {
 
     public String getTbl() {
         return tblName.getTbl();
+    }
+
+    public boolean isDynamicLoad() {
+        return isDynamicLoad;
     }
 
     public void getTables(Analyzer analyzer, Map<Long, TableIf> tableMap, Set<String> parentViewNameSet)
@@ -496,12 +504,26 @@ public class InsertStmt extends DdlStmt {
         // parse query statement
         queryStmt.setFromInsert(true);
         queryStmt.analyze(analyzer);
+        // need generate dynamic col
+        // INSERT INTO TBL SELECT auto_columns() from xxx
+        if (targetTable instanceof OlapTable && ((OlapTable) targetTable).isDynamicSchema()) {
+            Expr endExpr = queryStmt.getResultExprs().get(queryStmt.getResultExprs().size() - 1);
+            if (endExpr instanceof SlotRef
+                    && ((SlotRef) endExpr).getColumnName().equalsIgnoreCase(("_auto_columns_"))) {
+                // add a implict container column "DORIS_DYNAMIC_COL" for dynamic columns
+                // OlapTable olapTable = (OlapTable) targetTable;
+                Column dynamicCol = new Column(Column.DYNAMIC_COLUMN_NAME, Type.VARIANT, false, null, false, "",
+                                        "stream load auto dynamic column");
+                targetColumns.add(dynamicCol);
+                mentionedColumns.add(Column.DYNAMIC_COLUMN_NAME);
+                isDynamicLoad = true;
+            }
+        }
 
         // check if size of select item equal with columns mentioned in statement
         if (mentionedColumns.size() != queryStmt.getResultExprs().size()) {
             ErrorReport.reportAnalysisException(ErrorCode.ERR_WRONG_VALUE_COUNT);
         }
-
         // Check if all columns mentioned is enough
         checkColumnCoverage(mentionedColumns, targetTable.getBaseSchema());
 
@@ -728,6 +750,10 @@ public class InsertStmt extends DdlStmt {
                     }
                 }
             }
+        }
+        if (isDynamicLoad) {
+            resultExprs.add(new SchemaChangeExpr(
+                    (SlotRef) exprByName.get(Column.DYNAMIC_COLUMN_NAME), (int) targetTable.getId()));
         }
     }
 
