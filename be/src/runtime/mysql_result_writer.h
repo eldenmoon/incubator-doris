@@ -27,6 +27,7 @@ namespace doris {
 class TupleRow;
 class RowBatch;
 class ExprContext;
+template<bool>
 class MysqlRowBuffer;
 class BufferControlBlock;
 class RuntimeProfile;
@@ -62,8 +63,8 @@ private:
 
     std::vector<int> _result_column_ids;
 
-    MysqlRowBuffer* _row_buffer;
-    std::vector<MysqlRowBuffer*> _vec_buffers;
+    MysqlRowBuffer<false>* _row_buffer;
+    std::vector<MysqlRowBuffer<false>*> _vec_buffers;
 
     RuntimeProfile* _parent_profile; // parent profile from result sink. not owned
     // total time cost on append batch operation

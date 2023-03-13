@@ -42,6 +42,7 @@ import org.apache.doris.transaction.TransactionStatus;
 
 import com.google.common.base.Strings;
 import com.google.common.collect.Lists;
+import com.google.common.collect.Maps;
 import com.google.common.collect.Sets;
 import io.opentelemetry.api.trace.Tracer;
 import org.apache.logging.log4j.LogManager;
@@ -50,6 +51,7 @@ import org.xnio.StreamConnection;
 
 import java.io.IOException;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 
@@ -159,6 +161,7 @@ public class ConnectContext {
     }
 
     private StatementContext statementContext;
+    private Map<String, PrepareStmtContext> preparedStmtCtxs = Maps.newHashMap();
 
     public SessionContext getSessionContext() {
         return sessionContext;
@@ -236,6 +239,14 @@ public class ConnectContext {
 
     public boolean isTxnBegin() {
         return txnEntry != null && txnEntry.isTxnBegin();
+    }
+
+    public void addPreparedStmt(String stmtName, PrepareStmtContext ctx) {
+        this.preparedStmtCtxs.put(stmtName, ctx);
+    }
+
+    public PrepareStmtContext getPreparedStmt(String stmtName) {
+        return this.preparedStmtCtxs.get(stmtName);
     }
 
     public void closeTxn() {

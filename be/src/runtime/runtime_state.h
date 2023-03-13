@@ -149,6 +149,11 @@ public:
         return _block_mgr2.get();
     }
 
+    bool mysql_row_binary_format() const {
+        return _query_options.__isset.mysql_row_binary_format &&
+               _query_options.mysql_row_binary_format;
+    }
+
     Status query_status() {
         std::lock_guard<std::mutex> l(_process_status_lock);
         return _process_status;

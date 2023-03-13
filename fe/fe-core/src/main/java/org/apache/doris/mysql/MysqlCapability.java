@@ -152,6 +152,14 @@ public class MysqlCapability {
         return (flags & Flag.CLIENT_SESSION_TRACK.getFlagBit()) != 0;
     }
 
+    public boolean supportClientLocalFile() {
+        return (flags & Flag.CLIENT_LOCAL_FILES.getFlagBit()) != 0;
+    }
+
+    public boolean isDeprecatedEOF() {
+        return (flags & Flag.CLIENT_DEPRECATE_EOF.getFlagBit()) != 0;
+    }
+
     @Override
     public boolean equals(Object obj) {
         if (obj == null || !(obj instanceof MysqlCapability)) {

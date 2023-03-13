@@ -188,6 +188,10 @@ struct TQueryOptions {
 
   // For debug purpose, skip delete bitmap when reading data
   56: optional bool skip_delete_bitmap = false
+
+  // TODO use better index number
+  // Indicate where useServerPrepStmts enabled
+  67: optional bool mysql_row_binary_format = false;
 }
     
 
