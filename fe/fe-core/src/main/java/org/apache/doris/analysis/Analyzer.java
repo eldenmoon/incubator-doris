@@ -456,6 +456,9 @@ public class Analyzer {
 
     private final GlobalState globalState;
 
+    // Attached PrepareStmt
+    public PrepareStmt prepareStmt;
+
     private final InferPredicateState inferPredicateState;
 
     // An analyzer stores analysis state for a single select block. A select block can be
@@ -545,6 +548,14 @@ public class Analyzer {
 
     public int getCallDepth() {
         return callDepth;
+    }
+
+    public void setPrepareStmt(PrepareStmt stmt) {
+        prepareStmt = stmt;
+    }
+
+    public PrepareStmt getPrepareStmt() {
+        return prepareStmt;
     }
 
     public void setInlineView(boolean inlineView) {

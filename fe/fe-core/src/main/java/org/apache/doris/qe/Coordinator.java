@@ -321,6 +321,8 @@ public class Coordinator {
         this.queryOptions = context.getSessionVariable().toThrift();
         this.queryOptions.setEnableVectorizedEngine(VectorizedUtil.isVectorized());
         this.queryOptions.setBeExecVersion(Config.be_exec_version);
+        this.queryOptions.setMysqlRowBinaryFormat(
+                    context.getMysqlChannel().useServerPrepStmts());
     }
 
     public long getJobId() {

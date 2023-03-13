@@ -43,9 +43,12 @@ import java.util.concurrent.atomic.AtomicBoolean
 import java.util.stream.Collectors
 import java.util.stream.LongStream
 
+import java.math.BigDecimal;
 import static org.apache.doris.regression.util.DataUtils.sortByToString
 
 import java.io.File
+import java.sql.PreparedStatement
+import java.sql.ResultSetMetaData
 
 @Slf4j
 class Suite implements GroovyInterceptable {
@@ -196,6 +199,33 @@ class Suite implements GroovyInterceptable {
             result = DataUtils.sortByToString(result)
         }
         return result
+    }
+
+    List<List<Object>> exec(Object stmt) {
+        logger.info("Execute sql: ${stmt}".toString())
+        def (result, meta )= JdbcUtils.executeToList(context.getConnection(),  (PreparedStatement) stmt)
+        return result
+    }
+
+    PreparedStatement prepareStatement(String sql) {
+        return JdbcUtils.prepareStatement(context.getConnection(), sql)
+    } 
+
+    List<List<String>> sql_meta(String sqlStr, boolean isOrder = false) {
+        logger.info("Execute ${isOrder ? "order_" : ""}sql: ${sqlStr}".toString())
+        def (tmp, rsmd) = JdbcUtils.executeToList(context.getConnection(), sqlStr)
+        int count = rsmd.getColumnCount();
+        List<List<String>> result = new ArrayList<>()
+        for (int i = 0; i < count; i++) {
+            List<String> item = new ArrayList<>()
+            String columnName = rsmd.getColumnName(i + 1);
+            int columnType = rsmd.getColumnType(i+1);
+            String columnTypeName = rsmd.getColumnTypeName(i+1);
+            item.add(columnName);
+            item.add(columnTypeName);
+            result.add(item);
+        }
+        return result;
     }
 
     List<List<Object>> order_sql(String sqlStr) {
@@ -378,11 +408,17 @@ class Suite implements GroovyInterceptable {
         action.run()
     }
 
-    void quickTest(String tag, String sql, boolean isOrder = false) {
-        logger.info("Execute tag: ${tag}, ${isOrder ? "order_" : ""}sql: ${sql}".toString())
+    void quickRunTest(String tag, Object arg, boolean isOrder = false) {
+        logger.info("Execute tag: ${tag}, ${isOrder ? "order_" : ""}sql: ${arg}".toString())
 
         if (context.config.generateOutputFile || context.config.forceGenerateOutputFile) {
-            def (result, meta) = JdbcUtils.executeToStringList(context.getConnection(), sql)
+            Tuple2<List<List<Object>>, ResultSetMetaData> tupleResult = null
+            if (arg instanceof PreparedStatement) {
+                tupleResult = JdbcUtils.executeToStringList(context.getConnection(),  (PreparedStatement) arg)
+            } else {
+                tupleResult = JdbcUtils.executeToStringList(context.getConnection(),  (String) arg)
+            }
+            def (result, meta) = tupleResult;
             if (isOrder) {
                 result = sortByToString(result)
             }
@@ -401,7 +437,13 @@ class Suite implements GroovyInterceptable {
 
             OutputUtils.TagBlockIterator expectCsvResults = context.getOutputIterator().next()
 
-            def (realResults, meta) = JdbcUtils.executeToStringList(context.getConnection(), sql)
+            Tuple2<List<List<Object>>, ResultSetMetaData> tupleResult = null
+            if (arg instanceof PreparedStatement) {
+                tupleResult = JdbcUtils.executeToStringList(context.getConnection(),  (PreparedStatement) arg)
+            } else {
+                tupleResult = JdbcUtils.executeToStringList(context.getConnection(),  (String) arg)
+            }
+            def (realResults, meta) = tupleResult
             if (isOrder) {
                 realResults = sortByToString(realResults)
             }
@@ -417,13 +459,23 @@ class Suite implements GroovyInterceptable {
                     { row ->  OutputUtils.toCsvString(row) },
                     "Check tag '${tag}' failed", meta)
             } catch (Throwable t) {
-                throw new IllegalStateException("Check tag '${tag}' failed, sql:\n${sql}", t)
+                throw new IllegalStateException("Check tag '${tag}' failed, sql:\n${arg}", t)
             }
             if (errorMsg != null) {
                 logger.warn("expect results: " + expectCsvResults + "\nrealResults: " + realResults)
-                throw new IllegalStateException("Check tag '${tag}' failed:\n${errorMsg}\n\nsql:\n${sql}")
+                throw new IllegalStateException("Check tag '${tag}' failed:\n${errorMsg}\n\nsql:\n${arg}")
             }
         }
+    }
+
+    void quickTest(String tag, String sql, boolean isOrder = false) {
+        logger.info("Execute tag: ${tag}, ${isOrder ? "order_" : ""}sql: ${sql}".toString())
+        quickRunTest(tag, sql, isOrder) 
+    }
+
+    void quickExecute(String tag, PreparedStatement stmt) {
+        logger.info("Execute tag: ${tag}, sql: ${stmt}".toString())
+        quickRunTest(tag, stmt) 
     }
 
     @Override
@@ -433,6 +485,8 @@ class Suite implements GroovyInterceptable {
             return quickTest(name.substring("qt_".length()), (args as Object[])[0] as String)
         } else if (name.startsWith("order_qt_")) {
             return quickTest(name.substring("order_qt_".length()), (args as Object[])[0] as String, true)
+        } else if (name.startsWith("qe_")) {
+            return quickExecute(name.substring("qe_".length()), (args as Object[])[0] as PreparedStatement)
         } else if (name.startsWith("assert") && name.length() > "assert".length()) {
             // delegate to junit Assertions dynamically
             return Assertions."$name"(*args) // *args: spread-dot

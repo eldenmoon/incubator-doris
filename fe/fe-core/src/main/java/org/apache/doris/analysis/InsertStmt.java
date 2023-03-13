@@ -137,6 +137,16 @@ public class InsertStmt extends DdlStmt {
         return isValuesOrConstantSelect;
     }
 
+    public InsertStmt(InsertStmt other) {
+        this.tblName = other.tblName;
+        this.targetPartitionNames = other.targetPartitionNames;
+        this.label = other.label;
+        this.queryStmt = other.queryStmt;
+        this.planHints = other.planHints;
+        this.targetColumnNames = other.targetColumnNames;
+        this.isValuesOrConstantSelect = other.isValuesOrConstantSelect;
+    }
+
     public InsertStmt(InsertTarget target, String label, List<String> cols, InsertSource source, List<String> hints) {
         this.tblName = target.getTblName();
         this.targetPartitionNames = target.getPartitionNames();

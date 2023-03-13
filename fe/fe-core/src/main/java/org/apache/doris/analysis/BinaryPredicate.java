@@ -408,7 +408,13 @@ public class BinaryPredicate extends Predicate implements Writable {
     @Override
     public void analyzeImpl(Analyzer analyzer) throws AnalysisException {
         super.analyzeImpl(analyzer);
-
+        // Ignore placeholder, when it type is invalid.
+        // Invalid type could happen when analyze prepared point query select statement,
+        // since the value is occupied but not assigned
+        if ((getChild(0) instanceof PlaceHolderExpr && getChild(0).type == Type.UNSUPPORTED)
+                || (getChild(1) instanceof PlaceHolderExpr && getChild(1).type == Type.UNSUPPORTED)) {
+            return;
+        }
         for (Expr expr : children) {
             if (expr instanceof Subquery) {
                 Subquery subquery = (Subquery) expr;
