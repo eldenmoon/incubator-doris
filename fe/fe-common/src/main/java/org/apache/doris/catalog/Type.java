@@ -337,6 +337,10 @@ public abstract class Type {
         return isScalarType(PrimitiveType.INVALID_TYPE);
     }
 
+    public boolean isUnsupported() {
+        return isScalarType(PrimitiveType.UNSUPPORTED);
+    }
+
     public boolean isValid() {
         return !isInvalid();
     }

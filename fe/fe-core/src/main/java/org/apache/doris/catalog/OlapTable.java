@@ -1839,6 +1839,12 @@ public class OlapTable extends Table {
         return false;
     }
 
+    public int getBaseSchemaVersion() {
+        MaterializedIndexMeta baseIndexMeta = indexIdToMeta.get(baseIndexId);
+        return baseIndexMeta.getSchemaVersion();
+    }
+
+
     public void setEnableSingleReplicaCompaction(boolean enableSingleReplicaCompaction) {
         if (tableProperty == null) {
             tableProperty = new TableProperty(new HashMap<>());
@@ -1951,11 +1957,6 @@ public class OlapTable extends Table {
         tableProperty.modifyTableProperties(
                 PropertyAnalyzer.PROPERTIES_DYNAMIC_SCHEMA, Boolean.valueOf(isDynamicSchema).toString());
         tableProperty.buildDynamicSchema();
-    }
-
-    public int getBaseSchemaVersion() {
-        MaterializedIndexMeta baseIndexMeta = indexIdToMeta.get(baseIndexId);
-        return baseIndexMeta.getSchemaVersion();
     }
 
     public int getIndexSchemaVersion(long indexId) {

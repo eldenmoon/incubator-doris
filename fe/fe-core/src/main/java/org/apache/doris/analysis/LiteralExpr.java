@@ -299,14 +299,6 @@ public abstract class LiteralExpr extends Expr implements Comparable<LiteralExpr
         return getStringValue();
     }
 
-    // Parse from binary data, the format follows mysql binary protocal
-    // see https://dev.mysql.com/doc/dev/mysql-server/latest/page_protocol_binary_resultset.html.
-    // Return next offset
-    public void setupParamFromBinary(ByteBuffer data) {
-        Preconditions.checkState(false,
-                "should implement this in derived class. " + this.type.toSql());
-    }
-
     public static LiteralExpr getLiteralByMysqlType(int mysqlType) throws AnalysisException {
         switch (mysqlType) {
             // MYSQL_TYPE_TINY
@@ -401,5 +393,13 @@ public abstract class LiteralExpr extends Expr implements Comparable<LiteralExpr
     @Override
     public boolean matchExprs(List<Expr> exprs, SelectStmt stmt, boolean ignoreAlias, TupleDescriptor tuple) {
         return true;
+    }
+
+    // Parse from binary data, the format follows mysql binary protocal
+    // see https://dev.mysql.com/doc/dev/mysql-server/latest/page_protocol_binary_resultset.html.
+    // Return next offset
+    public void setupParamFromBinary(ByteBuffer data) {
+        Preconditions.checkState(false,
+                "should implement this in derived class. " + this.type.toSql());
     }
 }
