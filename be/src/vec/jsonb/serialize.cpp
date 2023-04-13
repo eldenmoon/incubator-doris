@@ -16,6 +16,7 @@
 // under the License.
 
 #include "vec/jsonb/serialize.h"
+#include <parallel_hashmap/phmap.h>
 
 #include <assert.h>
 
@@ -27,6 +28,7 @@
 #include "runtime/descriptors.h"
 #include "util/jsonb_document.h"
 #include "runtime/jsonb_value.h"
+#include "util/jsonb_document.h"
 #include "util/jsonb_stream.h"
 #include "util/jsonb_writer.h"
 #include "vec/columns/column.h"
@@ -75,16 +77,23 @@ void JsonbSerializeUtil::jsonb_to_block(const TupleDescriptor& desc,
 void JsonbSerializeUtil::jsonb_to_block(const TupleDescriptor& desc, const char* data, size_t size,
                                         Block& dst) {
     auto pdoc = JsonbDocument::createDocument(data, size);
+    phmap::flat_hash_map<uint32_t, ObjectVal::const_iterator> unique_id_to_jsonb_iter;
     JsonbDocument& doc = *pdoc;
+    // build iter map
+    for (auto it = doc->begin(); it != doc->end(); ++it) {
+        unique_id_to_jsonb_iter[it->getKeyId()] = it;
+    }
     for (int j = 0; j < desc.slots().size(); ++j) {
         SlotDescriptor* slot = desc.slots()[j];
-        JsonbValue* slot_value = doc->find(slot->col_unique_id());
+        // JsonbValue* slot_value = doc->find(slot->col_unique_id());
+        auto it = unique_id_to_jsonb_iter.find(slot->col_unique_id());
         MutableColumnPtr dst_column = dst.get_by_position(j).column->assume_mutable();
-        if (!slot_value || slot_value->isNull()) {
+        if (it ==  unique_id_to_jsonb_iter.end() || it->second->value()->isNull()) {
+            // null or not exist
             dst_column->insert_default();
             continue;
         }
-        dst.get_data_type(j)->get_serde()->read_one_cell_from_jsonb(*dst_column, slot_value);
+        dst.get_data_type(j)->get_serde()->read_one_cell_from_jsonb(*dst_column, it->second->value());
     }
 }
 
