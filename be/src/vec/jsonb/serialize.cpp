@@ -93,7 +93,8 @@ void JsonbSerializeUtil::jsonb_to_block(const TupleDescriptor& desc, const char*
             dst_column->insert_default();
             continue;
         }
-        dst.get_data_type(j)->get_serde()->read_one_cell_from_jsonb(*dst_column, it->second->value());
+        dst.get_data_type(j)->get_serde()->read_one_cell_from_jsonb(*dst_column,
+                                                                    it->second->value());
     }
 }
 
