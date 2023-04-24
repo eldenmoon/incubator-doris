@@ -16,9 +16,11 @@
 // under the License.
 
 #include "vec/jsonb/serialize.h"
-#include <parallel_hashmap/phmap.h>
 
 #include <assert.h>
+#include <glog/logging.h>
+#include <parallel_hashmap/phmap.h>
+#include <stdint.h>
 
 #include <algorithm>
 #include <memory>
@@ -26,8 +28,10 @@
 
 #include "olap/tablet_schema.h"
 #include "runtime/descriptors.h"
-#include "util/jsonb_document.h"
 #include "runtime/jsonb_value.h"
+#include "runtime/primitive_type.h"
+#include "runtime/types.h"
+#include "util/bitmap_value.h"
 #include "util/jsonb_document.h"
 #include "util/jsonb_stream.h"
 #include "util/jsonb_writer.h"
@@ -88,7 +92,7 @@ void JsonbSerializeUtil::jsonb_to_block(const TupleDescriptor& desc, const char*
         // JsonbValue* slot_value = doc->find(slot->col_unique_id());
         auto it = unique_id_to_jsonb_iter.find(slot->col_unique_id());
         MutableColumnPtr dst_column = dst.get_by_position(j).column->assume_mutable();
-        if (it ==  unique_id_to_jsonb_iter.end() || it->second->value()->isNull()) {
+        if (it == unique_id_to_jsonb_iter.end() || it->second->value()->isNull()) {
             // null or not exist
             dst_column->insert_default();
             continue;
