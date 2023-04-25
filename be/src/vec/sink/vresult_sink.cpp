@@ -128,12 +128,16 @@ Status VResultSink::second_phase_fetch_data(RuntimeState* state, Block* final_bl
 
 Status VResultSink::send(RuntimeState* state, Block* block, bool eos) {
     INIT_AND_SCOPE_SEND_SPAN(state->get_tracer(), _send_span, "VResultSink::send");
-    // The memory consumption in the process of sending the results is not check query memory limit.
-    // Avoid the query being cancelled when the memory limit is reached after the query result comes out.
     if (_use_two_phase_read && block->rows() > 0) {
         second_phase_fetch_data(state, block);
     }
-    return _writer->append_block(*block);
+    RETURN_IF_ERROR(_writer->append_block(*block));
+    if (_use_two_phase_read) {
+        // Block structure may be changed by calling _second_phase_fetch_data().
+        // So we should clear block in case of unmatched columns
+        block->clear();
+    }
+    return Status::OK();
 }
 
 Status VResultSink::close(RuntimeState* state, Status exec_status) {
