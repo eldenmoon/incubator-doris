@@ -18,6 +18,7 @@
 #pragma once
 
 #include <gen_cpp/Exprs_types.h>
+#include <parallel_hashmap/phmap.h>
 #include <stddef.h>
 #include <stdint.h>
 
@@ -325,12 +326,12 @@ private:
 
     std::shared_ptr<Segment> _segment;
     const Schema& _schema;
-    // _column_iterators_map.size() == _schema.num_columns()
-    // map<unique_id, ColumnIterator*> _column_iterators_map/_bitmap_index_iterators;
-    // can use _schema get unique_id by cid
-    std::map<int32_t, ColumnIterator*> _column_iterators;
-    std::map<int32_t, BitmapIndexIterator*> _bitmap_index_iterators;
-    std::map<int32_t, InvertedIndexIterator*> _inverted_index_iterators;
+
+    // cid -> XxxxIterator
+    std::vector<ColumnIterator*> _column_iterators;
+    std::vector<BitmapIndexIterator*> _bitmap_index_iterators;
+    std::vector<InvertedIndexIterator*> _inverted_index_iterators;
+
     // after init(), `_row_bitmap` contains all rowid to scan
     roaring::Roaring _row_bitmap;
     // "column_name+operator+value-> <in_compound_query, rowid_result>
@@ -360,7 +361,7 @@ private:
     std::vector<ColumnId>
             _short_cir_pred_column_ids; // keep columnId of columns for short circuit predicate evaluation
     std::vector<bool> _is_pred_column; // columns hold by segmentIter
-    std::map<uint32_t, bool> _need_read_data_indices;
+    std::vector<bool> _need_read_data_indices;
     std::vector<bool> _is_common_expr_column;
     vectorized::MutableColumns _current_return_columns;
     std::vector<ColumnPredicate*> _pre_eval_block_predicate;
@@ -382,6 +383,7 @@ private:
     // Read up to 100 rows at a time while waiting for the estimated row size.
     int _wait_times_estimate_row_size;
 
+    // const StorageReadOptions* _opts;
     StorageReadOptions _opts;
     // make a copy of `_opts.column_predicates` in order to make local changes
     std::vector<ColumnPredicate*> _col_predicates;
@@ -393,10 +395,10 @@ private:
     std::unique_ptr<ColumnPredicateInfo> _column_predicate_info;
     std::unordered_map<std::string, std::vector<ColumnPredicateInfo>>
             _column_pred_in_remaining_vconjunct;
-    std::set<ColumnId> _not_apply_index_pred;
+    std::vector<ColumnId> _not_apply_index_pred;
 
     std::shared_ptr<ColumnPredicate> _runtime_predicate {nullptr};
-    std::set<int32_t> _output_columns;
+    // std::vector<int32_t> _output_columns;
 
     // row schema of the key to seek
     // only used in `_get_row_ranges_by_keys`

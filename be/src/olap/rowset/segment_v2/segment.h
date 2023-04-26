@@ -21,6 +21,7 @@
 #include <gen_cpp/olap_file.pb.h>
 #include <gen_cpp/segment_v2.pb.h>
 #include <glog/logging.h>
+#include <parallel_hashmap/phmap.h>
 
 #include <cstdint>
 #include <map>
@@ -150,13 +151,13 @@ private:
     // Map from column unique id to column ordinal in footer's ColumnMetaPB
     // If we can't find unique id from it, it means this segment is created
     // with an old schema.
-    std::unordered_map<uint32_t, uint32_t> _column_id_to_footer_ordinal;
+    phmap::flat_hash_map<uint32_t, uint32_t> _column_id_to_footer_ordinal;
 
     // map column unique id ---> column reader
     // ColumnReader for each column in TabletSchema. If ColumnReader is nullptr,
     // This means that this segment has no data for that column, which may be added
     // after this segment is generated.
-    std::map<int32_t, std::unique_ptr<ColumnReader>> _column_readers;
+    phmap::flat_hash_map<int32_t, std::unique_ptr<ColumnReader>> _column_readers;
 
     // used to guarantee that short key index will be loaded at most once in a thread-safe way
     DorisCallOnce<Status> _load_index_once;
