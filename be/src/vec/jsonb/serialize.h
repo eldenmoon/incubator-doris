@@ -18,6 +18,8 @@
 #pragma once
 #include <stddef.h>
 
+#include <unordered_map>
+
 #include "vec/core/block.h"
 
 namespace doris {
@@ -34,12 +36,14 @@ namespace doris::vectorized {
 class JsonbSerializeUtil {
 public:
     static void block_to_jsonb(const TabletSchema& schema, const Block& block, ColumnString& dst,
-                               int num_cols);
+                               int num_cols, const DataTypeSerDeSPtrs& serdes);
     // batch rows
     static void jsonb_to_block(const TupleDescriptor& desc, const ColumnString& jsonb_column,
-                               Block& dst);
+                               const std::unordered_map<uint32_t, uint32_t>& col_id_to_idx,
+                               Block& dst, const DataTypeSerDeSPtrs& serdes);
     // single row
     static void jsonb_to_block(const TupleDescriptor& desc, const char* data, size_t size,
-                               Block& dst);
+                               const std::unordered_map<uint32_t, uint32_t>& col_id_to_idx,
+                               Block& dst, const DataTypeSerDeSPtrs& serdes);
 };
 } // namespace doris::vectorized

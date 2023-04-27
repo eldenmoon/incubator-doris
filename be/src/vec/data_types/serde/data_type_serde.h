@@ -28,10 +28,12 @@
 namespace doris {
 class PValues;
 class JsonbValue;
+class SlotDescriptor;
 
 namespace vectorized {
 class IColumn;
 class Arena;
+class IDataType;
 // Deserialize means read from different file format or memory format,
 // for example read from arrow, read from parquet.
 // Serialize means write the column cell or the total column into another
@@ -74,6 +76,10 @@ public:
 
 using DataTypeSerDeSPtr = std::shared_ptr<DataTypeSerDe>;
 using DataTypeSerDeSPtrs = std::vector<DataTypeSerDeSPtr>;
+
+DataTypeSerDeSPtrs create_data_type_serdes(
+        const std::vector<std::shared_ptr<const IDataType>>& types);
+DataTypeSerDeSPtrs create_data_type_serdes(const std::vector<SlotDescriptor*>& slots);
 
 } // namespace vectorized
 } // namespace doris
