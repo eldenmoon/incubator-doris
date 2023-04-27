@@ -115,7 +115,6 @@
 #include "vec/common/string_ref.h"
 #include "vec/data_types/data_type.h"
 #include "vec/data_types/data_type_factory.hpp"
-#include "vec/jsonb/serialize.h"
 
 namespace doris {
 class TupleDescriptor;
@@ -2385,7 +2384,7 @@ TabletSchemaSPtr Tablet::get_max_version_schema(std::lock_guard<std::shared_mute
 
 Status Tablet::lookup_row_data(const Slice& encoded_key, const RowLocation& row_location,
                                RowsetSharedPtr input_rowset, const TupleDescriptor* desc,
-                               OlapReaderStatistics& stats, vectorized::Block* block,
+                               OlapReaderStatistics& stats, std::string& values,
                                bool write_to_cache) {
     // read row data
     BetaRowsetSharedPtr rowset = std::static_pointer_cast<BetaRowset>(input_rowset);
@@ -2434,12 +2433,12 @@ Status Tablet::lookup_row_data(const Slice& encoded_key, const RowLocation& row_
         RETURN_IF_ERROR(column_iterator->read_by_rowids(rowids.data(), 1, column_ptr));
         assert(column_ptr->size() == 1);
         auto string_column = static_cast<vectorized::ColumnString*>(column_ptr.get());
+        StringRef value = string_column->get_data_at(0);
         if (write_to_cache) {
-            StringRef value = string_column->get_data_at(0);
             RowCache::instance()->insert({tablet_id(), encoded_key},
                                          Slice {value.data, value.size});
         }
-        vectorized::JsonbSerializeUtil::jsonb_to_block(*desc, *string_column, *block);
+        values = value.to_string();
         return Status::OK();
     }
     __builtin_unreachable();

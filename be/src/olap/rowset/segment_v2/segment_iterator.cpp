@@ -214,7 +214,6 @@ SegmentIterator::~SegmentIterator() {
 
 Status SegmentIterator::init(const StorageReadOptions& opts) {
     _opts = opts;
-
     _col_predicates.clear();
     _need_read_data_indices.assign(_opts.tablet_schema->num_columns(), true);
     _not_apply_index_pred.assign(_opts.tablet_schema->num_columns(), false);
@@ -292,13 +291,13 @@ Status SegmentIterator::_get_row_ranges_by_keys() {
         return Status::OK();
     }
 
-    bool has_key= false;
+    bool has_key = false;
     for (const auto& col : _schema.columns()) {
         if (!col) {
             continue;
         }
         if (_opts.tablet_schema->column_by_uid(col->unique_id()).is_key()) {
-            has_key= true;
+            has_key = true;
             break;
         }
     }
@@ -679,8 +678,8 @@ Status SegmentIterator::_apply_bitmap_index_except_leafnode_of_andnode(
         ColumnPredicate* pred, roaring::Roaring* output_result) {
     // int32_t unique_id = _schema.unique_id(pred->column_id());
     int32_t cid = pred->column_id();
-    RETURN_IF_ERROR(pred->evaluate(_bitmap_index_iterators[cid], _segment->num_rows(),
-                                   output_result));
+    RETURN_IF_ERROR(
+            pred->evaluate(_bitmap_index_iterators[cid], _segment->num_rows(), output_result));
     return Status::OK();
 }
 
@@ -688,8 +687,8 @@ Status SegmentIterator::_apply_inverted_index_except_leafnode_of_andnode(
         ColumnPredicate* pred, roaring::Roaring* output_result) {
     // int32_t unique_id = _schema.unique_id(pred->column_id());
     int32_t cid = pred->column_id();
-    RETURN_IF_ERROR(pred->evaluate(_schema, _inverted_index_iterators[cid], num_rows(),
-                                   output_result));
+    RETURN_IF_ERROR(
+            pred->evaluate(_schema, _inverted_index_iterators[cid], num_rows(), output_result));
     return Status::OK();
 }
 
@@ -768,10 +767,9 @@ std::string SegmentIterator::_gen_predicate_result_sign(ColumnPredicateInfo* pre
 }
 
 bool SegmentIterator::_column_has_fulltext_index(int32_t cid) {
-    bool has_fulltext_index =
-            _inverted_index_iterators[cid] != nullptr &&
-            _inverted_index_iterators[cid]->get_inverted_index_reader_type() ==
-                    InvertedIndexReaderType::FULLTEXT;
+    bool has_fulltext_index = _inverted_index_iterators[cid] != nullptr &&
+                              _inverted_index_iterators[cid]->get_inverted_index_reader_type() ==
+                                      InvertedIndexReaderType::FULLTEXT;
 
     return has_fulltext_index;
 }
@@ -800,8 +798,7 @@ Status SegmentIterator::_apply_inverted_index_on_column_predicate(
         bool need_remaining_after_evaluate = _column_has_fulltext_index(cid) &&
                                              PredicateTypeTraits::is_equal_or_list(pred->type());
         roaring::Roaring bitmap = _row_bitmap;
-        Status res =
-                pred->evaluate(_schema, _inverted_index_iterators[cid], num_rows(), &bitmap);
+        Status res = pred->evaluate(_schema, _inverted_index_iterators[cid], num_rows(), &bitmap);
         if (!res.ok()) {
             if ((res.code() == ErrorCode::INVERTED_INDEX_FILE_NOT_FOUND &&
                  pred->type() != PredicateType::MATCH) ||
@@ -959,14 +956,14 @@ Status SegmentIterator::_init_return_column_iterators() {
             continue;
         }
         // if (_column_iterators.count(unique_id) < 1) {
-            RETURN_IF_ERROR(_segment->new_column_iterator(_opts.tablet_schema->column(cid),
-                                                          &_column_iterators[cid]));
-            ColumnIteratorOptions iter_opts;
-            iter_opts.stats = _opts.stats;
-            iter_opts.use_page_cache = _opts.use_page_cache;
-            iter_opts.file_reader = _file_reader.get();
-            iter_opts.io_ctx = _opts.io_ctx;
-            RETURN_IF_ERROR(_column_iterators[cid]->init(iter_opts));
+        RETURN_IF_ERROR(_segment->new_column_iterator(_opts.tablet_schema->column(cid),
+                                                      &_column_iterators[cid]));
+        ColumnIteratorOptions iter_opts;
+        iter_opts.stats = _opts.stats;
+        iter_opts.use_page_cache = _opts.use_page_cache;
+        iter_opts.file_reader = _file_reader.get();
+        iter_opts.io_ctx = _opts.io_ctx;
+        RETURN_IF_ERROR(_column_iterators[cid]->init(iter_opts));
         // }
     }
     return Status::OK();
@@ -976,12 +973,12 @@ Status SegmentIterator::_init_bitmap_index_iterators() {
     if (_cur_rowid >= num_rows()) {
         return Status::OK();
     }
-    _bitmap_index_iterators.assign(_opts.tablet_schema->num_columns(), nullptr); 
+    _bitmap_index_iterators.assign(_opts.tablet_schema->num_columns(), nullptr);
     for (auto cid : _schema.column_ids()) {
         // int32_t unique_id = _opts.tablet_schema->column(cid).unique_id();
         // if (_bitmap_index_iterators.count(unique_id) < 1) {
-            RETURN_IF_ERROR(_segment->new_bitmap_index_iterator(
-                    _opts.tablet_schema->column(cid), &_bitmap_index_iterators[cid]));
+        RETURN_IF_ERROR(_segment->new_bitmap_index_iterator(_opts.tablet_schema->column(cid),
+                                                            &_bitmap_index_iterators[cid]));
         // }
     }
     return Status::OK();
@@ -991,13 +988,14 @@ Status SegmentIterator::_init_inverted_index_iterators() {
     if (_cur_rowid >= num_rows()) {
         return Status::OK();
     }
-    _inverted_index_iterators.assign(_opts.tablet_schema->num_columns(), nullptr); 
+    _inverted_index_iterators.assign(_opts.tablet_schema->num_columns(), nullptr);
     for (auto cid : _schema.column_ids()) {
         int32_t unique_id = _schema.unique_id(cid);
         // if (_inverted_index_iterators.count(unique_id) < 1) {
-            RETURN_IF_ERROR(_segment->new_inverted_index_iterator(
-                    _opts.tablet_schema->column(cid), _opts.tablet_schema->get_inverted_index(unique_id),
-                    _opts.stats, &_inverted_index_iterators[cid]));
+        RETURN_IF_ERROR(_segment->new_inverted_index_iterator(
+                _opts.tablet_schema->column(cid),
+                _opts.tablet_schema->get_inverted_index(unique_id), _opts.stats,
+                &_inverted_index_iterators[cid]));
         // }
     }
     return Status::OK();
@@ -1651,8 +1649,8 @@ Status SegmentIterator::_read_columns_by_rowids(std::vector<ColumnId>& read_colu
         if (_prune_column(cid, (*mutable_columns)[cid], true, select_size)) {
             continue;
         }
-        RETURN_IF_ERROR(_column_iterators[cid]->read_by_rowids(
-                rowids.data(), select_size, _current_return_columns[cid]));
+        RETURN_IF_ERROR(_column_iterators[cid]->read_by_rowids(rowids.data(), select_size,
+                                                               _current_return_columns[cid]));
     }
 
     return Status::OK();

@@ -75,7 +75,7 @@ Status ScannerContext::init() {
     _max_thread_num = std::min(_max_thread_num, (int32_t)_scanners.size());
     // For select * from table limit 10; should just use one thread.
     // if (_parent->should_run_serial()) {
-        _max_thread_num = 1;
+    _max_thread_num = 1;
     // }
 
     _scanner_profile = _parent->_scanner_profile;
