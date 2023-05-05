@@ -27,7 +27,7 @@
 
 set -eo pipefail
 
-build_version_prefix="doris"
+build_version_prefix="selectdb-doris"
 build_version_major=2
 build_version_minor=0
 build_version_patch=4
@@ -63,7 +63,7 @@ if [[ -d '.git' ]]; then
     short_revision="$(git log -1 --pretty=format:"%h")"
     url="git://${hostname}"
 else
-    revision="Unknown"
+    revision="tag"
     short_revision="${revision}"
     url="file://${hostname}"
 fi
