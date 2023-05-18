@@ -34,6 +34,7 @@
 #include "io/fs/file_system.h"
 #include "olap/field.h"
 #include "olap/olap_common.h"
+#include "olap/rowset/segment_v2/bloom_filter.h"
 #include "olap/rowset/segment_v2/column_reader.h" // ColumnReader
 #include "olap/rowset/segment_v2/hierarchical_data_reader.h"
 #include "olap/rowset/segment_v2/page_handle.h"
@@ -141,6 +142,8 @@ public:
     // query. So we add a healthy status API, the caller should check the healhty status before using the segment.
     Status healthy_status();
 
+    Status load_column_bloom_filters();
+
     std::string min_key() {
         DCHECK(_tablet_schema->keys_type() == UNIQUE_KEYS && _pk_index_meta != nullptr);
         return _pk_index_meta->min_key();
@@ -199,6 +202,8 @@ public:
     }
 
     const TabletSchemaSPtr& tablet_schema() { return _tablet_schema; }
+
+    const std::vector<std::unique_ptr<BloomFilter>>& bloom_filter_for_column(uint32_t unique_cid);
 
 private:
     DISALLOW_COPY_AND_ASSIGN(Segment);
@@ -279,6 +284,11 @@ private:
     // inverted index file reader
     std::shared_ptr<InvertedIndexFileReader> _inverted_index_file_reader;
     DorisCallOnce<Status> _inverted_index_file_reader_open;
+
+    // TODO limit size
+    // Cached bloom filters
+    std::unordered_map<uint32_t, std::vector<std::unique_ptr<BloomFilter>>> _column_bloom_filters;
+    DorisCallOnce<Status> _load_col_bf_once;
 };
 
 } // namespace segment_v2

@@ -34,6 +34,7 @@
 #include "io/fs/file_reader_writer_fwd.h"
 #include "io/io_common.h"
 #include "olap/olap_common.h"
+#include "olap/rowset/segment_v2/bloom_filter.h"
 #include "olap/rowset/segment_v2/common.h"
 #include "olap/rowset/segment_v2/ordinal_page_index.h" // for OrdinalPageIndexIterator
 #include "olap/rowset/segment_v2/page_handle.h"        // for PageHandle
@@ -160,7 +161,8 @@ public:
 
     // get row ranges with bloom filter index
     Status get_row_ranges_by_bloom_filter(const AndBlockColumnPredicate* col_predicates,
-                                          RowRanges* row_ranges);
+                                          RowRanges* row_ranges,
+                                          const std::vector<std::unique_ptr<BloomFilter>>& hint_bf);
 
     PagePointer get_dict_page_pointer() const { return _meta_dict_page; }
 
@@ -185,6 +187,8 @@ public:
     void disable_index_meta_cache() { _use_index_page_cache = false; }
 
     FieldType get_meta_type() { return _meta_type; }
+
+    Status load_bloom_filters(std::vector<std::unique_ptr<BloomFilter>>& bfs, size_t* bf_size);
 
 private:
     ColumnReader(const ColumnReaderOptions& opts, const ColumnMetaPB& meta, uint64_t num_rows,
@@ -307,8 +311,9 @@ public:
         return Status::OK();
     }
 
-    virtual Status get_row_ranges_by_bloom_filter(const AndBlockColumnPredicate* col_predicates,
-                                                  RowRanges* row_ranges) {
+    virtual Status get_row_ranges_by_bloom_filter(
+            const AndBlockColumnPredicate* col_predicates, RowRanges* row_ranges,
+            const std::vector<std::unique_ptr<BloomFilter>>& hint_bf) {
         return Status::OK();
     }
 
@@ -354,8 +359,9 @@ public:
                                       const std::vector<const ColumnPredicate*>* delete_predicates,
                                       RowRanges* row_ranges) override;
 
-    Status get_row_ranges_by_bloom_filter(const AndBlockColumnPredicate* col_predicates,
-                                          RowRanges* row_ranges) override;
+    Status get_row_ranges_by_bloom_filter(
+            const AndBlockColumnPredicate* col_predicates, RowRanges* row_ranges,
+            const std::vector<std::unique_ptr<BloomFilter>>& hint_bf) override;
 
     Status get_row_ranges_by_dict(const AndBlockColumnPredicate* col_predicates,
                                   RowRanges* row_ranges) override;

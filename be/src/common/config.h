@@ -1141,6 +1141,8 @@ DECLARE_Bool(enable_feature_binlog);
 
 // enable set in BitmapValue
 DECLARE_Bool(enable_set_in_bitmap_value);
+// enable caching parsed BloomFilter in segment
+DECLARE_Bool(enable_caching_bloom_filters);
 
 // max number of hdfs file handle in cache
 DECLARE_Int64(max_hdfs_file_handle_cache_num);
