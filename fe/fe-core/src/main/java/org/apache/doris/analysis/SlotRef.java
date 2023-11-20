@@ -163,6 +163,10 @@ public class SlotRef extends Expr {
         this.desc = desc;
     }
 
+    public void setAnalyzed(boolean analyzed) {
+        isAnalyzed = analyzed;
+    }
+
     public boolean columnEqual(Expr srcExpr) {
         Preconditions.checkState(srcExpr instanceof SlotRef);
         SlotRef srcSlotRef = (SlotRef) srcExpr;
@@ -259,9 +263,12 @@ public class SlotRef extends Expr {
         }
 
         StringBuilder sb = new StringBuilder();
-
+        String subColumnPaths = "";
+        if (subColPaths != null && !subColPaths.isEmpty()) {
+            subColumnPaths = "." + String.join(".", subColPaths);
+        }
         if (tblName != null) {
-            return tblName.toSql() + "." + label;
+            return tblName.toSql() + "." + label + subColumnPaths;
         } else if (label != null) {
             if (ConnectContext.get() != null
                     && ConnectContext.get().getState().isNereids()

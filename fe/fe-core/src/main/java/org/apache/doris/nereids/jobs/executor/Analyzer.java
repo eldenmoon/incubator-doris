@@ -27,6 +27,7 @@ import org.apache.doris.nereids.rules.analysis.BindExpression;
 import org.apache.doris.nereids.rules.analysis.BindRelation;
 import org.apache.doris.nereids.rules.analysis.BindRelation.CustomTableResolver;
 import org.apache.doris.nereids.rules.analysis.BindSink;
+import org.apache.doris.nereids.rules.analysis.BindSlotWithPaths;
 import org.apache.doris.nereids.rules.analysis.CheckAfterBind;
 import org.apache.doris.nereids.rules.analysis.CheckAnalysis;
 import org.apache.doris.nereids.rules.analysis.CheckPolicy;
@@ -91,7 +92,8 @@ public class Analyzer extends AbstractBatchJobExecutor {
                 new BindRelation(customTableResolver),
                 new CheckPolicy(),
                 new UserAuthentication(),
-                new BindExpression()
+                new BindExpression(),
+                new BindSlotWithPaths()
             ),
             topDown(new BindSink()),
             bottomUp(new CheckAfterBind()),
@@ -120,6 +122,7 @@ public class Analyzer extends AbstractBatchJobExecutor {
             // errCode = 2, detailMessage = GROUP BY expression must not contain aggregate functions: sum(lo_tax)
             bottomUp(new CheckAnalysis()),
             topDown(new EliminateGroupByConstant()),
+
             topDown(new NormalizeAggregate()),
             bottomUp(new SubqueryToApply())
         );
