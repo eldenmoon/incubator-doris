@@ -110,6 +110,14 @@ echo "Get params:
 "
 
 ARCH="$(uname -m)"
+if [[ "${ARCH}" == "aarch64" ]]; then
+    ARCH="arm64"
+elif [[ "${ARCH}" == "x86_64" ]]; then
+    ARCH="x64"
+else
+    echo "Unknown arch: ${ARCH}"
+    exit 1
+fi
 
 ORI_OUTPUT="${ROOT}/output"
 
@@ -119,7 +127,7 @@ BROKER="apache_hdfs_broker"
 AUDIT="audit_loader"
 
 PACKAGE_NAME="selectdb-doris-${VERSION}-bin-${ARCH}"
-if [[ "${_USE_AVX2}" == "0" && "${ARCH}" == "x86_64" ]]; then
+if [[ "${_USE_AVX2}" == "0" && "${ARCH}" == "x64" ]]; then
     PACKAGE_NAME="${PACKAGE_NAME}-noavx2"
 fi
 OUTPUT="${ORI_OUTPUT}/${PACKAGE_NAME}"
@@ -130,7 +138,7 @@ echo "Package Path: ${OUTPUT}"
 # download and setup java
 JAVA8_DOWNLOAD_LINK=
 JAVA8_DIR_NAME=
-if [[ "${ARCH}" == "x86_64" ]]; then
+if [[ "${ARCH}" == "x64" ]]; then
     JAVA8_DOWNLOAD_LINK="https://selectdb-doris-1308700295.cos.ap-beijing.myqcloud.com/release/jdbc_driver/jdk-8u351-linux-x64.tar.gz"
     JAVA8_DIR_NAME="jdk1.8.0_351"
 elif [[ "${ARCH}" == "arm64" ]]; then
