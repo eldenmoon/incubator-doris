@@ -296,6 +296,10 @@ public class SlotRef extends Expr {
         }
     }
 
+    public TableName getTableNameUnsafe() {
+        return tblName;
+    }
+
     public TableName getTableName() {
         if (tblName == null) {
             Preconditions.checkState(isAnalyzed);
@@ -533,6 +537,10 @@ public class SlotRef extends Expr {
 
     public void setLabel(String label) {
         this.label = label;
+    }
+
+    public void setSubColPath(List<String> subColPath) {
+        this.subColPath = subColPath;
     }
 
     public boolean hasCol() {

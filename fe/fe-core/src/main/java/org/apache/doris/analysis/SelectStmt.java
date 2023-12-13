@@ -50,6 +50,7 @@ import org.apache.doris.qe.ConnectContext;
 import org.apache.doris.rewrite.ExprRewriter;
 import org.apache.doris.rewrite.mvrewrite.MVSelectFailedException;
 import org.apache.doris.thrift.TExprOpcode;
+import org.apache.doris.thrift.TQueryOptions;
 
 import com.google.common.base.Preconditions;
 import com.google.common.base.Predicates;
@@ -1860,7 +1861,7 @@ public class SelectStmt extends QueryStmt {
 
     @Override
     public void rewriteExprs(ExprRewriter rewriter) throws AnalysisException {
-        Preconditions.checkState(isAnalyzed());
+        // Preconditions.checkState(isAnalyzed());
         rewriteSelectList(rewriter);
         for (TableRef ref : fromClause) {
             ref.rewriteExprs(rewriter, analyzer);
@@ -1937,6 +1938,99 @@ public class SelectStmt extends QueryStmt {
                 if (!(orderByElem.getExpr() instanceof SlotRef)) {
                     orderByElem.getExpr().reset();
                 }
+            }
+        }
+    }
+
+    @Override
+    public void rewriteElementAtToSlot(ExprRewriter rewriter, TQueryOptions tQueryOptions) throws AnalysisException {
+        // subquery
+        List<Subquery> subqueryExprs = Lists.newArrayList();
+
+        // select clause
+        for (SelectListItem item : selectList.getItems()) {
+            if (item.isStar()) {
+                continue;
+            }
+            // register expr id
+            registerExprId(item.getExpr());
+            Expr expr = rewriter.rewriteElementAtToSlot(item.getExpr(), analyzer);
+            item.setExpr(expr);
+            // equal sub-query in select list
+            if (item.getExpr().contains(Predicates.instanceOf(Subquery.class))) {
+                item.getExpr().collect(Subquery.class, subqueryExprs);
+            }
+        }
+
+        // from clause
+        for (TableRef ref : fromClause) {
+            Preconditions.checkState(ref.isAnalyzed);
+            if (ref.onClause != null) {
+                registerExprId(ref.onClause);
+                ref.onClause = rewriter.rewriteElementAtToSlot(ref.onClause, analyzer);
+            }
+            if (ref instanceof InlineViewRef) {
+                ((InlineViewRef) ref).getViewStmt().rewriteElementAtToSlot(rewriter, tQueryOptions);
+            }
+        }
+
+        if (whereClause != null) {
+            registerExprId(whereClause);
+            Expr expr = rewriter.rewriteElementAtToSlot(whereClause, analyzer);
+            setWhereClause(expr);
+            whereClause.collect(Subquery.class, subqueryExprs);
+
+        }
+        if (havingClause != null) {
+            registerExprId(havingClauseAfterAnalyzed);
+            havingClause = rewriter.rewriteElementAtToSlot(havingClauseAfterAnalyzed, analyzer);
+            havingClauseAfterAnalyzed.collect(Subquery.class, subqueryExprs);
+        }
+        for (Subquery subquery : subqueryExprs) {
+            registerExprId(subquery);
+            subquery.getStatement().rewriteElementAtToSlot(rewriter, tQueryOptions);
+        }
+        if (groupByClause != null) {
+            ArrayList<Expr> groupingExprs = groupByClause.getGroupingExprs();
+            if (groupingExprs != null) {
+                ArrayList<Expr> newGroupingExpr = new ArrayList<>();
+                for (Expr expr : groupingExprs) {
+                    if (containAlias(expr)) {
+                        newGroupingExpr.add(expr);
+                        continue;
+                    }
+                    registerExprId(expr);
+                    newGroupingExpr.add(rewriter.rewriteElementAtToSlot(expr, analyzer));
+                }
+                groupByClause.setGroupingExpr(newGroupingExpr);
+                groupByClause.setOriGroupingExprs(newGroupingExpr);
+            }
+            // List<Expr> oriGroupingExprs = groupByClause.getOriGroupingExprs();
+            // if (oriGroupingExprs != null) {
+            //     ArrayList<Expr> newOriGroupingExprs = new ArrayList<>();
+            //     for (Expr expr : oriGroupingExprs) {
+            //         if (containAlias(expr)) {
+            //             newOriGroupingExprs.add(expr);
+            //             continue;
+            //         }
+            //         registerExprId(expr);
+            //         newOriGroupingExprs.add(rewriter.rewriteElementAtToSlot(expr, analyzer));
+            //     }
+            //     groupByClause.setOriGroupingExprs(newOriGroupingExprs);
+            // }
+        }
+        if (orderByElements != null && orderByElementsAfterAnalyzed != null) {
+            for (int i = 0; i < orderByElementsAfterAnalyzed.size(); ++i) {
+                OrderByElement orderByElement = orderByElements.get(i);
+                OrderByElement orderByElementAnalyzed = orderByElementsAfterAnalyzed.get(i);
+                // same as above
+                if (containAlias(orderByElementAnalyzed.getExpr())) {
+                    continue;
+                }
+                registerExprId(orderByElementAnalyzed.getExpr());
+                Expr newExpr = rewriter.rewriteElementAtToSlot(orderByElementAnalyzed.getExpr(), analyzer);
+                orderByElementAnalyzed.setExpr(newExpr);
+                orderByElement.setExpr(newExpr);
             }
         }
     }

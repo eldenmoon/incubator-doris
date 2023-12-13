@@ -49,6 +49,7 @@ import org.apache.doris.qe.ConnectContext;
 import org.apache.doris.qe.SessionVariable;
 import org.apache.doris.rewrite.BetweenToCompoundRule;
 import org.apache.doris.rewrite.CompoundPredicateWriteRule;
+import org.apache.doris.rewrite.ElementAtToSlotRefRule;
 import org.apache.doris.rewrite.EliminateUnnecessaryFunctions;
 import org.apache.doris.rewrite.EraseRedundantCastExpr;
 import org.apache.doris.rewrite.ExprRewriteRule;
@@ -412,6 +413,8 @@ public class Analyzer {
         private final Map<SlotId, Analyzer> blockBySlot = Maps.newHashMap();
 
         // Expr rewriter for normalizing and rewriting expressions.
+
+        private final ExprRewriter preAnalyzeExprRewriter;
         private final ExprRewriter exprRewriter;
 
         private final ExprRewriter mvExprRewriter;
@@ -454,6 +457,7 @@ public class Analyzer {
             rules.add(RewriteIsNullIsNotNullRule.INSTANCE);
             rules.add(MatchPredicateRule.INSTANCE);
             rules.add(EliminateUnnecessaryFunctions.INSTANCE);
+            rules.add(ElementAtToSlotRefRule.INSTANCE);
             List<ExprRewriteRule> onceRules = Lists.newArrayList();
             onceRules.add(ExtractCommonFactorsRule.INSTANCE);
             onceRules.add(InferFiltersRule.INSTANCE);
@@ -467,6 +471,11 @@ public class Analyzer {
             mvRewriteRules.add(NDVToHll.INSTANCE);
             mvRewriteRules.add(HLLHashToSlotRefRule.INSTANCE);
             mvExprRewriter = new ExprRewriter(mvRewriteRules);
+
+            // init pre analyze rewriter
+            List<ExprRewriteRule> preAnalyzeRewriteRules = Lists.newArrayList();
+            preAnalyzeRewriteRules.add(ElementAtToSlotRefRule.INSTANCE);
+            preAnalyzeExprRewriter = new ExprRewriter(preAnalyzeRewriteRules);
 
             // context maybe null. eg, for StreamLoadPlanner.
             // and autoBroadcastJoinThreshold is only used for Query's DistributedPlanner.
@@ -896,6 +905,10 @@ public class Analyzer {
 
     public ExprRewriter getMVExprRewriter() {
         return globalState.mvExprRewriter;
+    }
+
+    public ExprRewriter getPreAnalyzeRewriteRules() {
+        return globalState.preAnalyzeExprRewriter;
     }
 
     /**

@@ -721,7 +721,7 @@ public class TableRef implements ParseNode, Writable {
 
     public void rewriteExprs(ExprRewriter rewriter, Analyzer analyzer)
             throws AnalysisException {
-        Preconditions.checkState(isAnalyzed);
+        // Preconditions.checkState(isAnalyzed);
         if (onClause != null) {
             Expr expr = onClause.clone();
             onClause = rewriter.rewrite(onClause, analyzer, ClauseType.fromJoinType(joinOp));
