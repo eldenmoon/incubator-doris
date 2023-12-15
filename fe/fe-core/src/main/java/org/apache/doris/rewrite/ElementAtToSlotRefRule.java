@@ -29,8 +29,6 @@ import org.apache.doris.rewrite.ExprRewriter.ClauseType;
 import com.google.common.collect.Lists;
 
 import java.util.List;
-import java.util.Map;
-import java.util.Map.Entry;
 import java.util.stream.Collectors;
 
 public class ElementAtToSlotRefRule implements ExprRewriteRule  {
@@ -38,21 +36,13 @@ public class ElementAtToSlotRefRule implements ExprRewriteRule  {
 
     @Override
     public Expr apply(Expr expr, Analyzer analyzer, ClauseType clauseType) throws AnalysisException {
+        // Only check element at of variant all rewrited to slots
+        List<Expr> elementAtFunctions = Lists.newArrayList();
+        getElementAtFunction(expr, elementAtFunctions);
+        if (!elementAtFunctions.isEmpty()) {
+            throw new AnalysisException("element_at should not appear in common rewrite stage");
+        }
         return expr;
-        // if (!(isElementAtOfVariantType(expr))) {
-        //     return expr;
-        // }
-        // List<SlotRef> slotRefs =  Lists.newArrayList();
-        // expr.collect(SlotRef.class, slotRefs);
-        // SlotRef slot = slotRefs.get(0);
-        // List<Expr> pathsExpr = Lists.newArrayList();
-        // expr.collect(Expr::isLiteral, pathsExpr);
-        // List<String> fullPaths = pathsExpr.stream()
-        //         .map(node -> ((LiteralExpr) node).getStringValue())
-        //         .collect(Collectors.toList());
-        // slot.setSubColPath(fullPaths);
-        // slot.analyzeImpl(analyzer);
-        // return slot;
     }
 
     private Expr apply(Expr expr, Analyzer analyzer) throws AnalysisException  {
@@ -111,25 +101,6 @@ public class ElementAtToSlotRefRule implements ExprRewriteRule  {
             }
         }
         return newExpr != null ? newExpr : inputExpr;
-    }
-
-    public boolean apply(Map<String, Expr> exprMap, Analyzer analyzer)
-            throws AnalysisException {
-        boolean changed = false;
-        for (Entry<String, Expr> entry : exprMap.entrySet()) {
-            List<Expr> originalFunctionElementAtExprs = Lists.newArrayList();
-            getElementAtFunction(entry.getValue(), originalFunctionElementAtExprs);
-            Expr originalExpr = entry.getValue();
-            for (Expr expr : originalFunctionElementAtExprs) {
-                Expr rewriteExpr = apply(expr, analyzer, null);
-                if (rewriteExpr != expr) {
-                    Expr newExpr = replaceExpr(originalExpr, expr.getId().toString(), rewriteExpr);
-                    exprMap.put(entry.getKey(), newExpr);
-                    changed = true;
-                }
-            }
-        }
-        return changed;
     }
 
     private Expr replaceExpr(Expr expr, String key, Expr replacExpr) {

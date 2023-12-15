@@ -1984,6 +1984,7 @@ public class SelectStmt extends QueryStmt {
         if (havingClause != null) {
             registerExprId(havingClauseAfterAnalyzed);
             havingClause = rewriter.rewriteElementAtToSlot(havingClauseAfterAnalyzed, analyzer);
+            havingClauseAfterAnalyzed = havingClause;
             havingClauseAfterAnalyzed.collect(Subquery.class, subqueryExprs);
         }
         for (Subquery subquery : subqueryExprs) {
