@@ -47,7 +47,6 @@ import org.apache.doris.common.util.SqlUtils;
 import org.apache.doris.common.util.ToSqlContext;
 import org.apache.doris.mysql.privilege.PrivPredicate;
 import org.apache.doris.qe.ConnectContext;
-import org.apache.doris.rewrite.ElementAtToSlotRefRule;
 import org.apache.doris.rewrite.ExprRewriter;
 import org.apache.doris.rewrite.mvrewrite.MVSelectFailedException;
 import org.apache.doris.thrift.TExprOpcode;
@@ -1950,7 +1949,7 @@ public class SelectStmt extends QueryStmt {
 
         // select clause
         for (SelectListItem item : selectList.getItems()) {
-            if (item.isStar() || !ElementAtToSlotRefRule.containsElementAtFunction(item.getExpr())) {
+            if (item.isStar()) {
                 continue;
             }
             // register expr id
@@ -1968,7 +1967,7 @@ public class SelectStmt extends QueryStmt {
         // from clause
         for (TableRef ref : fromClause) {
             Preconditions.checkState(ref.isAnalyzed);
-            if (ref.onClause != null && ElementAtToSlotRefRule.containsElementAtFunction(ref.onClause)) {
+            if (ref.onClause != null) {
                 registerExprId(ref.onClause);
                 ref.onClause = rewriter.rewriteElementAtToSlot(ref.onClause, analyzer);
             }
@@ -1977,7 +1976,7 @@ public class SelectStmt extends QueryStmt {
             }
         }
 
-        if (whereClause != null && ElementAtToSlotRefRule.containsElementAtFunction(whereClause)) {
+        if (whereClause != null) {
             registerExprId(whereClause);
             Expr expr = rewriter.rewriteElementAtToSlot(whereClause, analyzer);
             if (!expr.equals(whereClause)) {
@@ -1986,7 +1985,7 @@ public class SelectStmt extends QueryStmt {
             whereClause.collect(Subquery.class, subqueryExprs);
 
         }
-        if (havingClause != null && ElementAtToSlotRefRule.containsElementAtFunction(havingClause)) {
+        if (havingClause != null) {
             registerExprId(havingClauseAfterAnalyzed);
             Expr expr = rewriter.rewriteElementAtToSlot(havingClauseAfterAnalyzed, analyzer);
             if (!havingClauseAfterAnalyzed.equals(expr)) {
@@ -1996,10 +1995,8 @@ public class SelectStmt extends QueryStmt {
             havingClauseAfterAnalyzed.collect(Subquery.class, subqueryExprs);
         }
         for (Subquery subquery : subqueryExprs) {
-            if (ElementAtToSlotRefRule.containsElementAtFunction(subquery)) {
-                registerExprId(subquery);
-                subquery.getStatement().rewriteElementAtToSlot(rewriter, tQueryOptions);
-            }
+            registerExprId(subquery);
+            subquery.getStatement().rewriteElementAtToSlot(rewriter, tQueryOptions);
         }
         if (groupByClause != null) {
             ArrayList<Expr> groupingExprs = groupByClause.getGroupingExprs();
@@ -2011,16 +2008,12 @@ public class SelectStmt extends QueryStmt {
                         newGroupingExpr.add(expr);
                         continue;
                     }
-                    if (ElementAtToSlotRefRule.containsElementAtFunction(expr)) {
-                        registerExprId(expr);
-                        Expr rewriteExpr = rewriter.rewriteElementAtToSlot(expr, analyzer);
-                        if (!expr.equals(rewriteExpr)) {
-                            rewrite = true;
-                        }
-                        newGroupingExpr.add(rewriteExpr);
-                    } else {
-                        newGroupingExpr.add(expr);
+                    registerExprId(expr);
+                    Expr rewriteExpr = rewriter.rewriteElementAtToSlot(expr, analyzer);
+                    if (!expr.equals(rewriteExpr)) {
+                        rewrite = true;
                     }
+                    newGroupingExpr.add(rewriteExpr);
                 }
                 if (rewrite) {
                     groupByClause.setGroupingExpr(newGroupingExpr);
@@ -2034,9 +2027,6 @@ public class SelectStmt extends QueryStmt {
                 OrderByElement orderByElementAnalyzed = orderByElementsAfterAnalyzed.get(i);
                 // same as above
                 if (containAlias(orderByElementAnalyzed.getExpr())) {
-                    continue;
-                }
-                if (!ElementAtToSlotRefRule.containsElementAtFunction(orderByElementAnalyzed.getExpr())) {
                     continue;
                 }
                 registerExprId(orderByElementAnalyzed.getExpr());

@@ -1114,7 +1114,9 @@ public class StmtExecutor {
                 // fold constant expr
                 parsedStmt.foldConstant(rewriter, tQueryOptions);
             }
-            parsedStmt.rewriteElementAtToSlot(rewriter, tQueryOptions);
+            if (context.getSessionVariable().isEnableRewriteElementAtToSlot()) {
+                parsedStmt.rewriteElementAtToSlot(rewriter, tQueryOptions);
+            }
             // Apply expr and subquery rewrites.
             ExplainOptions explainOptions = parsedStmt.getExplainOptions();
             boolean reAnalyze = false;
