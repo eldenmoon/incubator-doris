@@ -1955,7 +1955,9 @@ public class SelectStmt extends QueryStmt {
             // register expr id
             registerExprId(item.getExpr());
             Expr expr = rewriter.rewriteElementAtToSlot(item.getExpr(), analyzer);
-            item.setExpr(expr);
+            if (!expr.equals(item.getExpr())) {
+                item.setExpr(expr);
+            }
             // equal sub-query in select list
             if (item.getExpr().contains(Predicates.instanceOf(Subquery.class))) {
                 item.getExpr().collect(Subquery.class, subqueryExprs);
@@ -1977,14 +1979,19 @@ public class SelectStmt extends QueryStmt {
         if (whereClause != null) {
             registerExprId(whereClause);
             Expr expr = rewriter.rewriteElementAtToSlot(whereClause, analyzer);
-            setWhereClause(expr);
+            if (!expr.equals(whereClause)) {
+                setWhereClause(expr);
+            }
             whereClause.collect(Subquery.class, subqueryExprs);
 
         }
         if (havingClause != null) {
             registerExprId(havingClauseAfterAnalyzed);
-            havingClause = rewriter.rewriteElementAtToSlot(havingClauseAfterAnalyzed, analyzer);
-            havingClauseAfterAnalyzed = havingClause;
+            Expr expr = rewriter.rewriteElementAtToSlot(havingClauseAfterAnalyzed, analyzer);
+            if (!havingClauseAfterAnalyzed.equals(expr)) {
+                havingClause = expr;
+                havingClauseAfterAnalyzed = expr;
+            }
             havingClauseAfterAnalyzed.collect(Subquery.class, subqueryExprs);
         }
         for (Subquery subquery : subqueryExprs) {
@@ -1995,30 +2002,24 @@ public class SelectStmt extends QueryStmt {
             ArrayList<Expr> groupingExprs = groupByClause.getGroupingExprs();
             if (groupingExprs != null) {
                 ArrayList<Expr> newGroupingExpr = new ArrayList<>();
+                boolean rewrite = false;
                 for (Expr expr : groupingExprs) {
                     if (containAlias(expr)) {
                         newGroupingExpr.add(expr);
                         continue;
                     }
                     registerExprId(expr);
-                    newGroupingExpr.add(rewriter.rewriteElementAtToSlot(expr, analyzer));
+                    Expr rewriteExpr = rewriter.rewriteElementAtToSlot(expr, analyzer);
+                    if (!expr.equals(rewriteExpr)) {
+                        rewrite = true;
+                    }
+                    newGroupingExpr.add(rewriteExpr);
                 }
-                groupByClause.setGroupingExpr(newGroupingExpr);
-                groupByClause.setOriGroupingExprs(newGroupingExpr);
+                if (rewrite) {
+                    groupByClause.setGroupingExpr(newGroupingExpr);
+                    groupByClause.setOriGroupingExprs(newGroupingExpr);
+                }
             }
-            // List<Expr> oriGroupingExprs = groupByClause.getOriGroupingExprs();
-            // if (oriGroupingExprs != null) {
-            //     ArrayList<Expr> newOriGroupingExprs = new ArrayList<>();
-            //     for (Expr expr : oriGroupingExprs) {
-            //         if (containAlias(expr)) {
-            //             newOriGroupingExprs.add(expr);
-            //             continue;
-            //         }
-            //         registerExprId(expr);
-            //         newOriGroupingExprs.add(rewriter.rewriteElementAtToSlot(expr, analyzer));
-            //     }
-            //     groupByClause.setOriGroupingExprs(newOriGroupingExprs);
-            // }
         }
         if (orderByElements != null && orderByElementsAfterAnalyzed != null) {
             for (int i = 0; i < orderByElementsAfterAnalyzed.size(); ++i) {
@@ -2030,8 +2031,10 @@ public class SelectStmt extends QueryStmt {
                 }
                 registerExprId(orderByElementAnalyzed.getExpr());
                 Expr newExpr = rewriter.rewriteElementAtToSlot(orderByElementAnalyzed.getExpr(), analyzer);
-                orderByElementAnalyzed.setExpr(newExpr);
-                orderByElement.setExpr(newExpr);
+                if (!orderByElementAnalyzed.getExpr().equals(newExpr)) {
+                    orderByElementAnalyzed.setExpr(newExpr);
+                    orderByElement.setExpr(newExpr);
+                }
             }
         }
     }
