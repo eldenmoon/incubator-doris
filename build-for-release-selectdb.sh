@@ -140,7 +140,7 @@ JAVA8_DOWNLOAD_LINK=
 JAVA8_DIR_NAME=
 if [[ "${ARCH}" == "x64" ]]; then
     JAVA8_DOWNLOAD_LINK="https://selectdb-doris-1308700295.cos.ap-beijing.myqcloud.com/release/jdbc_driver/openjdk-8u352-b08-linux-x64.tar.gz"
-    JAVA8_DIR_NAME="jdk1.8.0_351"
+    JAVA8_DIR_NAME="openjdk-8u352-b08-linux-x64"
 elif [[ "${ARCH}" == "arm64" ]]; then
     JAVA8_DOWNLOAD_LINK="https://selectdb-doris-1308700295.cos.ap-beijing.myqcloud.com/release/jdbc_driver/bisheng-jdk-8u352-linux-aarch64.tar.gz"
     JAVA8_DIR_NAME="bisheng-jdk1.8.0_352"
