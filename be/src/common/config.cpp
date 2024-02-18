@@ -1174,6 +1174,8 @@ DEFINE_Int32(partition_disk_index_lru_size, "10000");
 
 DEFINE_mBool(check_segment_when_build_rowset_meta, "false");
 
+DEFINE_mBool(use_tablet_column_pool, "true");
+
 // clang-format off
 #ifdef BE_TEST
 // test s3

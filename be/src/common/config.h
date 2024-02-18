@@ -1250,6 +1250,8 @@ DECLARE_Int32(partition_disk_index_lru_size);
 
 DECLARE_mBool(check_segment_when_build_rowset_meta);
 
+DECLARE_mBool(use_tablet_column_pool);
+
 #ifdef BE_TEST
 // test s3
 DECLARE_String(test_s3_resource);
