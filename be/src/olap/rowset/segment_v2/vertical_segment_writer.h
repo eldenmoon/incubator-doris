@@ -120,6 +120,7 @@ public:
 private:
     void _init_column_meta(ColumnMetaPB* meta, uint32_t column_id, const TabletColumn& column);
     Status _create_column_writer(uint32_t cid, const TabletColumn& column);
+    Status _create_column_writers(const std::vector<uint32_t>& cids, const TabletSchemaSPtr& schema);
     size_t _calculate_inverted_index_file_size();
     uint64_t _estimated_remaining_size();
     Status _write_ordinal_index();
@@ -148,6 +149,9 @@ private:
     Status _fill_missing_columns(vectorized::MutableColumns& mutable_full_columns,
                                  const std::vector<bool>& use_default_or_null_flag,
                                  bool has_default_or_nullable, const size_t& segment_start_pos);
+
+    // handle variant
+    Status _flatten_variant_columns(const std::vector<int32_t>& variant_cids, const TabletSchemaSPtr& original_schema);
 
 private:
     uint32_t _segment_id;
@@ -197,6 +201,8 @@ private:
     std::vector<RowsInBlock> _batched_blocks;
     std::shared_ptr<vectorized::AutoIncIDBuffer> _auto_inc_id_buffer = nullptr;
     vectorized::AutoIncIDAllocator _auto_inc_id_allocator;
+    std::vector<uint32_t> _extra_update_cids;
+    std::vector<uint32_t> _extra_missing_cids;
 };
 
 } // namespace segment_v2

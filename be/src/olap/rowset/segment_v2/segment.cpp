@@ -501,11 +501,11 @@ Status Segment::new_column_iterator_with_path(const TabletColumn& tablet_column,
     } else {
         root_path = vectorized::PathInData({tablet_column.path_info_ptr()->get_parts()[0]});
     }
-    auto root = _sub_column_tree.find_leaf(root_path);
-    auto node = tablet_column.has_path_info()
+    const auto* root = _sub_column_tree.find_leaf(root_path);
+    const auto* node = tablet_column.has_path_info()
                         ? _sub_column_tree.find_exact(*tablet_column.path_info_ptr())
-                        : nullptr;
-    auto sparse_node = tablet_column.has_path_info()
+                        : root;
+    const auto* sparse_node = tablet_column.has_path_info()
                                ? _sparse_column_tree.find_exact(*tablet_column.path_info_ptr())
                                : nullptr;
     if (opt != nullptr && opt->io_ctx.reader_type == ReaderType::READER_ALTER_TABLE) {
@@ -544,19 +544,19 @@ Status Segment::new_column_iterator_with_path(const TabletColumn& tablet_column,
         iter->reset(it);
         return Status::OK();
     }
-
+    vectorized::PathInData target_path = tablet_column.has_path_info() ? *tablet_column.path_info_ptr() : root_path;
     if (node != nullptr) {
         if (node->is_leaf_node() && sparse_node == nullptr) {
             // Node contains column without any child sub columns and no corresponding sparse columns
             // Direct read extracted columns
-            const auto* node = _sub_column_tree.find_leaf(*tablet_column.path_info_ptr());
+            const auto* node = _sub_column_tree.find_leaf(target_path);
             ColumnIterator* it;
             RETURN_IF_ERROR(node->data.reader->new_iterator(&it));
             iter->reset(it);
         } else {
             // Node contains column with children columns or has correspoding sparse columns
             // Create reader with hirachical data
-            RETURN_IF_ERROR(HierarchicalDataReader::create(iter, *tablet_column.path_info_ptr(),
+            RETURN_IF_ERROR(HierarchicalDataReader::create(iter, target_path,
                                                            node, root));
         }
     } else {

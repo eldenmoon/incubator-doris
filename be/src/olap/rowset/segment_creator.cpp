@@ -24,6 +24,7 @@
 #include <memory>
 #include <sstream>
 #include <utility>
+#include <vector>
 
 #include "common/compiler_util.h" // IWYU pragma: keep
 #include "common/config.h"
@@ -63,18 +64,18 @@ Status SegmentFlusher::flush_single_block(const vectorized::Block* block, int32_
     TabletSchemaSPtr flush_schema;
     if (_context.write_type != DataWriteType::TYPE_COMPACTION &&
         _context.tablet_schema->num_variant_columns() > 0) {
-        RETURN_IF_ERROR(_expand_variant_to_subcolumns(flush_block, flush_schema));
+        RETURN_IF_ERROR(_expand_variant_to_subcolumns(flush_block, flush_schema, segment_id));
     }
     bool no_compression = flush_block.bytes() <= config::segment_compression_threshold_kb * 1024;
     if (config::enable_vertical_segment_writer &&
         _context.tablet_schema->cluster_key_idxes().empty()) {
         std::unique_ptr<segment_v2::VerticalSegmentWriter> writer;
-        RETURN_IF_ERROR(_create_segment_writer(writer, segment_id, no_compression, flush_schema));
+        RETURN_IF_ERROR(_create_segment_writer(writer, segment_id, no_compression, nullptr));
         RETURN_IF_ERROR(_add_rows(writer, &flush_block, 0, flush_block.rows()));
-        RETURN_IF_ERROR(_flush_segment_writer(writer, flush_schema, flush_size));
+        RETURN_IF_ERROR(_flush_segment_writer(writer, nullptr, flush_size));
     } else {
         std::unique_ptr<segment_v2::SegmentWriter> writer;
-        RETURN_IF_ERROR(_create_segment_writer(writer, segment_id, no_compression, flush_schema));
+        RETURN_IF_ERROR(_create_segment_writer(writer, segment_id, no_compression, nullptr));
         RETURN_IF_ERROR(_add_rows(writer, &flush_block, 0, flush_block.rows()));
         RETURN_IF_ERROR(_flush_segment_writer(writer, flush_schema, flush_size));
     }
@@ -82,75 +83,59 @@ Status SegmentFlusher::flush_single_block(const vectorized::Block* block, int32_
 }
 
 Status SegmentFlusher::_expand_variant_to_subcolumns(vectorized::Block& block,
-                                                     TabletSchemaSPtr& flush_schema) {
+                                                     TabletSchemaSPtr& flush_schema,
+                                                     int32_t segment_id) {
     size_t num_rows = block.rows();
     if (num_rows == 0) {
         return Status::OK();
     }
 
-    {
-        std::lock_guard<std::mutex> lock(*(_context.schema_lock));
-        // save original tablet schema, _context->tablet_schema maybe modified
-        if (_context.original_tablet_schema == nullptr) {
-            _context.original_tablet_schema = _context.tablet_schema;
-        }
-    }
+    std::vector<int32_t> variant_cids = _context.calculate_variant_cids();
 
-    std::vector<int> variant_column_pos;
-    if (_context.partial_update_info && _context.partial_update_info->is_partial_update) {
-        // check columns that used to do partial updates should not include variant
-        for (int i : _context.partial_update_info->update_cids) {
-            const auto& col = *_context.original_tablet_schema->columns()[i];
-            if (!col.is_key() && col.name() != DELETE_SIGN) {
-                return Status::InvalidArgument(
-                        "Not implement partial update for variant only support delete currently");
-            }
-        }
-    } else {
-        // find positions of variant columns
-        for (int i = 0; i < _context.original_tablet_schema->columns().size(); ++i) {
-            if (_context.original_tablet_schema->columns()[i]->is_variant_type()) {
-                variant_column_pos.push_back(i);
-            }
-        }
-    }
-
-    if (variant_column_pos.empty()) {
+    if (variant_cids.empty()) {
         return Status::OK();
     }
 
     vectorized::schema_util::ParseContext ctx;
     ctx.record_raw_json_column = _context.original_tablet_schema->store_row_column();
     RETURN_IF_ERROR(vectorized::schema_util::parse_and_encode_variant_columns(
-            block, variant_column_pos, ctx));
+            block, variant_cids, ctx));
 
-    flush_schema = std::make_shared<TabletSchema>();
-    flush_schema->copy_from(*_context.original_tablet_schema);
-    vectorized::Block flush_block(std::move(block));
-    vectorized::schema_util::rebuild_schema_and_block(
-            _context.original_tablet_schema, variant_column_pos, flush_block, flush_schema);
+    // flush_schema = std::make_shared<TabletSchema>();
+    // flush_schema->copy_from(*_context.original_tablet_schema);
+    // vectorized::Block flush_block(std::move(block));
+    // vectorized::schema_util::rebuild_schema_and_block(
+    //         _context.original_tablet_schema, variant_cids, flush_block, flush_schema);
+    // // add extra update cids
+    // if (_context.partial_update_info && _context.partial_update_info->is_partial_update) {
+    //     std::vector<uint32_t> extra_update_cids;
+    //     for (uint32_t i = _context.original_tablet_schema->num_columns(); i < flush_schema->num_columns(); ++i) {
+    //         extra_update_cids.push_back(i); 
+    //     }
+    //     _context.partial_update_info->extra_update_cids.emplace(std::pair{segment_id, extra_update_cids});
+    // }
 
-    {
-        // Update rowset schema, tablet's tablet schema will be updated when build Rowset
-        // Eg. flush schema:    A(int),    B(float),  C(int), D(int)
-        // ctx.tablet_schema:  A(bigint), B(double)
-        // => update_schema:   A(bigint), B(double), C(int), D(int)
-        std::lock_guard<std::mutex> lock(*(_context.schema_lock));
-        TabletSchemaSPtr update_schema;
-        RETURN_IF_ERROR(vectorized::schema_util::get_least_common_schema(
-                {_context.tablet_schema, flush_schema}, nullptr, update_schema));
-        CHECK_GE(update_schema->num_columns(), flush_schema->num_columns())
-                << "Rowset merge schema columns count is " << update_schema->num_columns()
-                << ", but flush_schema is larger " << flush_schema->num_columns()
-                << " update_schema: " << update_schema->dump_structure()
-                << " flush_schema: " << flush_schema->dump_structure();
-        _context.tablet_schema.swap(update_schema);
-        VLOG_DEBUG << "dump rs schema: " << _context.tablet_schema->dump_structure();
-    }
+    // {
+    //     // Update rowset schema, tablet's tablet schema will be updated when build Rowset
+    //     // Eg. flush schema:    A(int),    B(float),  C(int), D(int)
+    //     // ctx.tablet_schema:  A(bigint), B(double)
+    //     // => update_schema:   A(bigint), B(double), C(int), D(int)
+    //     std::lock_guard<std::mutex> lock(*(_context.schema_lock));
+    //     TabletSchemaSPtr update_schema;
+    //     RETURN_IF_ERROR(vectorized::schema_util::get_least_common_schema(
+    //             {_context.tablet_schema, flush_schema}, nullptr, update_schema));
+    //     CHECK_GE(update_schema->num_columns(), flush_schema->num_columns())
+    //             << "Rowset merge schema columns count is " << update_schema->num_columns()
+    //             << ", but flush_schema is larger " << flush_schema->num_columns()
+    //             << " update_schema: " << update_schema->dump_structure()
+    //             << " flush_schema: " << flush_schema->dump_structure();
+    //     _context.tablet_schema.swap(update_schema);
+    //     VLOG_DEBUG << "dump rs schema: " << _context.tablet_schema->dump_structure();
+    // }
 
-    block.swap(flush_block); // NOLINT(bugprone-use-after-move)
-    VLOG_DEBUG << "dump block: " << block.dump_data();
-    VLOG_DEBUG << "dump flush schema: " << flush_schema->dump_structure();
+    // block.swap(flush_block); // NOLINT(bugprone-use-after-move)
+    // VLOG_DEBUG << "dump block: " << block.dump_data();
+    // VLOG_DEBUG << "dump flush schema: " << flush_schema->dump_structure();
     return Status::OK();
 }
 

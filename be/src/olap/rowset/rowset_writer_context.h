@@ -43,6 +43,34 @@ struct RowsetWriterContext {
         load_id.set_lo(0);
     }
 
+    std::vector<int32_t> calculate_variant_cids() {
+        std::vector<int32_t> variant_cids;
+
+        auto add_variant_positions = [&](const auto& schema) {
+            for (int i = 0; i < schema.columns().size(); ++i) {
+                if (schema.columns()[i]->is_variant_type()) {
+                    variant_cids.push_back(i);
+                }
+            }
+        };
+
+        auto schema = original_tablet_schema ? original_tablet_schema : tablet_schema;
+
+        if (partial_update_info && partial_update_info->is_partial_update) {
+            // add variant pos for partial update
+            for (int cid : partial_update_info->update_cids) {
+                if(schema->column(cid).is_variant_type()) {
+                    variant_cids.push_back(cid);
+                }
+            }
+        } else {
+            add_variant_positions(*schema);
+        }
+
+        return variant_cids;
+    }
+
+    
     RowsetId rowset_id;
     int64_t tablet_id {0};
     int64_t tablet_schema_hash {0};

@@ -31,6 +31,7 @@
 #include "common/compiler_util.h" // IWYU pragma: keep
 #include "common/config.h"
 #include "common/logging.h" // LOG
+#include "common/status.h"
 #include "gutil/port.h"
 #include "inverted_index_fs_directory.h"
 #include "io/fs/file_writer.h"
@@ -40,7 +41,8 @@
 #include "olap/olap_common.h"
 #include "olap/primary_key_index.h"
 #include "olap/row_cursor.h"                      // RowCursor // IWYU pragma: keep
-#include "olap/rowset/rowset_writer_context.h"    // RowsetWriterContext
+#include "olap/rowset/rowset_writer_context.h"
+#include "olap/rowset/rowset_writer_opts.rowset_ctx->h"    // RowsetWriterContext
 #include "olap/rowset/segment_v2/column_writer.h" // ColumnWriter
 #include "olap/rowset/segment_v2/inverted_index_file_writer.h"
 #include "olap/rowset/segment_v2/page_io.h"
@@ -318,7 +320,8 @@ Status VerticalSegmentWriter::_append_block_with_partial_content(RowsInBlock& da
     auto tablet = static_cast<Tablet*>(_tablet.get());
     // create full block and fill with input columns
     auto full_block = _tablet_schema->create_block();
-    const auto& including_cids = _opts.rowset_ctx->partial_update_info->update_cids;
+    std::vector<uint32_t> including_cids = _opts.rowset_ctx->partial_update_info->update_cids;
+    including_cids.insert(including_cids.end(), _extra_update_cids.begin(), _extra_update_cids.end()); 
     size_t input_id = 0;
     for (auto i : including_cids) {
         full_block.replace_by_position(i, data.block->get_by_position(input_id++).column);
@@ -504,11 +507,17 @@ Status VerticalSegmentWriter::_append_block_with_partial_content(RowsInBlock& da
     auto mutable_full_columns = full_block.mutate_columns();
     RETURN_IF_ERROR(_fill_missing_columns(mutable_full_columns, use_default_or_null_flag,
                                           has_default_or_nullable, segment_start_pos));
+    LOG(INFO) << "dump full block " << full_block.dump_data(0, 100);
     // row column should be filled here
     if (_tablet_schema->store_row_column()) {
         // convert block to row store format
         _serialize_block_to_row_column(full_block);
     }
+
+    auto final_schema = std::make_shared<TabletSchema>();
+    final_schema->copy_from(*_tablet_schema);
+    vectorized::schema_util::rebuild_schema_and_block(
+            _tablet_schema, {1} /*hard coded, todo xxxx */ , full_block, final_schema);
 
     // convert missing columns and send to column writer
     const auto& missing_cids = _opts.rowset_ctx->partial_update_info->missing_cids;
@@ -707,11 +716,66 @@ Status VerticalSegmentWriter::batch_block(const vectorized::Block* block, size_t
                 "illegal block columns, block columns = {}, tablet_schema columns = {}",
                 block->columns(), _tablet_schema->num_columns());
     }
+    if (_tablet_schema->num_variant_columns() > 0 && !_batched_blocks.empty()) {
+        return Status::InternalError(
+                    "illegal blocks num to align variants, use flush_single_block instead"); 
+    }
     _batched_blocks.emplace_back(block, row_pos, num_rows);
     return Status::OK();
 }
 
+Status VerticalSegmentWriter::_flatten_variant_columns(const std::vector<int32_t>& variant_cids,
+                                                    const TabletSchemaSPtr& original_schema) {
+    // handle dynamic columns
+    if (variant_cids.empty()) {
+        return Status::OK();
+    }
+    auto flush_schema = std::make_shared<TabletSchema>();
+    flush_schema->copy_from(*original_schema);
+    vectorized::Block flush_block(*_batched_blocks[0].block);
+    vectorized::schema_util::rebuild_schema_and_block(
+            original_schema, variant_cids, flush_block, flush_schema);
+    for (uint32_t i = original_schema->num_columns(); i < flush_schema->num_columns(); ++i) {
+        _extra_update_cids.push_back(i);
+    }
+    {
+        // Update rowset schema, tablet's tablet schema will be updated when build Rowset
+        // Eg. flush schema:    A(int),    B(float),  C(int), D(int)
+        // ctx.tablet_schema:  A(bigint), B(double)
+        // => update_schema:   A(bigint), B(double), C(int), D(int)
+        std::lock_guard<std::mutex> lock(*(_opts.rowset_ctx->schema_lock));
+        TabletSchemaSPtr update_schema;
+        RETURN_IF_ERROR(vectorized::schema_util::get_least_common_schema(
+                {_opts.rowset_ctx->tablet_schema, flush_schema}, nullptr, update_schema));
+        CHECK_GE(update_schema->num_columns(), flush_schema->num_columns())
+                << "Rowset merge schema columns count is " << update_schema->num_columns()
+                << ", but flush_schema is larger " << flush_schema->num_columns()
+                << " update_schema: " << update_schema->dump_structure()
+                << " flush_schema: " << flush_schema->dump_structure();
+        _opts.rowset_ctx->tablet_schema.swap(update_schema);
+        VLOG_DEBUG << "dump rs schema: " << _opts.rowset_ctx->tablet_schema->dump_structure();
+    }
+
+
+    const_cast<vectorized::Block*>(_batched_blocks[0].block)->swap(flush_block);
+    VLOG_DEBUG << "dump block: " << _batched_blocks[0].block->dump_data();
+    VLOG_DEBUG << "dump flush schema: " << flush_schema->dump_structure();
+}
+
+Status VerticalSegmentWriter::_create_column_writers(const std::vector<uint32_t>& cids, const TabletSchemaSPtr& schema) {
+    for (uint32_t cid : cids) {
+        RETURN_IF_ERROR(_create_column_writer(cid, _tablet_schema->column(cid)));
+    }
+}
+
 Status VerticalSegmentWriter::write_batch() {
+    {
+        std::lock_guard<std::mutex> lock(*(_opts.rowset_ctx->schema_lock));
+        // save original tablet schema, _context->tablet_schema maybe modified
+        if (_opts.rowset_ctx->original_tablet_schema == nullptr) {
+            _opts.rowset_ctx->original_tablet_schema = _opts.rowset_ctx->tablet_schema;
+        }
+    }
     if (_opts.rowset_ctx->partial_update_info &&
         _opts.rowset_ctx->partial_update_info->is_partial_update &&
         _opts.write_type == DataWriteType::TYPE_DIRECT &&
@@ -727,7 +791,8 @@ Status VerticalSegmentWriter::write_batch() {
             RETURN_IF_ERROR(column_writer->write_data());
         }
         return Status::OK();
-    }
+
+    RETURN_IF_ERROR(_flatten_variant_columns(_opts.rowset_ctx->calculate_variant_cids(), _opts.rowset_ctx->original_tablet_schema));
     // Row column should be filled here when it's a directly write from memtable
     // or it's schema change write(since column data type maybe changed, so we should reubild)
     if (_tablet_schema->store_row_column() &&

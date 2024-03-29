@@ -17,7 +17,9 @@
 
 #pragma once
 
+#include <parallel_hashmap/phmap.h>
 #include "olap/tablet_schema.h"
+#include "vec/common/string_ref.h"
 
 namespace doris {
 
