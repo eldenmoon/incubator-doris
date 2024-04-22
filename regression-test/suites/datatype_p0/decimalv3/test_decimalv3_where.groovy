@@ -25,6 +25,7 @@ suite("test_decimalv3_where") {
 	qt_decimalv3 "select * from ${tableName} where dr != 1  order by age;"
 
     sql """set enable_nereids_planner=false;"""
+    sql """set enable_short_circuit_query=false;"""
     sql """drop table if exists test_sys_update_basic_test_update_decimal_tb"""
     sql """CREATE TABLE test_sys_update_basic_test_update_decimal_tb (
               k1 DECIMAL(10, 5) NULL, 

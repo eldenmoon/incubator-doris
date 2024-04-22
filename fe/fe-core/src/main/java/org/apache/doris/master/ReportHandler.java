@@ -855,7 +855,8 @@ public class ReportHandler extends Daemon {
                                             olapTable.getTimeSeriesCompactionEmptyRowsetsThreshold(),
                                             olapTable.getTimeSeriesCompactionLevelThreshold(),
                                             olapTable.storeRowColumn(),
-                                            binlogConfig);
+                                            binlogConfig,
+                                            olapTable.getColumnGroupsUniqueIds());
 
                                     createReplicaTask.setIsRecoverTask(true);
                                     createReplicaBatchTask.addTask(createReplicaTask);

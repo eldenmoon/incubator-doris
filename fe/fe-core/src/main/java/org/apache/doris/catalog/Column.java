@@ -1114,6 +1114,15 @@ public class Column implements Writable, GsonPostProcessable {
         return this.autoIncInitValue;
     }
 
+    public void setColumnGroupIds(TColumn tColumn, OlapTable olapTable) {
+        if (tColumn.getColumnName().startsWith(Column.ROW_STORE_COL)) {
+            Map<String, List<Integer>> columnGroupsUniqueIds = olapTable.getColumnGroupsUniqueIds();
+            List<Integer> groupColumns = columnGroupsUniqueIds.getOrDefault(
+                    tColumn.getColumnName().substring(Column.ROW_STORE_COL.length()), null);
+            tColumn.setColumnGroupColIds(groupColumns);
+        }
+    }
+
     public void setIndexFlag(TColumn tColumn, OlapTable olapTable) {
         List<Index> indexes = olapTable.getIndexes();
         for (Index index : indexes) {

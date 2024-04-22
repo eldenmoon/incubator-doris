@@ -47,6 +47,7 @@ import org.apache.logging.log4j.Logger;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 
@@ -123,6 +124,8 @@ public class CreateReplicaTask extends AgentTask {
     private BinlogConfig binlogConfig;
     private List<Integer> clusterKeyIndexes;
 
+    private Map<String, List<Integer>> columnGroupUniqueIds;
+
     public CreateReplicaTask(long backendId, long dbId, long tableId, long partitionId, long indexId, long tabletId,
                              long replicaId, short shortKeyColumnCount, int schemaHash, long version,
                              KeysType keysType, TStorageType storageType,
@@ -144,7 +147,8 @@ public class CreateReplicaTask extends AgentTask {
                              long timeSeriesCompactionEmptyRowsetsThreshold,
                              long timeSeriesCompactionLevelThreshold,
                              boolean storeRowColumn,
-                             BinlogConfig binlogConfig) {
+                             BinlogConfig binlogConfig,
+                             Map<String, List<Integer>> columnGroupUniqueIds) {
         super(null, backendId, TTaskType.CREATE, dbId, tableId, partitionId, indexId, tabletId);
 
         this.replicaId = replicaId;
@@ -170,6 +174,7 @@ public class CreateReplicaTask extends AgentTask {
         this.tabletType = tabletType;
         this.dataSortInfo = dataSortInfo;
         this.enableUniqueKeyMergeOnWrite = (keysType == KeysType.UNIQUE_KEYS && enableUniqueKeyMergeOnWrite);
+        this.columnGroupUniqueIds = columnGroupUniqueIds;
         if (storagePolicy != null && !storagePolicy.isEmpty()) {
             Optional<Policy> policy = Env.getCurrentEnv().getPolicyMgr()
                     .findPolicy(storagePolicy, PolicyTypeEnum.STORAGE);
@@ -267,6 +272,14 @@ public class CreateReplicaTask extends AgentTask {
             // is bloom filter column
             if (bfColumns != null && bfColumns.contains(column.getName())) {
                 tColumn.setIsBloomFilterColumn(true);
+            }
+            // column group(row store)
+            if (column.getName().startsWith(Column.ROW_STORE_COL)) {
+                String groupName = column.getName().substring(Column.ROW_STORE_COL.length());
+                if (columnGroupUniqueIds != null
+                        && columnGroupUniqueIds.containsKey(groupName)) {
+                    tColumn.setColumnGroupColIds(columnGroupUniqueIds.get(groupName));
+                }
             }
             // when doing schema change, some modified column has a prefix in name.
             // this prefix is only used in FE, not visible to BE, so we should remove this prefix.

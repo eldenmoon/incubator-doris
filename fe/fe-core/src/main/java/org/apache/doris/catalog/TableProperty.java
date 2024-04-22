@@ -30,7 +30,9 @@ import org.apache.doris.thrift.TInvertedIndexStorageFormat;
 import org.apache.doris.thrift.TStorageFormat;
 import org.apache.doris.thrift.TStorageMedium;
 
+import com.google.common.base.Preconditions;
 import com.google.common.base.Strings;
+import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
 import com.google.gson.annotations.SerializedName;
 import org.apache.logging.log4j.LogManager;
@@ -40,6 +42,7 @@ import java.io.DataInput;
 import java.io.DataOutput;
 import java.io.IOException;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -69,6 +72,9 @@ public class TableProperty implements Writable {
     private BinlogConfig binlogConfig;
 
     private TStorageMedium storageMedium = null;
+
+    // group name-> column columns
+    private Map<String, List<String>> columnGroups;
 
     /*
      * the default storage format of this table.
@@ -383,6 +389,59 @@ public class TableProperty implements Writable {
         properties.remove(PropertyAnalyzer.PROPERTIES_COLOCATE_WITH);
     }
 
+    public TableProperty buildColumnGroups() {
+        try {
+            // column groups
+            Map<String, List<String>> columnGroups = PropertyAnalyzer.analyzeColumnGroups(properties);
+            this.columnGroups = columnGroups;
+        } catch (AnalysisException e) {
+            // should not happen
+            LOG.error("should not happen when build column group", e);
+        }
+        return this;
+    }
+
+    public void setColumnGroups(Map<String, List<String>> columnGroups) {
+        StringBuilder sb = new StringBuilder();
+        int cursor = 0;
+        for (Map.Entry<String, List<String>> entry
+                : columnGroups.entrySet()) {
+            // group:k1,k2,k3
+            String groupName = entry.getKey();
+            sb.append(groupName).append(":");
+            int cursor1 = 0;
+            for (String columnName : entry.getValue()) {
+                sb.append(columnName);
+                ++cursor1;
+                if (cursor1 != entry.getValue().size()) {
+                    sb.append(',');
+                }
+            }
+            cursor++;
+            if (cursor != columnGroups.size()) {
+                sb.append(";");
+            }
+        }
+        this.columnGroups = columnGroups;
+        properties.put(PropertyAnalyzer.PROPERTIES_COLUMN_GROUPS, sb.toString());
+    }
+
+    public Map<String, List<Integer>> getColumnGroupsUniqueIds(Map<String, Column> nameToColumn) {
+        Map<String, List<Integer>> groupColumnIds = Maps.newHashMap();
+        if (columnGroups != null) {
+            for (Map.Entry<String, List<String>> entry : columnGroups.entrySet()) {
+                List<Integer> columnUniqueIds = Lists.newArrayList();
+                for (String name : entry.getValue()) {
+                    Column col = nameToColumn.get(name);
+                    Preconditions.checkNotNull(col);
+                    columnUniqueIds.add(col.getUniqueId());
+                }
+                groupColumnIds.put(entry.getKey(), columnUniqueIds);
+            }
+        }
+        return groupColumnIds;
+    }
+
     public TableProperty buildBinlogConfig() {
         BinlogConfig binlogConfig = new BinlogConfig();
         if (properties.containsKey(PropertyAnalyzer.PROPERTIES_BINLOG_ENABLE)) {
@@ -616,7 +675,8 @@ public class TableProperty implements Writable {
                 .buildDisableAutoCompaction()
                 .buildEnableSingleReplicaCompaction()
                 .buildTimeSeriesCompactionEmptyRowsetsThreshold()
-                .buildTimeSeriesCompactionLevelThreshold();
+                .buildTimeSeriesCompactionLevelThreshold()
+                .buildColumnGroups();
         if (Env.getCurrentEnvJournalVersion() < FeMetaVersion.VERSION_105) {
             // get replica num from property map and create replica allocation
             String repNum = tableProperty.properties.remove(PropertyAnalyzer.PROPERTIES_REPLICATION_NUM);

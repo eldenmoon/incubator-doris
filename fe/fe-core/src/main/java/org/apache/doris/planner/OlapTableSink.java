@@ -286,6 +286,7 @@ public class OlapTableSink extends DataSink {
                     tColumn.setColumnName(column.getNonShadowName());
                 }
                 column.setIndexFlag(tColumn, table);
+                column.setColumnGroupIds(tColumn, table);
                 columnsDesc.add(tColumn);
             }
             List<Index> indexes = indexMeta.getIndexes();

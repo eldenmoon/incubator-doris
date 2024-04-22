@@ -50,7 +50,7 @@ suite("test_point_query_load", "p0") {
         DUPLICATE KEY(`k1`)
         COMMENT 'OLAP'
         DISTRIBUTED BY HASH(`k1`) BUCKETS 10
-        PROPERTIES("replication_num" = "1", "store_row_column" = "true");
+        PROPERTIES("replication_num" = "1", "store_row_column" = "true", "column_groups" = "group1:k1,c_bool,c_tinyint,c_bigint,c_decimal,c_decimalv3,c_datev2,c_string");
         """
 
     // load data

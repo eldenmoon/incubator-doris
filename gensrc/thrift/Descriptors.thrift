@@ -42,6 +42,8 @@ struct TColumn {
     17: optional bool result_is_nullable
     18: optional bool is_auto_increment = false;
     19: optional i32 cluster_key_id = -1
+    // col unique id for column-group column
+    20: optional list<i32> column_group_col_ids
 }
 
 struct TSlotDescriptor {

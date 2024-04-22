@@ -25,6 +25,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include <algorithm>
 #include <map>
 #include <memory>
 #include <string>
@@ -168,6 +169,7 @@ public:
     const TabletColumn& sparse_column_at(size_t oridinal) const;
     const std::vector<TabletColumnPtr>& sparse_columns() const;
     size_t num_sparse_columns() const { return _num_sparse_columns; }
+    const std::vector<int32_t>& group_ids() const { return _group_ids; }
 
 private:
     int32_t _unique_id = -1;
@@ -213,6 +215,10 @@ private:
     // Use shared_ptr for reuse and reducing column memory usage
     std::vector<TabletColumnPtr> _sparse_cols;
     size_t _num_sparse_columns = 0;
+
+    // groups of this column belongs to
+    // contains column ids of group, and encode the group of columns into row store
+    std::vector<int32_t> _group_ids;
 };
 
 bool operator==(const TabletColumn& a, const TabletColumn& b);
@@ -323,8 +329,13 @@ public:
         _enable_single_replica_compaction = enable_single_replica_compaction;
     }
     bool enable_single_replica_compaction() const { return _enable_single_replica_compaction; }
-    void set_store_row_column(bool store_row_column) { _store_row_column = store_row_column; }
-    bool store_row_column() const { return _store_row_column; }
+    // indicate if full row store column(all the columns encodes as row) exists
+    bool has_full_row_store_column() const { return _store_row_column; }
+    // any column is row store column includes full row store column and partial row store column
+    bool has_partial_or_full_row_store_column() const {
+        return std::any_of(_cols.begin(), _cols.end(),
+                           [](const auto& col) { return col->is_row_store_column(); });
+    }
     void set_skip_write_index_on_load(bool skip) { _skip_write_index_on_load = skip; }
     bool skip_write_index_on_load() const { return _skip_write_index_on_load; }
     int32_t delete_sign_idx() const { return _delete_sign_idx; }

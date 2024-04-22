@@ -415,21 +415,57 @@ public class CreateTableInfo {
                 if (keysType.equals(KeysType.UNIQUE_KEYS)) {
                     if (isEnableMergeOnWrite) {
                         columns.add(
-                                ColumnDefinition.newRowStoreColumnDefinition(AggregateType.NONE));
+                                ColumnDefinition.newRowStoreColumnDefinition(AggregateType.NONE, ""));
                     } else {
                         columns.add(ColumnDefinition
-                                .newRowStoreColumnDefinition(AggregateType.REPLACE));
+                                .newRowStoreColumnDefinition(AggregateType.REPLACE, ""));
                     }
                 } else {
-                    columns.add(ColumnDefinition.newRowStoreColumnDefinition(null));
+                    columns.add(ColumnDefinition.newRowStoreColumnDefinition(null, ""));
                 }
             }
+
             if (Config.enable_hidden_version_column_by_default
                     && keysType.equals(KeysType.UNIQUE_KEYS)) {
                 if (isEnableMergeOnWrite) {
                     columns.add(ColumnDefinition.newVersionColumnDefinition(AggregateType.NONE));
                 } else {
                     columns.add(ColumnDefinition.newVersionColumnDefinition(AggregateType.REPLACE));
+                }
+            }
+
+            if (properties != null) {
+                Map<String, List<String>> columnGroups = null;
+                try {
+                    columnGroups = PropertyAnalyzer.analyzeColumnGroups(Maps.newHashMap(properties));
+                } catch (org.apache.doris.common.AnalysisException e) {
+                    throw new AnalysisException(e.getMessage());
+                }
+                if (columnGroups != null) {
+                    // check columns in column def
+                    columnGroups.entrySet().stream()
+                            .flatMap(entry -> entry.getValue().stream())
+                            .filter(colName ->
+                                columns.stream().noneMatch(column -> column.getName().equalsIgnoreCase(colName)))
+                            .findFirst()
+                            .ifPresent(invalidColName -> {
+                                throw new AnalysisException(
+                                    "Column does not exist in table. Invalid column: " + invalidColName);
+                            });
+                    for (Map.Entry<String, List<String>> entry : columnGroups.entrySet()) {
+                        if (keysType.equals(KeysType.UNIQUE_KEYS)) {
+                            if (isEnableMergeOnWrite) {
+                                columns.add(
+                                        ColumnDefinition.newRowStoreColumnDefinition(
+                                            AggregateType.NONE, entry.getKey()));
+                            } else {
+                                columns.add(ColumnDefinition
+                                        .newRowStoreColumnDefinition(AggregateType.REPLACE, entry.getKey()));
+                            }
+                        } else {
+                            columns.add(ColumnDefinition.newRowStoreColumnDefinition(null, entry.getKey()));
+                        }
+                    }
                 }
             }
 

@@ -273,6 +273,8 @@ public class SessionVariable implements Serializable, Writable {
 
     public static final String ENABLE_PROJECTION = "enable_projection";
 
+    public static final String ENABLE_SHORT_CIRCUIT_QUERY = "enable_short_circuit_query";
+
     public static final String CHECK_OVERFLOW_FOR_DECIMAL = "check_overflow_for_decimal";
 
     public static final String DECIMAL_OVERFLOW_SCALE = "decimal_overflow_scale";
@@ -1107,6 +1109,9 @@ public class SessionVariable implements Serializable, Writable {
 
     @VariableMgr.VarAttr(name = ENABLE_PROJECTION)
     private boolean enableProjection = true;
+
+    @VariableMgr.VarAttr(name = ENABLE_SHORT_CIRCUIT_QUERY)
+    private boolean enableShortCircuitQuery = true;
 
     @VariableMgr.VarAttr(name = CHECK_OVERFLOW_FOR_DECIMAL)
     private boolean checkOverflowForDecimal = true;
@@ -2812,6 +2817,10 @@ public class SessionVariable implements Serializable, Writable {
 
     public boolean isEnableProjection() {
         return enableProjection;
+    }
+
+    public boolean isEnableShortCircuitQuery() {
+        return enableShortCircuitQuery;
     }
 
     public boolean checkOverflowForDecimal() {

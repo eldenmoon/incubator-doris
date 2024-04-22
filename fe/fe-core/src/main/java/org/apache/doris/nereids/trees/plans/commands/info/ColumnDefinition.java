@@ -652,8 +652,9 @@ public class ColumnDefinition {
                 Optional.empty(), "sequence column hidden column", false);
     }
 
-    public static ColumnDefinition newRowStoreColumnDefinition(AggregateType aggregateType) {
-        return new ColumnDefinition(Column.ROW_STORE_COL, StringType.INSTANCE, false, aggregateType, false,
+    public static ColumnDefinition newRowStoreColumnDefinition(AggregateType aggregateType, String groupName) {
+        String colName = Column.ROW_STORE_COL + groupName;
+        return new ColumnDefinition(colName, StringType.INSTANCE, false, aggregateType, false,
                 Optional.of(new DefaultValue("")), "doris row store hidden column", false);
     }
 

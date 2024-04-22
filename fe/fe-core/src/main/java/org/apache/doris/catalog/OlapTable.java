@@ -1194,6 +1194,14 @@ public class OlapTable extends Table implements MTMVRelatedTableIf {
         this.bfFpp = bfFpp;
     }
 
+    public Map<String, List<Integer>> getColumnGroupsUniqueIds() {
+        return getOrCreatTableProperty().getColumnGroupsUniqueIds(nameToColumn);
+    }
+
+    public void setColumnGroups(Map<String, List<String>> columnGroups) {
+        getOrCreatTableProperty().setColumnGroups(columnGroups);
+    }
+
     public String getSequenceMapCol() {
         if (tableProperty == null) {
             return null;
@@ -1983,6 +1991,15 @@ public class OlapTable extends Table implements MTMVRelatedTableIf {
         return null;
     }
 
+    public Column getBaseColumn(int colUniqueId) {
+        for (Column column : getBaseSchema()) {
+            if (column.getUniqueId() == colUniqueId) {
+                return column;
+            }
+        }
+        return null;
+    }
+
     public int getKeysNum() {
         int keysNum = 0;
         for (Column column : getBaseSchema()) {
@@ -2644,6 +2661,7 @@ public class OlapTable extends Table implements MTMVRelatedTableIf {
             for (Column col : this.getSchemaByIndexId(selectedIndexId, true)) {
                 TColumn tColumn = col.toThrift();
                 col.setIndexFlag(tColumn, this);
+                col.setColumnGroupIds(tColumn, this);
                 if (columnsDesc != null) {
                     columnsDesc.add(tColumn);
                 }

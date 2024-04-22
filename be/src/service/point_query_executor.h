@@ -40,6 +40,7 @@
 #include "common/logging.h"
 #include "common/status.h"
 #include "gutil/int128.h"
+#include "gutil/integral_types.h"
 #include "olap/lru_cache.h"
 #include "olap/olap_common.h"
 #include "olap/rowset/rowset.h"
@@ -72,7 +73,8 @@ public:
     }
 
     Status init(const TDescriptorTable& t_desc_tbl, const std::vector<TExpr>& output_exprs,
-                const TQueryOptions& query_options, size_t block_size = 1);
+                const TQueryOptions& query_options, const TabletSchema& schema,
+                size_t block_size = 1);
 
     std::unique_ptr<vectorized::Block> get_block();
 
@@ -91,6 +93,12 @@ public:
 
     const vectorized::VExprContextSPtrs& output_exprs() { return _output_exprs_ctxs; }
 
+    int32_t rs_column_uid() const { return _rs_column_uid; }
+
+    const std::unordered_set<int32_t> missing_col_uids() const { return _missing_col_uids; }
+
+    const std::unordered_set<int32_t> include_col_uids() const { return _include_col_uids; }
+
 private:
     // caching TupleDescriptor, output_expr, etc...
     std::unique_ptr<RuntimeState> _runtime_state;
@@ -103,6 +111,12 @@ private:
     vectorized::DataTypeSerDeSPtrs _data_type_serdes;
     std::unordered_map<uint32_t, uint32_t> _col_uid_to_idx;
     std::vector<std::string> _col_default_values;
+    // picked rowstore(column group) column unique id
+    int32_t _rs_column_uid;
+    // some column is missing in rowstore(column group), we need to fill them with column store values
+    std::unordered_set<int32_t> _missing_col_uids;
+    // included cids in rowstore(column group)
+    std::unordered_set<int32_t> _include_col_uids;
 };
 
 // RowCache is a LRU cache for row store
@@ -314,6 +328,7 @@ private:
     std::unique_ptr<vectorized::Block> _result_block;
     Metrics _profile_metrics;
     bool _binary_row_format = false;
+    OlapReaderStatistics _read_stats;
     // snapshot read version
     int64_t _version = -1;
 };

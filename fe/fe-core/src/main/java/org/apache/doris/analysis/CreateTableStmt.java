@@ -58,6 +58,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
 import java.util.TreeSet;
 import java.util.stream.Collectors;
@@ -452,12 +453,12 @@ public class CreateTableStmt extends DdlStmt {
             }
             if (keysDesc != null && keysDesc.getKeysType() == KeysType.UNIQUE_KEYS) {
                 if (enableUniqueKeyMergeOnWrite) {
-                    columnDefs.add(ColumnDef.newRowStoreColumnDef(AggregateType.NONE));
+                    columnDefs.add(ColumnDef.newRowStoreColumnDef(AggregateType.NONE, ""));
                 } else {
-                    columnDefs.add(ColumnDef.newRowStoreColumnDef(AggregateType.REPLACE));
+                    columnDefs.add(ColumnDef.newRowStoreColumnDef(AggregateType.REPLACE, ""));
                 }
             } else {
-                columnDefs.add(ColumnDef.newRowStoreColumnDef(null));
+                columnDefs.add(ColumnDef.newRowStoreColumnDef(null, ""));
             }
         }
         if (Config.enable_hidden_version_column_by_default && keysDesc != null
@@ -466,6 +467,36 @@ public class CreateTableStmt extends DdlStmt {
                 columnDefs.add(ColumnDef.newVersionColumnDef(AggregateType.NONE));
             } else {
                 columnDefs.add(ColumnDef.newVersionColumnDef(AggregateType.REPLACE));
+            }
+        }
+
+        if (properties != null) {
+            Map<String, List<String>> columnGroups = PropertyAnalyzer.analyzeColumnGroups(Maps.newHashMap(properties));
+            if (columnGroups != null) {
+                // check columns in column def
+                Optional<String> invalidColumn = columnGroups.entrySet().stream()
+                        .flatMap(entry -> entry.getValue().stream())
+                        .filter(colName -> columnDefs.stream().noneMatch(
+                                columnDef -> columnDef.getName().equalsIgnoreCase(colName)))
+                        .findFirst();
+                if (invalidColumn.isPresent()) {
+                    throw new AnalysisException(
+                        "Column does not exist in table. Invalid column: " + invalidColumn.get());
+                }
+                for (Map.Entry<String, List<String>> entry : columnGroups.entrySet()) {
+                    if (keysDesc != null && keysDesc.getKeysType() == KeysType.UNIQUE_KEYS) {
+                        if (enableUniqueKeyMergeOnWrite) {
+                            columnDefs.add(
+                                    ColumnDef.newRowStoreColumnDef(AggregateType.NONE, entry.getKey()));
+                        } else {
+                            columnDefs.add(
+                                    ColumnDef.newRowStoreColumnDef(AggregateType.REPLACE, entry.getKey()));
+                        }
+                    } else {
+                        columnDefs.add(
+                                ColumnDef.newRowStoreColumnDef(null, entry.getKey()));
+                    }
+                }
             }
         }
         Set<String> columnSet = Sets.newTreeSet(String.CASE_INSENSITIVE_ORDER);

@@ -3486,6 +3486,30 @@ public class Env {
                 sb.append(olapTable.storeRowColumn()).append("\"");
             }
 
+            if (!olapTable.getColumnGroupsUniqueIds().isEmpty()) {
+                sb.append(",\n\"").append(PropertyAnalyzer.PROPERTIES_COLUMN_GROUPS).append("\" = \"");
+                int cursor = 0;
+                for (Map.Entry<String, List<Integer>> entry
+                        : olapTable.getColumnGroupsUniqueIds().entrySet()) {
+                    // group:k1,k2,k3
+                    String groupName = entry.getKey();
+                    sb.append(groupName).append(":");
+                    int cursor1 = 0;
+                    for (Integer columnId : entry.getValue()) {
+                        sb.append(olapTable.getBaseColumn(columnId).getName());
+                        ++cursor1;
+                        if (cursor1 != entry.getValue().size()) {
+                            sb.append(',');
+                        }
+                    }
+                    cursor++;
+                    if (cursor != olapTable.getColumnGroupsUniqueIds().size()) {
+                        sb.append(";");
+                    }
+                }
+                sb.append("\"");
+            }
+
             // skip inverted index on load
             if (olapTable.skipWriteIndexOnLoad()) {
                 sb.append(",\n\"").append(PropertyAnalyzer.PROPERTIES_SKIP_WRITE_INDEX_ON_LOAD).append("\" = \"");

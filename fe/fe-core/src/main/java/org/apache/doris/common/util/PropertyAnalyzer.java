@@ -51,12 +51,14 @@ import org.apache.doris.thrift.TTabletType;
 import com.google.common.base.Preconditions;
 import com.google.common.base.Strings;
 import com.google.common.collect.ImmutableList;
+import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
 import com.google.common.collect.Sets;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
+import java.util.Arrays;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
@@ -82,6 +84,8 @@ public class PropertyAnalyzer {
 
     public static final String PROPERTIES_BF_COLUMNS = "bloom_filter_columns";
     public static final String PROPERTIES_BF_FPP = "bloom_filter_fpp";
+
+    public static final String PROPERTIES_COLUMN_GROUPS = "column_groups";
 
     public static final String PROPERTIES_COLUMN_SEPARATOR = "column_separator";
     public static final String PROPERTIES_LINE_DELIMITER = "line_delimiter";
@@ -189,6 +193,8 @@ public class PropertyAnalyzer {
     public static final String ENABLE_UNIQUE_KEY_MERGE_ON_WRITE = "enable_unique_key_merge_on_write";
     private static final Logger LOG = LogManager.getLogger(PropertyAnalyzer.class);
     private static final String COMMA_SEPARATOR = ",";
+    private static final String SEMICOLON_SEPARATOR = ";";
+    private static final String COLON_SEPARATOR = ":";
     private static final double MAX_FPP = 0.05;
     private static final double MIN_FPP = 0.0001;
 
@@ -590,6 +596,38 @@ public class PropertyAnalyzer {
 
     public static Long analyzeVisibleVersion(Map<String, String> properties) throws AnalysisException {
         return getPropertyLong(properties, PROPERTIES_VISIBLE_VERSION);
+    }
+
+    // "column_groups" = "group1:column1,column2;group2:column3,column4"
+    public static Map<String, List<String>> analyzeColumnGroups(Map<String, String> properties)
+            throws AnalysisException {
+        Map<String, List<String>> columnGroups = null;
+        if (properties != null && properties.containsKey(PROPERTIES_COLUMN_GROUPS)) {
+            columnGroups = Maps.newHashMap();
+            String columnGroupsStr = properties.get(PROPERTIES_COLUMN_GROUPS);
+            if (Strings.isNullOrEmpty(columnGroupsStr)) {
+                return columnGroups;
+            }
+            String[] groups = columnGroupsStr.split(SEMICOLON_SEPARATOR);
+            for (String group : groups) {
+                String[] parts = group.split(COLON_SEPARATOR);
+                if (parts.length > 1) {
+                    String groupName = parts[0];
+                    String[] columns = parts[1].split(COMMA_SEPARATOR);
+                    if (columns.length == 0) {
+                        throw new AnalysisException("Column group " + groupName + " should not be empty");
+                    }
+                    Set<String> columnSet = Sets.newHashSet(Arrays.asList(columns));
+                    List<String> columnList = Lists.newArrayList(Arrays.asList(columns));
+                    if (columnSet.size() < columnList.size()) {
+                        throw new AnalysisException("Column group " + groupName + " contains duplicated columns");
+                    }
+                    columnGroups.put(groupName, columnList);
+                }
+            }
+        }
+        properties.remove(PROPERTIES_COLUMN_GROUPS);
+        return columnGroups;
     }
 
     public static Set<String> analyzeBloomFilterColumns(Map<String, String> properties, List<Column> columns,

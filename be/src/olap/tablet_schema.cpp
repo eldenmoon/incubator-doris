@@ -570,6 +570,8 @@ void TabletColumn::init_from_pb(const ColumnPB& column) {
         _sparse_cols.emplace_back(std::make_shared<TabletColumn>(std::move(column)));
         _num_sparse_columns++;
     }
+
+    _group_ids.assign(column.column_group_ids().begin(), column.column_group_ids().end());
 }
 
 TabletColumn TabletColumn::create_materialized_variant_column(const std::string& root,
@@ -641,6 +643,9 @@ void TabletColumn::to_schema_pb(ColumnPB* column) const {
         ColumnPB* sparse_column = column->add_sparse_columns();
         col->to_schema_pb(sparse_column);
     }
+    if (!_group_ids.empty()) {
+        column->mutable_column_group_ids()->Assign(_group_ids.begin(), _group_ids.end());
+    }
 }
 
 void TabletColumn::add_sub_column(TabletColumn& sub_column) {
@@ -650,7 +655,7 @@ void TabletColumn::add_sub_column(TabletColumn& sub_column) {
 }
 
 bool TabletColumn::is_row_store_column() const {
-    return _col_name == BeConsts::ROW_STORE_COL;
+    return _col_name.starts_with(BeConsts::ROW_STORE_COL);
 }
 
 vectorized::AggregateFunctionPtr TabletColumn::get_aggregate_function_union(
@@ -1005,7 +1010,7 @@ void TabletSchema::build_current_tablet_schema(int64_t index_id, int32_t version
     _is_in_memory = ori_tablet_schema.is_in_memory();
     _disable_auto_compaction = ori_tablet_schema.disable_auto_compaction();
     _enable_single_replica_compaction = ori_tablet_schema.enable_single_replica_compaction();
-    _store_row_column = ori_tablet_schema.store_row_column();
+    _store_row_column = ori_tablet_schema.has_full_row_store_column();
     _skip_write_index_on_load = ori_tablet_schema.skip_write_index_on_load();
     _sort_type = ori_tablet_schema.sort_type();
     _sort_col_num = ori_tablet_schema.sort_col_num();

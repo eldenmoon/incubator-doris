@@ -236,8 +236,9 @@ public class ColumnDef {
                 "sequence column hidden column", false);
     }
 
-    public static ColumnDef newRowStoreColumnDef(AggregateType aggregateType) {
-        return new ColumnDef(Column.ROW_STORE_COL, TypeDef.create(PrimitiveType.STRING), false,
+    public static ColumnDef newRowStoreColumnDef(AggregateType aggregateType, String groupName) {
+        String colName = Column.ROW_STORE_COL + groupName;
+        return new ColumnDef(colName, TypeDef.create(PrimitiveType.STRING), false,
                 aggregateType, false, -1,
                 new ColumnDef.DefaultValue(true, ""), "doris row store hidden column", false);
     }

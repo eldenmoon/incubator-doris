@@ -400,6 +400,9 @@ void TabletMeta::init_column_from_tcolumn(uint32_t unique_id, const TColumn& tco
         init_column_from_tcolumn(tcolumn.children_column[i].col_unique_id,
                                  tcolumn.children_column[i], children_column);
     }
+    for (int32 group_id : tcolumn.column_group_col_ids) {
+        column->add_column_group_ids(group_id);
+    }
 }
 
 Status TabletMeta::create_from_file(const string& file_path) {

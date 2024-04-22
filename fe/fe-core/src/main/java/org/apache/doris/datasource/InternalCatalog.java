@@ -1986,7 +1986,8 @@ public class InternalCatalog implements CatalogIf<Database> {
                             tbl.getTimeSeriesCompactionTimeThresholdSeconds(),
                             tbl.getTimeSeriesCompactionEmptyRowsetsThreshold(),
                             tbl.getTimeSeriesCompactionLevelThreshold(),
-                            tbl.storeRowColumn(), binlogConfig);
+                            tbl.storeRowColumn(), binlogConfig,
+                            tbl.getColumnGroupsUniqueIds());
 
                     task.setStorageFormat(tbl.getStorageFormat());
                     task.setInvertedIndexStorageFormat(tbl.getInvertedIndexStorageFormat());
@@ -2440,6 +2441,12 @@ public class InternalCatalog implements CatalogIf<Database> {
         Index.checkConflict(stmt.getIndexes(), bfColumns);
 
         olapTable.setReplicationAllocation(replicaAlloc);
+
+        // column groups
+        Map<String, List<String>> columnGroups = PropertyAnalyzer.analyzeColumnGroups(properties);
+        if (columnGroups != null) {
+            olapTable.setColumnGroups(columnGroups);
+        }
 
         // set auto bucket
         boolean isAutoBucket = PropertyAnalyzer.analyzeBooleanProp(properties, PropertyAnalyzer.PROPERTIES_AUTO_BUCKET,
