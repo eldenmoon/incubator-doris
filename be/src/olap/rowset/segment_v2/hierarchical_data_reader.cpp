@@ -99,7 +99,7 @@ Status HierarchicalDataReader::next_batch(size_t* n, vectorized::MutableColumnPt
                 CHECK(reader.inited);
                 RETURN_IF_ERROR(reader.iterator->next_batch(n, reader.column, has_null));
                 VLOG_DEBUG << fmt::format("{} next_batch {} rows, type={}", path.get_path(), *n,
-                                          type->get_name());
+                                         type->get_name());
                 reader.rows_read += *n;
                 return Status::OK();
             },

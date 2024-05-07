@@ -845,39 +845,13 @@ struct ConvertImplFromJsonb {
                         null_map[i] = 1;
                         res[i] = 0;
                     }
-                } else if constexpr (type_index == TypeIndex::Int8) {
-                    if (value->isInt8()) {
-                        res[i] = (int8_t)((const JsonbIntVal*)value)->val();
-                    } else {
-                        null_map[i] = 1;
-                        res[i] = 0;
-                    }
-                } else if constexpr (type_index == TypeIndex::Int16) {
-                    if (value->isInt8() || value->isInt16()) {
-                        res[i] = (int16_t)((const JsonbIntVal*)value)->val();
-                    } else {
-                        null_map[i] = 1;
-                        res[i] = 0;
-                    }
-                } else if constexpr (type_index == TypeIndex::Int32) {
-                    if (value->isInt8() || value->isInt16() || value->isInt32()) {
-                        res[i] = (int32_t)((const JsonbIntVal*)value)->val();
-                    } else {
-                        null_map[i] = 1;
-                        res[i] = 0;
-                    }
-                } else if constexpr (type_index == TypeIndex::Int64) {
-                    if (value->isInt8() || value->isInt16() || value->isInt32() ||
-                        value->isInt64()) {
-                        res[i] = (int64_t)((const JsonbIntVal*)value)->val();
-                    } else {
-                        null_map[i] = 1;
-                        res[i] = 0;
-                    }
-                } else if constexpr (type_index == TypeIndex::Int128) {
-                    if (value->isInt8() || value->isInt16() || value->isInt32() ||
-                        value->isInt64() || value->isInt128()) {
-                        res[i] = (int128_t)((const JsonbIntVal*)value)->val();
+                } else if constexpr (type_index == TypeIndex::Int8 ||
+                                     type_index == TypeIndex::Int16 ||
+                                     type_index == TypeIndex::Int32 ||
+                                     type_index == TypeIndex::Int64 ||
+                                     type_index == TypeIndex::Int128) {
+                    if (value->isInt()) {
+                        res[i] = ((const JsonbIntVal*)value)->val();
                     } else {
                         null_map[i] = 1;
                         res[i] = 0;
@@ -885,8 +859,7 @@ struct ConvertImplFromJsonb {
                 } else if constexpr (type_index == TypeIndex::Float64) {
                     if (value->isDouble()) {
                         res[i] = ((const JsonbDoubleVal*)value)->val();
-                    } else if (value->isInt8() || value->isInt16() || value->isInt32() ||
-                               value->isInt64()) {
+                    } else if (value->isInt()) {
                         res[i] = ((const JsonbIntVal*)value)->val();
                     } else {
                         null_map[i] = 1;
@@ -2085,7 +2058,6 @@ private:
             const auto& col_with_type_and_name = block.get_by_position(arguments[0]);
             auto& from_type = col_with_type_and_name.type;
             auto& col_from = col_with_type_and_name.column;
-
             // set variant root column/type to from column/type
             auto variant = ColumnObject::create(true /*always nullable*/);
             variant->create_root(from_type, col_from->assume_mutable());

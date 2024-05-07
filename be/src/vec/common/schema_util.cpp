@@ -51,8 +51,10 @@
 #include "vec/columns/column_array.h"
 #include "vec/columns/column_nullable.h"
 #include "vec/columns/column_object.h"
+#include "vec/columns/column_string.h"
 #include "vec/columns/columns_number.h"
 #include "vec/common/assert_cast.h"
+#include "vec/common/string_ref.h"
 #include "vec/common/typeid_cast.h"
 #include "vec/core/block.h"
 #include "vec/core/column_numbers.h"
@@ -586,9 +588,53 @@ void finalize_variant_columns(Block& block, const std::vector<int>& variant_pos,
                         ? assert_cast<ColumnObject&>(
                                   assert_cast<ColumnNullable&>(column_ref).get_nested_column())
                         : assert_cast<ColumnObject&>(column_ref);
-        // Record information about columns merged into a sparse column within a variant
-        std::vector<TabletColumn> sparse_subcolumns_schema;
         column.finalize(ignore_sparse);
+    }
+}
+
+// Revise root data for null values. For example, if a value is null in the null map
+// but the data is not empty (after casting a column with empty strings and null bits set to 0, it will lead to
+// JsonbValue for empty string), revise these null values to indicate empty data in the root.
+static void revise_root_data(MutableColumnPtr& root) {
+    // Ensure the root column is nullable
+    CHECK(root->is_nullable());
+
+    auto* nullable_column = assert_cast<ColumnNullable*>(root.get());
+    auto* nested_string_column = assert_cast<ColumnString*>(&nullable_column->get_nested_column());
+
+    // Get offsets of the nested string column
+    auto& offsets = nested_string_column->get_offsets();
+
+    // Flag to indicate if revision is needed
+    bool need_revision = false;
+
+    // Check if any null values have non-empty data
+    for (size_t i = 0; i < nullable_column->size(); ++i) {
+        if (nullable_column->is_null_at(i) && offsets[i] - offsets[i - 1] > 0) {
+            need_revision = true;
+            break;
+        }
+    }
+
+    // If revision is needed
+    if (need_revision) {
+        auto revised_column = ColumnString::create();
+        // Iterate through the original column to revise null values
+        for (size_t i = 0; i < nullable_column->size(); ++i) {
+            if (nullable_column->is_null_at(i)) {
+                revised_column->insert_default(); // Insert default (empty) data
+            } else {
+                // Copy non-null data from the original column
+                StringRef ref = nested_string_column->get_data_at(i);
+                revised_column->insert_data(ref.data, ref.size);
+            }
+        }
+
+        // Assign the revised data to the nested string column
+        nested_string_column->get_chars().clear();
+        nested_string_column->get_offsets().clear();
+        nested_string_column->get_chars().assign(revised_column->get_chars());
+        nested_string_column->get_offsets().assign(revised_column->get_offsets());
     }
 }
 
@@ -604,6 +650,8 @@ Status encode_variant_sparse_subcolumns(Block& block, const std::vector<int>& va
         auto expected_root_type = make_nullable(std::make_shared<ColumnObject::MostCommonType>());
         column.ensure_root_node_type(expected_root_type);
         RETURN_IF_ERROR(column.merge_sparse_to_root_column());
+        auto root = column.get_root();
+        revise_root_data(root);
     }
     return Status::OK();
 }

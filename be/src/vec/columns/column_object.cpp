@@ -55,6 +55,7 @@
 #include "vec/common/field_visitors.h"
 #include "vec/common/schema_util.h"
 #include "vec/common/string_buffer.hpp"
+#include "vec/core/block.h"
 #include "vec/core/column_with_type_and_name.h"
 #include "vec/core/field.h"
 #include "vec/core/types.h"
@@ -577,6 +578,9 @@ ColumnObject::Subcolumn::LeastCommonType::LeastCommonType(DataTypePtr type_)
     if (!WhichDataType(type).is_nothing()) {
         least_common_type_serder = type->get_serde();
     }
+    if (WhichDataType(vectorized::remove_nullable(type)).is_json()) {
+        is_most_common_type = true;
+    }
 }
 
 ColumnObject::ColumnObject(bool is_nullable_, bool create_root_)
@@ -713,26 +717,75 @@ void ColumnObject::insert_default() {
     ++num_rows;
 }
 
-Field ColumnObject::operator[](size_t n) const {
-    if (!is_finalized()) {
-        const_cast<ColumnObject*>(this)->finalize();
+void ColumnObject::Subcolumn::get(size_t n, Field& res) const {
+    if (least_common_type.most_common_type()) {
+        // JsonbFiled is special case
+        res = JsonbField();
     }
-    VariantMap map;
-    for (const auto& entry : subcolumns) {
-        if (WhichDataType(remove_nullable(entry->data.data_types.back())).is_json()) {
-            // JsonbFiled is special case
-            Field f = JsonbField();
-            (*entry->data.data.back()).get(n, f);
-            map[entry->path.get_path()] = std::move(f);
-            continue;
+    if (is_finalized()) {
+        get_finalized_column().get(n, res);
+        return;
+    }
+
+    size_t ind = n;
+    if (ind < num_of_defaults_in_prefix) {
+        // use null as default field
+        res = Null();
+        return;
+    }
+
+    ind -= num_of_defaults_in_prefix;
+    size_t pos = 0;
+    for (const auto& part : data) {
+        if (ind < part->size()) {
+            part->get(ind, res);
+            if (UNLIKELY(!least_common_type.get()->equals(*data_types[pos]))) {
+                Field new_field;
+                convert_field_to_type(res, *least_common_type.get(), &new_field,
+                                      data_types[pos].get());
+                res = std::move(new_field);
+            }
+            return;
         }
-        map[entry->path.get_path()] = (*entry->data.data.back())[n];
+
+        ind -= part->size();
     }
-    return map;
+
+    throw doris::Exception(ErrorCode::OUT_OF_BOUND, "Index ({}) for getting field is out of range",
+                           n);
+}
+
+Field ColumnObject::operator[](size_t n) const {
+    Field object;
+    get(n, object);
+    return object;
+    // if (!is_finalized()) {
+    //     const_cast<ColumnObject*>(this)->finalize();
+    // }
+    // VariantMap map;
+    // for (const auto& entry : subcolumns) {
+    //     if (WhichDataType(remove_nullable(entry->data.data_types.back())).is_json()) {
+    //         // JsonbFiled is special case
+    //         Field f = JsonbField();
+    //         (*entry->data.data.back()).get(n, f);
+    //         map[entry->path.get_path()] = std::move(f);
+    //         continue;
+    //     }
+    //     map[entry->path.get_path()] = (*entry->data.data.back())[n];
+    // }
+    // return map;
 }
 
 void ColumnObject::get(size_t n, Field& res) const {
-    res = (*this)[n];
+    // res = (*this)[n];
+    assert(n < size());
+    res = VariantMap();
+    auto& object = res.get<VariantMap&>();
+
+    for (const auto& entry : subcolumns) {
+        auto it = object.try_emplace(entry->path.get_path()).first;
+        entry->data.get(n, it->second);
+    }
 }
 
 Status ColumnObject::try_insert_indices_from(const IColumn& src, const int* indices_begin,
@@ -845,6 +898,8 @@ bool ColumnObject::add_sub_column(const PathInData& key, MutableColumnPtr&& subc
         }
         return true;
     }
+    VLOG_DEBUG << "insert column " << key.get_path()
+               << ", data=" << vectorized::Block::dump_column(subcolumn->get_ptr(), type);
     bool inserted = subcolumns.add(key, Subcolumn(std::move(subcolumn), type, is_nullable));
     if (!inserted) {
         VLOG_DEBUG << "Duplicated sub column " << key.get_path();
@@ -1401,8 +1456,7 @@ DataTypePtr ColumnObject::get_root_type() const {
     if (is_null_root()) {                                                                          \
         return Status::InternalError("No root column, path {}", path.get_path());                  \
     }                                                                                              \
-    if (!WhichDataType(remove_nullable(subcolumns.get_root()->data.get_least_common_type()))       \
-                 .is_json()) {                                                                     \
+    if (!subcolumns.get_root()->data.least_common_type.most_common_type()) {                       \
         return Status::InternalError(                                                              \
                 "Root column is not jsonb type but {}, path {}",                                   \
                 subcolumns.get_root()->data.get_least_common_type()->get_name(), path.get_path()); \
@@ -1412,8 +1466,8 @@ Status ColumnObject::extract_root(const PathInData& path) {
     SANITIZE_ROOT();
     if (!path.empty()) {
         MutableColumnPtr extracted;
-        RETURN_IF_ERROR(schema_util::extract(subcolumns.get_root()->data.get_finalized_column_ptr(),
-                                             path, extracted));
+        RETURN_IF_ERROR(schema_util::extract(
+                subcolumns.get_mutable_root()->data.get_finalized_column_ptr(), path, extracted));
         subcolumns.get_mutable_root()->data.data[0] = extracted->get_ptr();
     }
     return Status::OK();

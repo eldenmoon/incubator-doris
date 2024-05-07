@@ -136,6 +136,8 @@ public:
 
         void insertRangeFrom(const Subcolumn& src, size_t start, size_t length);
 
+        void get(size_t n, Field& res) const;
+
         void pop_back(size_t n);
 
         /// Converts all column's parts to the common type and
@@ -182,10 +184,13 @@ public:
 
             const DataTypeSerDeSPtr& get_serde() const { return least_common_type_serder; }
 
+            bool most_common_type() const { return is_most_common_type; }
+
         private:
             DataTypePtr type;
             DataTypePtr base_type;
             size_t num_dimensions = 0;
+            bool is_most_common_type = false;
             DataTypeSerDeSPtr least_common_type_serder;
         };
 
