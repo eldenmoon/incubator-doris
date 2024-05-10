@@ -206,13 +206,15 @@ suite("regression_test_variant", "nonConcurrent"){
         load_json_data.call(table_name, """${getS3Url() + '/load/ghdata_sample.json'}""")
         qt_sql_26 "select count() from ${table_name}"
 
-        // FIXME: this case it not passed
-        // // 8. json empty string
-        // // table_name = "empty_string"
-        // // create_table table_name
-        // // sql """INSERT INTO empty_string VALUES (1, ''), (2, '{"k1": 1, "k2": "v1"}'), (3, '{}'), (4, '{"k1": 2}');"""
-        // // sql """INSERT INTO empty_string VALUES (3, null), (4, '{"k1": 1, "k2": "v1"}'), (3, '{}'), (4, '{"k1": 2}');"""
-        // // qt_sql_27 "SELECT * FROM ${table_name} ORDER BY k;"
+        // 8. json empty string
+        table_name = "empty_string"
+        create_table table_name
+        sql """INSERT INTO empty_string VALUES (1, ''), (2, '{"k1": 1, "k2": "v1"}'), (3, '{}'), (4, '{"k1": 2}');"""
+        sql """INSERT INTO empty_string VALUES (3, null), (4, '{"k1": 1, "k2": "v1"}'), (3, '{}'), (4, '{"k1": 2}');"""
+        sql """INSERT INTO empty_string VALUES (3, null), (4, null), (3, '{}'), (4, '{"k1": 2}');"""
+        sql """INSERT INTO empty_string VALUES (3, '{"x" : 123}'), (4, null), (3, '{}'), (4, '{"k1": 2}');"""
+        qt_sql_27 "SELECT COUNT() FROM ${table_name}" 
+        qt_sql_28 "SELECT v['k1'] FROM ${table_name} where v['k1']  is not null order by cast(v['k1'] as int)" 
 
         // // // 9. btc data
         // // table_name = "btcdata"
