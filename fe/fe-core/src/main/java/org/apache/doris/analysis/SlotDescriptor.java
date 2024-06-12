@@ -350,6 +350,7 @@ public class SlotDescriptor {
                 .append(", nullable=").append(isNullable)
                 .append(", isAutoIncrement=").append(isAutoInc)
                 .append(", subColPath=").append(subColPath)
+                .append(", isDeferred=").append(!needMaterialize)
                 .append("}")
                 .toString();
     }

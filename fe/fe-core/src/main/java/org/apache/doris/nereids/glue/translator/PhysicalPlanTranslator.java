@@ -219,6 +219,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
 import java.util.TreeMap;
 import java.util.stream.Collectors;
@@ -1966,18 +1967,21 @@ public class PhysicalPlanTranslator extends DefaultPlanVisitor<PlanFragment, Pla
             if (inputPlanNode instanceof OlapScanNode) {
                 ArrayList<SlotDescriptor> olapScanSlots =
                         context.getTupleDesc(inputPlanNode.getTupleIds().get(0)).getSlots();
-                SlotDescriptor lastSlot = olapScanSlots.get(olapScanSlots.size() - 1);
-                if (lastSlot.getColumn() != null
-                        && lastSlot.getColumn().getName().equals(Column.ROWID_COL)) {
+                // SlotDescriptor lastSlot = olapScanSlots.get(olapScanSlots.size() - 1);
+                Optional<SlotDescriptor> rowidSlot = olapScanSlots.stream()
+                        .filter(s -> s.getColumn() != null
+                                && s.getColumn().getName().equalsIgnoreCase(Column.ROWID_COL))
+                        .findFirst();
+                if (rowidSlot.isPresent()) {
                     if (projectionTuple != null) {
                         injectRowIdColumnSlot(projectionTuple);
-                        SlotRef slotRef = new SlotRef(lastSlot);
+                        SlotRef slotRef = new SlotRef(rowidSlot.get());
                         inputPlanNode.getProjectList().add(slotRef);
-                        requiredByProjectSlotIdSet.add(lastSlot.getId());
+                        requiredByProjectSlotIdSet.add(rowidSlot.get().getId());
                     } else {
-                        slotIdsByOrder.add(lastSlot.getId());
+                        slotIdsByOrder.add(rowidSlot.get().getId());
                     }
-                    requiredSlotIdSet.add(lastSlot.getId());
+                    requiredSlotIdSet.add(rowidSlot.get().getId());
                 }
             }
             updateScanSlotsMaterialization((ScanNode) inputPlanNode, requiredSlotIdSet,
