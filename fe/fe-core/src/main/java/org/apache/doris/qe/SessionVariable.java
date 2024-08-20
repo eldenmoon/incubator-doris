@@ -616,6 +616,9 @@ public class SessionVariable implements Serializable, Writable {
 
     public static final String DESCRIBE_EXTEND_VARIANT_COLUMN = "describe_extend_variant_column";
 
+    // test only flag
+    public static final String USE_VARIANT_AS_COMPLEX_VARIANT = "use_variant_as_complex_variant";
+
     public static final String FORCE_JNI_SCANNER = "force_jni_scanner";
 
     public static final String ENABLE_COUNT_PUSH_DOWN_FOR_EXTERNAL_TABLE = "enable_count_push_down_for_external_table";
@@ -1157,6 +1160,9 @@ public class SessionVariable implements Serializable, Writable {
 
     @VariableMgr.VarAttr(name = DESCRIBE_EXTEND_VARIANT_COLUMN, needForward = true)
     public boolean enableDescribeExtendVariantColumn = false;
+
+    @VariableMgr.VarAttr(name = USE_VARIANT_AS_COMPLEX_VARIANT, needForward = true, fuzzy = true)
+    public boolean useVariantAsComplexVariant = false;
 
     @VariableMgr.VarAttr(name = PROFILLING)
     public boolean profiling = false;
@@ -2205,12 +2211,14 @@ public class SessionVariable implements Serializable, Writable {
             this.enableDeleteSubPredicateV2 = false;
             this.topnOptLimitThreshold = 0;
             this.enableSyncRuntimeFilterSize = true;
+            this.useVariantAsComplexVariant = true;
         } else {
             this.rewriteOrToInPredicateThreshold = 2;
             this.enableFunctionPushdown = true;
             this.enableDeleteSubPredicateV2 = true;
             this.topnOptLimitThreshold = 1024;
             this.enableSyncRuntimeFilterSize = false;
+            this.useVariantAsComplexVariant = false;
         }
 
         /*

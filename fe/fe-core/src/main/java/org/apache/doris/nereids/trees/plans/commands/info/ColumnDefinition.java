@@ -466,6 +466,18 @@ public class ColumnDefinition {
                     }
                 }
             }
+        } else if (catalogType.isComplexVariant()) {
+            ArrayList<org.apache.doris.catalog.StructField> predefinedFields =
+                    ((org.apache.doris.catalog.ComplexVariantType) catalogType).getPredefinedFields();
+            Set<String> fieldNames = new HashSet<>();
+            for (org.apache.doris.catalog.StructField field : predefinedFields) {
+                Type fieldType = field.getType();
+                validateNestedType(catalogType, fieldType);
+                if (!fieldNames.add(field.getName())) {
+                    throw new AnalysisException("Duplicate field name " + field.getName()
+                            + " in struct " + catalogType.toSql());
+                }
+            }
         }
     }
 

@@ -610,10 +610,10 @@ public class CreateTableInfo {
             if (distinct.size() != indexes.size()) {
                 throw new AnalysisException("index name must be unique.");
             }
-            if (distinctCol.size() != indexes.size()) {
-                throw new AnalysisException(
-                        "same index columns have multiple same type index is not allowed.");
-            }
+            // if (distinctCol.size() != indexes.size()) {
+            //     throw new AnalysisException(
+            //             "same index columns have multiple same type index is not allowed.");
+            // }
         }
         generatedColumnCheck(ctx);
     }

@@ -324,7 +324,7 @@ public class CastExpr extends Expr {
         FunctionName fnName = new FunctionName(getFnName(type));
         Function searchDesc = new Function(fnName, Arrays.asList(getActualArgTypes(collectChildReturnTypes())),
                 Type.INVALID, false);
-        if (type.isScalarType()) {
+        if (type.isScalarType() || type.isComplexVariant()) {
             fn = Env.getCurrentEnv().getFunction(searchDesc, Function.CompareMode.IS_IDENTICAL);
         } else {
             createComplexTypeCastFunction();

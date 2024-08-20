@@ -68,6 +68,7 @@ import org.apache.doris.catalog.AnyStructType;
 import org.apache.doris.catalog.AnyType;
 import org.apache.doris.catalog.ArrayType;
 import org.apache.doris.catalog.BrokerTable;
+import org.apache.doris.catalog.ComplexVariantType;
 import org.apache.doris.catalog.DatabaseIf;
 import org.apache.doris.catalog.DistributionInfo;
 import org.apache.doris.catalog.Env;
@@ -287,7 +288,8 @@ public class GsonUtils {
             .registerSubtype(AnyType.class, AnyType.class.getSimpleName())
             .registerSubtype(MultiRowType.class, MultiRowType.class.getSimpleName())
             .registerSubtype(TemplateType.class, TemplateType.class.getSimpleName())
-            .registerSubtype(VariantType.class, VariantType.class.getSimpleName());
+            .registerSubtype(VariantType.class, VariantType.class.getSimpleName())
+            .registerSubtype(ComplexVariantType.class, ComplexVariantType.class.getSimpleName());
 
     // runtime adapter for class "Expr"
     private static final RuntimeTypeAdapterFactory<org.apache.doris.analysis.Expr> exprAdapterFactory

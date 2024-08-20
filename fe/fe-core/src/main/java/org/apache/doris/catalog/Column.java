@@ -330,8 +330,9 @@ public class Column implements GsonPostProcessable {
             v.setIsAllowNull(((MapType) type).getIsValueContainsNull());
             column.addChildrenColumn(k);
             column.addChildrenColumn(v);
-        } else if (type.isStructType()) {
-            ArrayList<StructField> fields = ((StructType) type).getFields();
+        } else if (type.isStructType() || type.isComplexVariant()) {
+            ArrayList<StructField> fields = type.isStructType()
+                    ? ((StructType) type).getFields() : ((ComplexVariantType) type).getPredefinedFields();
             for (StructField field : fields) {
                 Column c = new Column(field.getName(), field.getType());
                 c.setIsAllowNull(field.getContainsNull());
@@ -657,7 +658,7 @@ public class Column implements GsonPostProcessable {
             tColumn.setChildrenColumn(new ArrayList<>());
             setChildrenTColumn(k, tColumn);
             setChildrenTColumn(v, tColumn);
-        } else if (column.type.isStructType()) {
+        } else if (column.type.isStructType() || column.type.isComplexVariant()) {
             List<Column> childrenColumns = column.getChildren();
             tColumn.setChildrenColumn(new ArrayList<>());
             for (Column children : childrenColumns) {
@@ -802,7 +803,7 @@ public class Column implements GsonPostProcessable {
             builder.addChildrenColumns(k.toPb(Sets.newHashSet(), Lists.newArrayList()));
             Column v = this.getChildren().get(1);
             builder.addChildrenColumns(v.toPb(Sets.newHashSet(), Lists.newArrayList()));
-        } else if (this.type.isStructType()) {
+        } else if (this.type.isStructType() || this.type.isComplexVariant()) {
             List<Column> childrenColumns = this.getChildren();
             for (Column c : childrenColumns) {
                 builder.addChildrenColumns(c.toPb(Sets.newHashSet(), Lists.newArrayList()));

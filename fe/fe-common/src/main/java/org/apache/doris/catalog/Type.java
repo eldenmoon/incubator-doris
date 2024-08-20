@@ -135,6 +135,8 @@ public abstract class Type {
     private static final ArrayList<Type> arraySubTypes;
     private static final ArrayList<Type> mapSubTypes;
     private static final ArrayList<Type> structSubTypes;
+
+    private static final ArrayList<Type> complexVariantSubTypes;
     private static final ArrayList<ScalarType> trivialTypes;
 
     static {
@@ -170,6 +172,8 @@ public abstract class Type {
         typeMap.put("MAP", Type.MAP);
         typeMap.put("OBJECT", Type.UNSUPPORTED);
         typeMap.put("ARRAY", Type.ARRAY);
+        typeMap.put("IPV4", Type.IPV4);
+        typeMap.put("IPV6", Type.IPV6);
         typeMap.put("QUANTILE_STATE", Type.QUANTILE_STATE);
     }
 
@@ -306,6 +310,27 @@ public abstract class Type {
         structSubTypes.add(ARRAY);
         structSubTypes.add(MAP);
         structSubTypes.add(STRUCT);
+
+        complexVariantSubTypes = Lists.newArrayList();
+        complexVariantSubTypes.add(BOOLEAN);
+        complexVariantSubTypes.addAll(integerTypes);
+        complexVariantSubTypes.add(FLOAT);
+        complexVariantSubTypes.add(DOUBLE);
+        complexVariantSubTypes.add(DECIMAL32); // same DEFAULT_DECIMALV3
+        complexVariantSubTypes.add(DECIMAL64);
+        complexVariantSubTypes.add(DECIMAL128);
+        complexVariantSubTypes.add(DECIMAL256);
+        complexVariantSubTypes.add(DATE);
+        complexVariantSubTypes.add(DATETIME);
+        complexVariantSubTypes.add(DATEV2);
+        complexVariantSubTypes.add(DATETIMEV2);
+        complexVariantSubTypes.add(IPV4);
+        complexVariantSubTypes.add(IPV6);
+        complexVariantSubTypes.add(CHAR);
+        complexVariantSubTypes.add(VARCHAR);
+        complexVariantSubTypes.add(STRING);
+        complexVariantSubTypes.add(ARRAY);
+        complexVariantSubTypes.add(NULL);
     }
 
     public static final Set<Class> DATE_SUPPORTED_JAVA_TYPE = Sets.newHashSet(LocalDate.class, java.util.Date.class,
@@ -371,6 +396,10 @@ public abstract class Type {
 
     public static ArrayList<Type> getStructSubTypes() {
         return structSubTypes;
+    }
+
+    public static ArrayList<Type> getComplexVariantSubTypes() {
+        return complexVariantSubTypes;
     }
 
     /**
@@ -554,7 +583,7 @@ public abstract class Type {
     }
 
     public boolean isVariantType() {
-        return isScalarType(PrimitiveType.VARIANT);
+        return isScalarType(PrimitiveType.VARIANT) || isComplexVariant();
     }
 
     // only metric types have the following constraint:
@@ -684,6 +713,10 @@ public abstract class Type {
 
     public boolean isStructType() {
         return this instanceof StructType;
+    }
+
+    public boolean isComplexVariant() {
+        return this instanceof ComplexVariantType;
     }
 
     public boolean isAnyType() {
@@ -979,6 +1012,13 @@ public abstract class Type {
         } else if (isMapType()) {
             MapType mapType = (MapType) this;
             return mapType.getValueType().exceedsMaxNestingDepth(d + 1);
+        } else if (isComplexVariant())  {
+            ComplexVariantType complexVariantType = (ComplexVariantType) this;
+            for (StructField f : complexVariantType.getPredefinedFields()) {
+                if (f.getType().exceedsMaxNestingDepth(d + 1)) {
+                    return true;
+                }
+            }
         } else {
             Preconditions.checkState(isScalarType() || isAggStateType());
         }

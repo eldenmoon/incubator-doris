@@ -33,6 +33,7 @@ import org.apache.doris.nereids.types.coercion.CharacterType;
 import org.apache.doris.nereids.types.coercion.IntegralType;
 import org.apache.doris.nereids.types.coercion.NumericType;
 import org.apache.doris.nereids.types.coercion.PrimitiveType;
+import org.apache.doris.qe.ConnectContext;
 
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
@@ -303,6 +304,10 @@ public abstract class DataType {
                 dataType = IPv6Type.INSTANCE;
                 break;
             case "variant":
+                if (ConnectContext.get().getSessionVariable().useVariantAsComplexVariant) {
+                    dataType = ComplexVariantType.TEST_INSTANCE;
+                    break;
+                }
                 dataType = VariantType.INSTANCE;
                 break;
             default:
@@ -617,7 +622,7 @@ public abstract class DataType {
     }
 
     public boolean isVariantType() {
-        return this instanceof VariantType;
+        return this instanceof VariantType || this instanceof ComplexVariantType;
     }
 
     public boolean isStructType() {
