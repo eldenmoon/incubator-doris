@@ -1276,12 +1276,6 @@ stmt ::=
     {: RESULT = stmt; :}
     | analyze_stmt:stmt
     {: RESULT = stmt; :}
-    | show_mtmv_stmt : stmt
-    {: RESULT = stmt; :}
-    | prepare_stmt:stmt
-    {: RESULT = stmt; :}
-    | execute_stmt:stmt
-    {: RESULT = stmt; :}
     | warm_up_stmt:stmt
     {: RESULT = stmt; :}
     | /* empty: query only has comments */

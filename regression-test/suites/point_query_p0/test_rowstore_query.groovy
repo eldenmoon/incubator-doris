@@ -19,6 +19,7 @@ suite("test_rowstore", "p0") {
     def tableName = "rs_query_2"
     sql """DROP TABLE IF EXISTS ${tableName}"""
     sql "set enable_decimal256 = true"
+    sql "set enable_nereids_planner = true"
     sql """
               CREATE TABLE IF NOT EXISTS ${tableName} (
                 `k1` int(11) NULL COMMENT "",

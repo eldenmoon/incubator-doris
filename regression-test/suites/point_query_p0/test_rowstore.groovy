@@ -34,6 +34,7 @@ suite("test_rowstore", "p0,nonConcurrent") {
     def prepare_url = "jdbc:mysql://" + sql_ip + ":" + sql_port + "/" + realDb + "?&useServerPrepStmts=true"
 
     sql "DROP TABLE IF EXISTS table_with_column_group"
+    sql "set enable_nereids_planner = true"
     sql """
         CREATE TABLE IF NOT EXISTS table_with_column_group (
                 `k1` int(11) NULL COMMENT "",
