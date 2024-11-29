@@ -254,7 +254,7 @@ add_compile_options(-g
                     $<$<COMPILE_LANGUAGE:CXX>:-Wnon-virtual-dtor>)
 
 add_compile_options(-Wno-unused-parameter
-                    -Wno-sign-compare)
+                    -Wno-sign-compare -Wno-missing-field-initializers)
 
 if (COMPILER_GCC)
     if (CMAKE_CXX_COMPILER_VERSION VERSION_LESS "11.1")
