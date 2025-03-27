@@ -410,17 +410,10 @@ int GcsAccessor::delete_prefix_impl(const std::string& path_prefix, int64_t expi
     LOG_INFO("begin delete prefix").tag("uri", to_uri(path_prefix));
 
     int ret = 0;
-<<<<<<< HEAD
     int64_t cnt = 0;
     int64_t skip = 0;
     int64_t del = 0;
     int64_t del_nonexisted = 0;
-=======
-    int cnt = 0;
-    int skip = 0;
-    int64_t del_nonexisted = 0;
-    int del = 0;
->>>>>>> 514b1ac39f
     auto iter = obj_client_->list_objects({conf_.bucket, get_key(path_prefix)});
     for (auto obj = iter->next(); obj.has_value(); obj = iter->next()) {
         if (!(++cnt % 100)) {
@@ -437,11 +430,7 @@ int GcsAccessor::delete_prefix_impl(const std::string& path_prefix, int64_t expi
         }
         del++;
 
-<<<<<<< HEAD
-        // FIXME(plat1ko): Delete objects by batch
-=======
         // FIXME(plat1ko): Delete objects by batch with genuine GCS client
->>>>>>> 514b1ac39f
         int del_ret = obj_client_->delete_object({conf_.bucket, obj->key}).ret;
         del_nonexisted += (del_ret == ObjectStorageResponse::NOT_FOUND);
         static_assert(ObjectStorageResponse::OK == 0);

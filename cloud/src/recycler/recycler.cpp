@@ -24,10 +24,7 @@
 
 #include <atomic>
 #include <chrono>
-<<<<<<< HEAD
-=======
 #include <cstddef>
->>>>>>> 514b1ac39f
 #include <cstdint>
 #include <deque>
 #include <string>
@@ -795,17 +792,11 @@ int InstanceRecycler::recycle_indexes() {
                 .tag("num_recycled", num_recycled);
     });
 
-<<<<<<< HEAD
-    auto calc_expiration = [](const RecycleIndexPB& index) -> int64_t {
-        if (config::force_immediate_recycle) {
-            return 0;
-=======
     int64_t earlest_ts = std::numeric_limits<int64_t>::max();
 
     auto calc_expiration = [&earlest_ts, this](const RecycleIndexPB& index) {
         if (config::force_immediate_recycle) {
             return 0L;
->>>>>>> 514b1ac39f
         }
         int64_t expiration = index.expiration() > 0 ? index.expiration() : index.creation_time();
         int64_t retention_seconds = config::retention_seconds;
@@ -1006,17 +997,11 @@ int InstanceRecycler::recycle_partitions() {
                 .tag("num_recycled", num_recycled);
     });
 
-<<<<<<< HEAD
-    auto calc_expiration = [](const RecyclePartitionPB& partition) -> int64_t {
-        if (config::force_immediate_recycle) {
-            return 0;
-=======
     int64_t earlest_ts = std::numeric_limits<int64_t>::max();
 
     auto calc_expiration = [&earlest_ts, this](const RecyclePartitionPB& partition) {
         if (config::force_immediate_recycle) {
             return 0L;
->>>>>>> 514b1ac39f
         }
         int64_t expiration =
                 partition.expiration() > 0 ? partition.expiration() : partition.creation_time();
@@ -1525,11 +1510,7 @@ int InstanceRecycler::delete_rowset_data(const std::vector<doris::RowsetMetaClou
         std::vector<std::pair<int64_t, std::string>> index_ids;
         // default format as v1.
         InvertedIndexStorageFormatPB index_format = InvertedIndexStorageFormatPB::V1;
-<<<<<<< HEAD
-
-=======
         int inverted_index_get_ret = 0;
->>>>>>> 514b1ac39f
         if (rs.has_tablet_schema()) {
             for (const auto& index : rs.tablet_schema().index()) {
                 if (index.has_index_type() && index.index_type() == IndexType::INVERTED) {
@@ -1861,7 +1842,6 @@ int InstanceRecycler::recycle_tablet(int64_t tablet_id) {
         ret = -1;
     }
 
-<<<<<<< HEAD
     SyncExecutor<int> concurrent_delete_executor(
             _thread_pool_group.s3_producer_pool,
             fmt::format("{} recycle_tablet, delete tablet data delete_directory tablet_id={}",
@@ -1889,8 +1869,6 @@ int InstanceRecycler::recycle_tablet(int64_t tablet_id) {
 
     ret = finished ? ret : -1;
 
-=======
->>>>>>> 514b1ac39f
     if (ret == 0) {
         // All object files under tablet have been deleted
         std::lock_guard lock(recycled_tablets_mtx_);
@@ -1988,17 +1966,11 @@ int InstanceRecycler::recycle_rowsets() {
         return 0;
     };
 
-<<<<<<< HEAD
-    auto calc_expiration = [](const RecycleRowsetPB& rs) -> int64_t {
-        if (config::force_immediate_recycle) {
-            return 0;
-=======
     int64_t earlest_ts = std::numeric_limits<int64_t>::max();
 
     auto calc_expiration = [&earlest_ts, this](const RecycleRowsetPB& rs) {
         if (config::force_immediate_recycle) {
             return 0L;
->>>>>>> 514b1ac39f
         }
         // RecycleRowsetPB created by compacted or dropped rowset has no expiration time, and will be recycled when exceed retention time
         int64_t expiration = rs.expiration() > 0 ? rs.expiration() : rs.creation_time();
@@ -2108,14 +2080,8 @@ int InstanceRecycler::recycle_rowsets() {
         rowsets_to_delete.swap(rowsets);
         worker_pool->submit([&, rowset_keys_to_delete = std::move(rowset_keys_to_delete),
                              rowsets_to_delete = std::move(rowsets_to_delete)]() {
-<<<<<<< HEAD
-            if (delete_rowset_data(rowsets_to_delete) != 0) {
-                LOG(WARNING) << "failed to delete rowset data, instance_id=" << instance_id_
-                             << " number_of_rowsets=" << rowsets_to_delete.size();
-=======
             if (delete_rowset_data(rowsets_to_delete, RowsetRecyclingState::FORMAL_ROWSET) != 0) {
                 LOG(WARNING) << "failed to delete rowset data, instance_id=" << instance_id_;
->>>>>>> 514b1ac39f
                 return;
             }
             if (txn_remove(txn_kv_.get(), rowset_keys_to_delete) != 0) {
@@ -2243,11 +2209,6 @@ int InstanceRecycler::recycle_tmp_rowsets() {
         // ATTN: `txn_expiration` should > 0, however we use `creation_time` + a large `retention_time` (> 1 day in production environment)
         //  when `txn_expiration` <= 0 in some unexpected situation (usually when there are bugs). This is usually safe, coz loading
         //  duration or timeout always < `retention_time` in practice.
-<<<<<<< HEAD
-        int64_t expiration = config::force_immediate_recycle ? 0
-                             : rowset.txn_expiration() > 0   ? rowset.txn_expiration()
-                                                             : rowset.creation_time();
-=======
         int64_t expiration =
                 rowset.txn_expiration() > 0 ? rowset.txn_expiration() : rowset.creation_time();
         expiration = config::force_immediate_recycle ? 0 : expiration;
@@ -2272,7 +2233,6 @@ int InstanceRecycler::recycle_tmp_rowsets() {
             return -1;
         }
         int64_t expiration = calc_expiration(rowset);
->>>>>>> 514b1ac39f
         VLOG_DEBUG << "recycle tmp rowset scan, key=" << hex(k) << " num_scanned=" << num_scanned
                    << " num_expired=" << num_expired << " expiration=" << expiration
                    << " txn_expiration=" << rowset.txn_expiration()
@@ -2586,14 +2546,9 @@ int InstanceRecycler::recycle_expired_txn_label() {
         }
         if ((config::force_immediate_recycle) ||
             (recycle_txn_pb.has_immediate() && recycle_txn_pb.immediate()) ||
-<<<<<<< HEAD
             (recycle_txn_pb.creation_time() + config::label_keep_max_second * 1000L <=
              current_time)) {
             LOG_INFO("found recycle txn").tag("key", hex(k));
-=======
-            (calc_expiration(recycle_txn_pb) <= current_time_ms)) {
-            VLOG_DEBUG << "found recycle txn, key=" << hex(k);
->>>>>>> 514b1ac39f
             num_expired++;
         } else {
             return 0;

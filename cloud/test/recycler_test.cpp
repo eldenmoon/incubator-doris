@@ -3244,11 +3244,7 @@ TEST(RecyclerTest, delete_rowset_data_without_inverted_index_storage_format) {
 
             rowset_pbs.emplace_back(std::move(rowset));
         }
-<<<<<<< HEAD
-        ASSERT_EQ(0, recycler.delete_rowset_data(rowset_pbs));
-=======
         ASSERT_EQ(0, recycler.delete_rowset_data(rowset_pbs, RowsetRecyclingState::FORMAL_ROWSET));
->>>>>>> 514b1ac39f
         std::unique_ptr<ListIterator> list_iter;
         ASSERT_EQ(0, accessor->list_all(&list_iter));
         ASSERT_FALSE(list_iter->has_next());
@@ -3275,8 +3271,6 @@ TEST(RecyclerTest, delete_rowset_data_without_inverted_index_storage_format) {
     }
 }
 
-<<<<<<< HEAD
-=======
 TEST(RecyclerTest, init_vault_accessor_failed_test) {
     auto* sp = SyncPoint::get_instance();
     std::unique_ptr<int, std::function<void(int*)>> defer((int*)0x01, [&sp](int*) {
@@ -3879,5 +3873,4 @@ TEST(RecyclerTest, delete_tmp_rowset_without_resource_id) {
     }
 }
 
->>>>>>> 514b1ac39f
 } // namespace doris::cloud
