@@ -24,14 +24,14 @@ usage() {
     echo -e "Usage:
     bash $0 <PULL_NUMBER> <OPTIONS>
     note: https://github.com/apache/doris/pull/13259, PULL_NUMBER is 13259
-    OPTIONS should be one of [be-ut|fe-ut|ckb|regression-p0|regression-p1|arm-regression-p0]
+    OPTIONS should be one of [be-ut|fe-ut|ms-ut|ckb|regression-p0|regression-p1|arm-regression-p0]
     " && return 1
 }
 
 _get_pr_changed_files() {
     usage_str="Usage:
     _get_pr_changed_files <PULL_NUMBER> [OPTIONS]
-    note: https://github.com/apache/doris/pull/13259, PULL_NUMBER is 13259
+    note: https://github.com/apache/doris/pulls/13259, PULL_NUMBER is 13259
     OPTIONS can be one of [all|added|modified|removed], default is all
     "
     if [[ -z "$1" ]]; then echo -e "${usage_str}" && return 1; fi
@@ -40,13 +40,13 @@ _get_pr_changed_files() {
 
     PULL_NUMBER="$1"
     which_file="$2"
-    pr_url="https://github.com/${OWNER:=apache}/${REPO:=doris}/pull/${PULL_NUMBER}"
+    pr_url="https://github.com/${OWNER:=apache}/${REPO:=doris}/pulls/${PULL_NUMBER}"
     try_times=10
     # The number of results per page (max 100), Default 30.
     per_page=100
     file_name='pr_change_files'
     while [[ ${try_times} -gt 0 ]]; do
-        if [[ -n "${GITHUB_TOKEN}" ]]; then
+        if [[ ! -z "${GITHUB_TOKEN}" ]];then
             if curl \
                 -H "Accept: application/vnd.github+json" \
                 -H "Authorization: Bearer ${GITHUB_TOKEN:-}" \
@@ -65,6 +65,7 @@ _get_pr_changed_files() {
             else
                 try_times=$((try_times - 1))
             fi
+
         fi
     done
     if [[ ${try_times} = 0 ]]; then echo -e "\033[31m List pull request(${pr_url}) files FAIL... \033[0m" && return 255; fi
@@ -77,7 +78,7 @@ _get_pr_changed_files() {
     if [[ -z "${all_files}" ]]; then echo -e "\033[31m List pull request(${pr_url}) files FAIL... \033[0m" && return 255; fi
 
     echo -e "
-https://github.com/apache/doris/pull/${PULL_NUMBER}/files all change files:
+https://github.com/${OWNER}/${REPO}/pull/${PULL_NUMBER}/files all change files:
 ---------------------------------------------------------------"
     if [[ "${which_file:-all}" == "all" ]]; then
         echo -e "${all_files}\n" && export all_files
@@ -136,6 +137,19 @@ need_run_be_ut() {
     echo "return no need" && return 1
 }
 
+need_run_ms_ut() {
+    if ! _get_pr_changed_files "$1"; then echo "get pr changed files failed, return need" && return 0; fi
+    for af in ${all_files}; do
+        if [[ "${af}" == 'cloud/src'* ]] ||
+            [[ "${af}" == 'cloud/test'* ]] ||
+            [[ "${af}" == 'cloud/conf'* ]] ||
+            [[ "${af}" == 'cloud/script/run_all_test.sh' ]]; then
+            echo "cloud related file changed, return need" && return 0
+        fi
+    done
+    echo "return no need" && return 1
+}
+
 need_run_regression_p0() {
     if ! _get_pr_changed_files "$1"; then echo "get pr changed files failed, return need" && return 0; fi
     if _only_modified_regression_conf; then echo "return no need" && return 1; fi
@@ -154,6 +168,7 @@ need_run_regression_p0() {
             [[ "${af}" == 'webroot'* ]] ||
             [[ "${af}" == 'build.sh' ]] ||
             [[ "${af}" == 'env.sh' ]] ||
+	        [[ "${af}" == 'cloud'* ]] ||
             [[ "${af}" == 'run-regression-test.sh' ]]; then
             echo "regression related file changed, return need" && return 0
         fi
@@ -195,6 +210,8 @@ need_run_ckb() {
 
 if [[ -z "$1" ]]; then
     usage
+elif [[ "$2" == "ms-ut" ]]; then
+    need_run_ms_ut "$1"
 elif [[ "$2" == "be-ut" ]]; then
     need_run_be_ut "$1"
 elif [[ "$2" == "fe-ut" ]]; then
