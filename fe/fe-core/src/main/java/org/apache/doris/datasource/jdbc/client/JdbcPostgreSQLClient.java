@@ -25,6 +25,8 @@ import org.apache.doris.common.util.Util;
 import org.apache.doris.datasource.jdbc.util.JdbcFieldSchema;
 
 import com.google.common.collect.Lists;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 
 import java.sql.Connection;
 import java.sql.DatabaseMetaData;
@@ -37,6 +39,7 @@ import java.util.List;
 import java.util.Optional;
 
 public class JdbcPostgreSQLClient extends JdbcClient {
+    private static final Logger LOG = LogManager.getLogger(JdbcPostgreSQLClient.class);
 
     private static final String[] supportedInnerType = new String[] {
             "int2", "int4", "int8", "smallserial", "serial",
@@ -65,12 +68,26 @@ public class JdbcPostgreSQLClient extends JdbcClient {
                 int arrayDimensions = 0;
                 if (dataType == Types.ARRAY) {
                     String columnName = rs.getString("COLUMN_NAME");
-                    try (PreparedStatement pstmt = conn.prepareStatement(
-                            String.format("SELECT array_ndims(%s) FROM %s.%s LIMIT 1",
-                                    columnName, remoteDbName, remoteTableName))) {
-                        try (ResultSet arrayRs = pstmt.executeQuery()) {
-                            if (arrayRs.next()) {
-                                arrayDimensions = arrayRs.getInt(1);
+                    PreparedStatement pstmt = null;
+                    ResultSet arrayRs = null;
+                    try {
+                        pstmt = conn.prepareStatement(
+                                String.format("SELECT array_ndims(%s) FROM %s.%s LIMIT 1",
+                                        columnName, remoteDbName, remoteTableName));
+                        arrayRs = pstmt.executeQuery();
+                        if (arrayRs.next()) {
+                            arrayDimensions = arrayRs.getInt(1);
+                        }
+                    } catch (SQLException ex) {
+                        LOG.warn("Failed to get array dimensions for column {}: {}",
+                                columnName, Util.getRootCauseMessage(ex));
+                    } finally {
+                        close(arrayRs, null);
+                        if (pstmt != null) {
+                            try {
+                                pstmt.close();
+                            } catch (SQLException ex) {
+                                LOG.warn("Failed to close prepared statement: {}", Util.getRootCauseMessage(ex));
                             }
                         }
                     }
