@@ -768,94 +768,9 @@ TEST_F(IndexCompactionTest, tes_write_index_normally) {
         EXPECT_TRUE(compaction._output_rowset->num_segments() == 1);
     };
 
-<<<<<<< HEAD
-        Block block = _tablet_schema->create_block();
-        auto columns = block.mutate_columns();
-        for (const auto& row : data[i]) {
-            vectorized::Field key = Int32(row.key);
-            vectorized::Field v1(row.word);
-            vectorized::Field v2(row.url);
-            vectorized::Field v3 = Int32(row.num);
-            columns[0]->insert(key);
-            columns[1]->insert(v1);
-            columns[2]->insert(v2);
-            columns[3]->insert(v3);
-        }
-        EXPECT_TRUE(rowset_writer->add_block(&block).ok());
-        EXPECT_TRUE(rowset_writer->flush().ok());
-        const auto& dst_writer = dynamic_cast<BaseBetaRowsetWriter*>(rowset_writer.get());
-
-        // inverted index file writer
-        for (const auto& [seg_id, idx_file_writer] : dst_writer->_idx_files.get_file_writers()) {
-            EXPECT_TRUE(idx_file_writer->_closed);
-        }
-
-        EXPECT_TRUE(rowset_writer->build(rowsets[i]).ok());
-        EXPECT_TRUE(_tablet->add_rowset(rowsets[i]).ok());
-        EXPECT_TRUE(rowsets[i]->num_segments() == 5);
-
-        // check rowset meta and file
-        for (int seg_id = 0; seg_id < rowsets[i]->num_segments(); seg_id++) {
-            const auto& index_info = rowsets[i]->_rowset_meta->inverted_index_file_info(seg_id);
-            EXPECT_TRUE(index_info.has_index_size());
-            const auto& fs = rowsets[i]->_rowset_meta->fs();
-            const auto& file_name = fmt::format("{}/{}_{}.idx", rowsets[i]->tablet_path(),
-                                                rowsets[i]->rowset_id().to_string(), seg_id);
-            int64_t file_size = 0;
-            EXPECT_TRUE(fs->file_size(file_name, &file_size).ok());
-            EXPECT_EQ(index_info.index_size(), file_size);
-
-            const auto& seg_path = rowsets[i]->segment_path(seg_id);
-            EXPECT_TRUE(seg_path.has_value());
-            const auto& index_file_path_prefix =
-                    InvertedIndexDescriptor::get_index_file_path_prefix(seg_path.value());
-            auto inverted_index_file_reader = std::make_shared<InvertedIndexFileReader>(
-                    fs, std::string(index_file_path_prefix),
-                    _tablet_schema->get_inverted_index_storage_format(), index_info);
-            EXPECT_TRUE(inverted_index_file_reader->init().ok());
-            const auto& dirs = inverted_index_file_reader->get_all_directories();
-            EXPECT_TRUE(dirs.has_value());
-            EXPECT_EQ(dirs.value().size(), 4);
-        }
-    }
-
-    CumulativeCompaction compaction(*_engine_ref, _tablet);
-    compaction._input_rowsets = std::move(rowsets);
-    compaction.build_basic_info();
-
-    std::vector<RowsetReaderSharedPtr> input_rs_readers;
-    input_rs_readers.reserve(compaction._input_rowsets.size());
-    for (auto& rowset : compaction._input_rowsets) {
-        RowsetReaderSharedPtr rs_reader;
-        EXPECT_TRUE(rowset->create_reader(&rs_reader).ok());
-        input_rs_readers.push_back(std::move(rs_reader));
-    }
-
-    RowsetWriterContext ctx;
-    EXPECT_TRUE(compaction.construct_output_rowset_writer(ctx).ok());
-
-    // col word
-    EXPECT_TRUE(ctx.columns_to_do_index_compaction.contains(1));
-    // col url
-    EXPECT_TRUE(ctx.columns_to_do_index_compaction.contains(2));
-
-    compaction._stats.rowid_conversion = &compaction._rowid_conversion;
-    EXPECT_TRUE(Merger::vertical_merge_rowsets(_tablet, compaction.compaction_type(),
-                                               *(compaction._cur_tablet_schema), input_rs_readers,
-                                               compaction._output_rs_writer.get(), 100000, 5,
-                                               &compaction._stats)
-                        .ok());
-    const auto& dst_writer =
-            dynamic_cast<BaseBetaRowsetWriter*>(compaction._output_rs_writer.get());
-    for (const auto& [seg_id, idx_file_writer] : dst_writer->_idx_files.get_file_writers()) {
-        EXPECT_FALSE(idx_file_writer->_closed);
-    }
-    auto st = compaction.do_inverted_index_compaction();
-=======
     RowsetSharedPtr output_rowset_index;
     auto st = IndexCompactionUtils::do_compaction(rowsets, _engine_ref, _tablet, true,
                                                   output_rowset_index, custom_check_index);
->>>>>>> 514b1ac39f
     EXPECT_TRUE(st.ok()) << st.to_string();
 
     const auto& seg_path = output_rowset_index->segment_path(0);
