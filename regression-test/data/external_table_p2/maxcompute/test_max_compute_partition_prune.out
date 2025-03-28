@@ -123,8 +123,6 @@
 
 -- !three_partition_11_0 --
 
-<<<<<<< HEAD
-=======
 -- !one_partition_1_1 --
 1	Alice	2024
 2	Bob	2024
@@ -1489,4 +1487,3 @@
 
 -- !three_partition_11_0 --
 
->>>>>>> 514b1ac39f

@@ -45,6 +45,7 @@ import com.aliyun.odps.type.TypeInfo;
 import com.aliyun.odps.type.VarcharTypeInfo;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Lists;
+import com.google.common.collect.Maps;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -78,14 +79,11 @@ public class MaxComputeExternalTable extends ExternalTable {
     public boolean supportInternalPartitionPruned() {
         return true;
     }
-<<<<<<< HEAD
-=======
 
     @Override
     public List<Column> getPartitionColumns(Optional<MvccSnapshot> snapshot) {
         return getPartitionColumns();
     }
->>>>>>> 514b1ac39f
 
     public List<Column> getPartitionColumns() {
         makeSureInitialized();
@@ -95,22 +93,12 @@ public class MaxComputeExternalTable extends ExternalTable {
     }
 
     @Override
-<<<<<<< HEAD
-    public Map<Long, PartitionItem> getNameToPartitionItems() {
-=======
     public Map<String, PartitionItem> getNameToPartitionItems(Optional<MvccSnapshot> snapshot) {
->>>>>>> 514b1ac39f
         if (getPartitionColumns().isEmpty()) {
             return Collections.emptyMap();
         }
 
         TablePartitionValues tablePartitionValues = getPartitionValues();
-<<<<<<< HEAD
-        return tablePartitionValues.getIdToPartitionItem();
-    }
-
-    public TablePartitionValues getPartitionValues() {
-=======
         Map<Long, PartitionItem> idToPartitionItem = tablePartitionValues.getIdToPartitionItem();
         Map<Long, String> idToNameMap = tablePartitionValues.getPartitionIdToNameMap();
 
@@ -122,7 +110,6 @@ public class MaxComputeExternalTable extends ExternalTable {
     }
 
     private TablePartitionValues getPartitionValues() {
->>>>>>> 514b1ac39f
         makeSureInitialized();
         Optional<SchemaCacheValue> schemaCacheValue = getSchemaCacheValue();
         if (!schemaCacheValue.isPresent()) {

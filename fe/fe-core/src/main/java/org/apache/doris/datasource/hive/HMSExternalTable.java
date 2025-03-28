@@ -46,6 +46,7 @@ import org.apache.doris.mtmv.MTMVRelatedTableIf;
 import org.apache.doris.mtmv.MTMVSnapshotIf;
 import org.apache.doris.mtmv.MTMVTimestampSnapshot;
 import org.apache.doris.nereids.exceptions.NotSupportedException;
+import org.apache.doris.nereids.trees.plans.logical.LogicalFileScan.SelectedPartitions;
 import org.apache.doris.qe.GlobalVariable;
 import org.apache.doris.statistics.AnalysisInfo;
 import org.apache.doris.statistics.BaseAnalysisTask;
@@ -304,16 +305,6 @@ public class HMSExternalTable extends ExternalTable implements MTMVRelatedTableI
     }
 
     @Override
-<<<<<<< HEAD
-    public boolean supportInternalPartitionPruned() {
-        return getDlaType() == DLAType.HIVE;
-    }
-
-    @Override
-    public Map<Long, PartitionItem> getNameToPartitionItems() {
-        if (CollectionUtils.isEmpty(this.getPartitionColumns())) {
-            return Collections.emptyMap();
-=======
     public List<Column> getPartitionColumns(Optional<MvccSnapshot> snapshot) {
         return getPartitionColumns();
     }
@@ -326,7 +317,6 @@ public class HMSExternalTable extends ExternalTable implements MTMVRelatedTableI
     public SelectedPartitions initHudiSelectedPartitions(Optional<TableSnapshot> tableSnapshot) {
         if (getDlaType() != DLAType.HUDI) {
             return SelectedPartitions.NOT_PRUNED;
->>>>>>> 514b1ac39f
         }
 
         if (getPartitionColumns().isEmpty()) {
@@ -359,9 +349,6 @@ public class HMSExternalTable extends ExternalTable implements MTMVRelatedTableI
         List<Type> partitionColumnTypes = this.getPartitionColumnTypes();
         HiveMetaStoreCache.HivePartitionValues hivePartitionValues = cache.getPartitionValues(
                 this.getDbName(), this.getName(), partitionColumnTypes);
-<<<<<<< HEAD
-        return hivePartitionValues.getIdToPartitionItem();
-=======
         Map<Long, PartitionItem> idToPartitionItem = hivePartitionValues.getIdToPartitionItem();
         // transfer id to name
         BiMap<Long, String> idToName = hivePartitionValues.getPartitionNameToIdMap().inverse();
@@ -370,7 +357,6 @@ public class HMSExternalTable extends ExternalTable implements MTMVRelatedTableI
             nameToPartitionItem.put(idToName.get(entry.getKey()), entry.getValue());
         }
         return nameToPartitionItem;
->>>>>>> 514b1ac39f
     }
 
     public boolean isHiveTransactionalTable() {

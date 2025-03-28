@@ -61,17 +61,10 @@ public class LogicalFileScan extends LogicalCatalogRelation {
     }
 
     public LogicalFileScan(RelationId id, ExternalTable table, List<String> qualifier,
-<<<<<<< HEAD
-                           Optional<TableSample> tableSample, Optional<TableSnapshot> tableSnapshot) {
-        // todo: real snapshotId
-        this(id, table, qualifier, Optional.empty(), Optional.empty(),
-                table.initSelectedPartitions(), tableSample, tableSnapshot);
-=======
             Optional<TableSample> tableSample, Optional<TableSnapshot> tableSnapshot) {
         this(id, table, qualifier, Optional.empty(), Optional.empty(),
                 table.initSelectedPartitions(MvccUtil.getSnapshotFromContext(table)),
                 tableSample, tableSnapshot);
->>>>>>> 514b1ac39f
     }
 
     public SelectedPartitions getSelectedPartitions() {
