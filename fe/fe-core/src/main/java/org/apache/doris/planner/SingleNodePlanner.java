@@ -1992,11 +1992,7 @@ public class SingleNodePlanner {
                 scanNode = new TrinoConnectorScanNode(ctx.getNextNodeId(), tblRef.getDesc(), true, sv);
                 break;
             case MAX_COMPUTE_EXTERNAL_TABLE:
-<<<<<<< HEAD
-                scanNode = new MaxComputeScanNode(ctx.getNextNodeId(), tblRef.getDesc(), true);
-=======
                 scanNode = new MaxComputeScanNode(ctx.getNextNodeId(), tblRef.getDesc(), true, sv);
->>>>>>> 514b1ac39f
                 break;
             case ES_EXTERNAL_TABLE:
                 scanNode = new EsScanNode(ctx.getNextNodeId(), tblRef.getDesc(), true);
