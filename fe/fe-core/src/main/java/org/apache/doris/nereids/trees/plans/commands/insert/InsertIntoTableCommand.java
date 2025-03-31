@@ -382,8 +382,6 @@ public class InsertIntoTableCommand extends Command implements ForwardWithSync, 
             return RedirectStatus.FORWARD_WITH_SYNC;
         }
     }
-<<<<<<< HEAD
-=======
 
     private static class BuildInsertExecutorResult {
         private final NereidsPlanner planner;
@@ -399,5 +397,4 @@ public class InsertIntoTableCommand extends Command implements ForwardWithSync, 
             this.physicalSink = physicalSink;
         }
     }
->>>>>>> 514b1ac39f
 }
