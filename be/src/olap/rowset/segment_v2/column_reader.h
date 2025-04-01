@@ -251,11 +251,8 @@ private:
 
     Status _calculate_row_ranges(const std::vector<uint32_t>& page_indexes, RowRanges* row_ranges,
                                  const ColumnIteratorOptions& iter_opts);
-<<<<<<< HEAD
-=======
 
     int64_t get_metadata_size() const override;
->>>>>>> 514b1ac39f
 
 private:
     int64_t _meta_length;
