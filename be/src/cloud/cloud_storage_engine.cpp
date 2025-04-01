@@ -295,12 +295,9 @@ Status CloudStorageEngine::start_bg_threads() {
             &_bg_threads.emplace_back()));
     LOG(INFO) << "check tablet delete bitmap score thread started";
 
-<<<<<<< HEAD
-=======
     return Status::OK();
 }
 
->>>>>>> 514b1ac39f
 void CloudStorageEngine::sync_storage_vault() {
     cloud::StorageVaultInfos vault_infos;
     bool enable_storage_vault = false;

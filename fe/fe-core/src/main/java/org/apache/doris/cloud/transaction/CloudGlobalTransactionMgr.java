@@ -848,8 +848,6 @@ public class CloudGlobalTransactionMgr implements GlobalTransactionMgrIface {
                     if (LOG.isDebugEnabled()) {
                         LOG.debug("get delete bitmap lock, transactionId={}, Request: {}, Response: {}", transactionId,
                                 request, response);
-<<<<<<< HEAD
-=======
                     }
                     if (DebugPointUtil.isEnable("CloudGlobalTransactionMgr.getDeleteBitmapUpdateLock.conflict")) {
                         DebugPoint debugPoint = DebugPointUtil.getDebugPoint(
@@ -866,7 +864,6 @@ public class CloudGlobalTransactionMgr implements GlobalTransactionMgrIface {
                                     .setMsg("kv txn conflict"));
                             response = getLockResponseBuilder.build();
                         }
->>>>>>> 514b1ac39f
                     }
                     if (response.getStatus().getCode() != MetaServiceCode.LOCK_CONFLICT
                             && response.getStatus().getCode() != MetaServiceCode.KV_TXN_CONFLICT) {
@@ -907,16 +904,6 @@ public class CloudGlobalTransactionMgr implements GlobalTransactionMgrIface {
             List<Long> respBaseCompactionCnts = response.getBaseCompactionCntsList();
             List<Long> respCumulativeCompactionCnts = response.getCumulativeCompactionCntsList();
             List<Long> respCumulativePoints = response.getCumulativePointsList();
-<<<<<<< HEAD
-            if (!respBaseCompactionCnts.isEmpty() && !respCumulativeCompactionCnts.isEmpty()
-                    && !respCumulativePoints.isEmpty()) {
-                for (int i = 0; i < tabletList.size(); i++) {
-                    long tabletId = tabletList.get(i);
-                    lockContext.getBaseCompactionCnts().put(tabletId, respBaseCompactionCnts.get(i));
-                    lockContext.getCumulativeCompactionCnts().put(tabletId, respCumulativeCompactionCnts.get(i));
-                    lockContext.getCumulativePoints().put(tabletId, respCumulativePoints.get(i));
-                }
-=======
             int size1 = respBaseCompactionCnts.size();
             int size2 = respCumulativeCompactionCnts.size();
             int size3 = respCumulativePoints.size();
@@ -930,23 +917,13 @@ public class CloudGlobalTransactionMgr implements GlobalTransactionMgrIface {
                 lockContext.getBaseCompactionCnts().put(tabletId, respBaseCompactionCnts.get(i));
                 lockContext.getCumulativeCompactionCnts().put(tabletId, respCumulativeCompactionCnts.get(i));
                 lockContext.getCumulativePoints().put(tabletId, respCumulativePoints.get(i));
->>>>>>> 514b1ac39f
             }
             totalRetryTime += retryTime;
         }
         stopWatch.stop();
-<<<<<<< HEAD
-        if (totalRetryTime > 0 || stopWatch.getTime() > 20) {
-            LOG.info(
-                    "get delete bitmap lock successfully. txns: {}. totalRetryTime: {}. "
-                            + "partitionSize: {}. time cost: {} ms.",
-                    transactionId, totalRetryTime, lockContext.getTableToPartitions().size(), stopWatch.getTime());
-        }
-=======
         LOG.info("get delete bitmap lock successfully. txnId: {}. totalRetryTime: {}. "
                         + "tableSize: {}. cost: {} ms.", transactionId, totalRetryTime,
                 lockContext.getTableToPartitions().size(), stopWatch.getTime());
->>>>>>> 514b1ac39f
     }
 
     private void removeDeleteBitmapUpdateLock(List<OlapTable> tableList, long transactionId) {
