@@ -158,20 +158,12 @@ where phone_numbers['type'] = 'GSM' OR phone_numbers['type'] = 'HOME' and phone_
         order_qt_explode_sql """select count(),cast(vv as int) from var_nested_explode_variant_with_abnomal lateral view explode_variant_array(v['nested']['x']) tmp as vv where vv = 10 group by cast(vv as int)"""
         // 2. v['nested']['xx'] is normal array
         order_qt_explode_sql """select count(),cast(vv as int) from var_nested_explode_variant_with_abnomal lateral view explode_variant_array(v['nested']['xx']) tmp as vv where vv = 10 group by cast(vv as int)"""
-<<<<<<< HEAD
         // 3. v['xx'] is none array scalar type 
-=======
-        // 3. v['xx'] is none array scalar type
->>>>>>> 514b1ac39f
         test {
             sql """select count(),cast(vv as int) from var_nested_explode_variant_with_abnomal lateral view explode_variant_array(v['xx']) tmp as vv where vv = 10 group by cast(vv as int)"""
             exception("explode not support none array type")
         }
-<<<<<<< HEAD
         // 4. v['k1'] is json scalar type 
-=======
-        // 4. v['k1'] is json scalar type
->>>>>>> 514b1ac39f
         test {
             sql """select count(),cast(vv as int) from var_nested_explode_variant_with_abnomal lateral view explode_variant_array(v['k1']) tmp as vv where vv = 10 group by cast(vv as int)"""
             exception("explode not support none array type")
