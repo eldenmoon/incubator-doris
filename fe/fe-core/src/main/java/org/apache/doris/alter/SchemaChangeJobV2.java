@@ -663,10 +663,6 @@ public class SchemaChangeJobV2 extends AlterJobV2 {
             commitShadowIndex();
             // all partitions are good
             onFinished(tbl);
-<<<<<<< HEAD
-
-=======
->>>>>>> 514b1ac39f
             pruneMeta();
 
             LOG.info("schema change job finished: {}", jobId);
@@ -676,19 +672,13 @@ public class SchemaChangeJobV2 extends AlterJobV2 {
 
             this.jobState = JobState.FINISHED;
             this.finishedTimeMs = System.currentTimeMillis();
-<<<<<<< HEAD
-=======
             // Write edit log with table's write lock held, to avoid adding partitions before writing edit log,
             // else it will try to transform index in newly added partition while replaying and result in failure.
->>>>>>> 514b1ac39f
             Env.getCurrentEnv().getEditLog().logAlterJob(this);
         } finally {
             tbl.writeUnlock();
         }
-<<<<<<< HEAD
 
-=======
->>>>>>> 514b1ac39f
         postProcessOriginIndex();
         // Drop table column stats after schema change finished.
         Env.getCurrentEnv().getAnalysisManager().dropStats(tbl, null);

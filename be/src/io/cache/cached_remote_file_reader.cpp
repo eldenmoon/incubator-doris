@@ -127,17 +127,10 @@ Status CachedRemoteFileReader::read_at_impl(size_t offset, Slice result, size_t*
     auto defer_func = [&](int*) {
         if (io_ctx->file_cache_stats) {
             // update stats in io_ctx, for query profile
-<<<<<<< HEAD
-            _update_state(stats, io_ctx->file_cache_stats);
-            // update stats increment in this reading procedure for file cache metrics
-            FileCacheStatistics fcache_stats_increment;
-            _update_state(stats, &fcache_stats_increment);
-=======
             _update_stats(stats, io_ctx->file_cache_stats, io_ctx->is_inverted_index);
             // update stats increment in this reading procedure for file cache metrics
             FileCacheStatistics fcache_stats_increment;
             _update_stats(stats, &fcache_stats_increment, io_ctx->is_inverted_index);
->>>>>>> 514b1ac39f
             io::FileCacheProfile::instance().update(&fcache_stats_increment);
         }
     };
