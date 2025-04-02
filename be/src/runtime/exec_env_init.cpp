@@ -405,15 +405,6 @@ void ExecEnv::init_file_cache_factory(std::vector<doris::CachePath>& cache_paths
             LOG(WARNING) << fmt::format("cache path {} is duplicate", cache_path.path);
             continue;
         }
-<<<<<<< HEAD
-        cache_status = doris::io::FileCacheFactory::instance()->create_file_cache(
-                cache_path.path, cache_path.init_settings());
-        if (!cache_status.ok()) {
-            LOG(FATAL) << "failed to init file cache, path: " << cache_path.path
-                       << " err: " << cache_status;
-            exit(-1);
-=======
-
         cache_status = doris::io::FileCacheFactory::instance()->create_file_cache(
                 cache_path.path, cache_path.init_settings());
         if (!cache_status.ok()) {
@@ -424,7 +415,6 @@ void ExecEnv::init_file_cache_factory(std::vector<doris::CachePath>& cache_paths
             }
             LOG(WARNING) << "failed to init file cache, path: " << cache_path.path
                          << " err: " << cache_status;
->>>>>>> 514b1ac39f
         }
         cache_path_set.emplace(cache_path.path);
     }
