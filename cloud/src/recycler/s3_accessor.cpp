@@ -288,10 +288,7 @@ int S3Accessor::init() {
         aws_config.maxConnections = std::max((long)(config::recycle_pool_parallelism +
                                                     config::instance_recycler_worker_pool_size),
                                              (long)aws_config.maxConnections);
-<<<<<<< HEAD
-=======
 
->>>>>>> 514b1ac39f
         if (config::s3_client_http_scheme == "http") {
             aws_config.scheme = Aws::Http::Scheme::HTTP;
         }

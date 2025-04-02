@@ -304,54 +304,6 @@ private:
                _last_access_at_ms.load(std::memory_order_relaxed) + idle_timeout_ms < now;
     }
 
-<<<<<<< HEAD
-    Status get(std::shared_ptr<MetaService_Stub>* stub) {
-        using namespace std::chrono;
-
-        auto now = duration_cast<milliseconds>(system_clock::now().time_since_epoch()).count();
-        {
-            std::shared_lock lock(_mutex);
-            if (_deadline_ms >= now && !is_idle_timeout(now)) {
-                _last_access_at_ms.store(now, std::memory_order_relaxed);
-                *stub = _stub;
-                return Status::OK();
-            }
-        }
-
-        auto channel = std::make_unique<brpc::Channel>();
-        Status s = init_channel(channel.get());
-        if (!s.ok()) [[unlikely]] {
-            return s;
-        }
-
-        *stub = std::make_shared<MetaService_Stub>(channel.release(),
-                                                   google::protobuf::Service::STUB_OWNS_CHANNEL);
-
-        long deadline = now;
-        // connection age only works without list endpoint.
-        if (!is_meta_service_endpoint_list &&
-            config::meta_service_connection_age_base_seconds > 0) {
-            std::default_random_engine rng(static_cast<uint32_t>(now));
-            std::uniform_int_distribution<> uni(
-                    config::meta_service_connection_age_base_seconds,
-                    config::meta_service_connection_age_base_seconds * 2);
-            deadline = now + duration_cast<milliseconds>(seconds(uni(rng))).count();
-        } else {
-            deadline = LONG_MAX;
-        }
-
-        // Last one WIN
-        std::unique_lock lock(_mutex);
-        _last_access_at_ms.store(now, std::memory_order_relaxed);
-        _deadline_ms = deadline;
-        _stub = *stub;
-        return Status::OK();
-    }
-
-    static std::atomic_bool is_meta_service_endpoint_list;
-
-=======
->>>>>>> 514b1ac39f
     std::shared_mutex _mutex;
     std::atomic<long> _last_access_at_ms {0};
     long _deadline_ms {0};
@@ -768,43 +720,11 @@ Status CloudMetaMgr::sync_tablet_delete_bitmap(CloudTablet* tablet, int64_t old_
 
     VLOG_DEBUG << "send GetDeleteBitmapRequest: " << req.ShortDebugString();
 
-<<<<<<< HEAD
-    int retry_times = 0;
-    while (true) {
-        std::shared_ptr<MetaService_Stub> stub;
-        RETURN_IF_ERROR(MetaServiceProxy::get_client(&stub));
-        brpc::Controller cntl;
-        // When there are many delete bitmaps that need to be synchronized, it
-        // may take a longer time, especially when loading the tablet for the
-        // first time, so set a relatively long timeout time.
-        cntl.set_timeout_ms(3 * config::meta_service_brpc_timeout_ms);
-        cntl.set_max_retry(kBrpcRetryTimes);
-        res.Clear();
-        stub->get_delete_bitmap(&cntl, &req, &res, nullptr);
-        if (cntl.Failed()) [[unlikely]] {
-            LOG_INFO("failed to get delete bitmap")
-                    .tag("reason", cntl.ErrorText())
-                    .tag("tablet_id", tablet->tablet_id())
-                    .tag("partition_id", tablet->partition_id())
-                    .tag("tried", retry_times);
-        } else {
-            break;
-        }
-
-        if (++retry_times > config::delete_bitmap_rpc_retry_times) {
-            if (cntl.Failed()) {
-                return Status::RpcError("failed to get delete bitmap, tablet={} err={}",
-                                        tablet->tablet_id(), cntl.ErrorText());
-            }
-            break;
-        }
-=======
     auto start = std::chrono::high_resolution_clock::now();
     auto st = retry_rpc("get delete bitmap", req, &res, &MetaService_Stub::get_delete_bitmap);
     auto end = std::chrono::high_resolution_clock::now();
     if (st.code() == ErrorCode::THRIFT_RPC_ERROR) {
         return st;
->>>>>>> 514b1ac39f
     }
 
     if (res.status().code() == MetaServiceCode::TABLET_NOT_FOUND) {

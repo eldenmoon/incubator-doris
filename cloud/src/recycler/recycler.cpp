@@ -1842,33 +1842,6 @@ int InstanceRecycler::recycle_tablet(int64_t tablet_id) {
         ret = -1;
     }
 
-    SyncExecutor<int> concurrent_delete_executor(
-            _thread_pool_group.s3_producer_pool,
-            fmt::format("{} recycle_tablet, delete tablet data delete_directory tablet_id={}",
-                        instance_id_, tablet_id),
-            [](const int& ret) { return ret != 0; });
-
-    // delete all rowset data in this tablet
-    for (auto& [_, accessor] : accessor_map_) {
-        concurrent_delete_executor.add([&, accessor_ptr = &accessor]() {
-            if ((*accessor_ptr)->delete_directory(tablet_path_prefix(tablet_id)) != 0) {
-                LOG(WARNING) << "failed to delete rowset data of tablet " << tablet_id
-                             << " s3_path=" << accessor->uri();
-                return -1;
-            }
-            return 0;
-        });
-    }
-    bool finished = true;
-    std::vector<int> rets = concurrent_delete_executor.when_all(&finished);
-    for (int r : rets) {
-        if (r != 0) {
-            ret = -1;
-        }
-    }
-
-    ret = finished ? ret : -1;
-
     if (ret == 0) {
         // All object files under tablet have been deleted
         std::lock_guard lock(recycled_tablets_mtx_);
@@ -2546,9 +2519,8 @@ int InstanceRecycler::recycle_expired_txn_label() {
         }
         if ((config::force_immediate_recycle) ||
             (recycle_txn_pb.has_immediate() && recycle_txn_pb.immediate()) ||
-            (recycle_txn_pb.creation_time() + config::label_keep_max_second * 1000L <=
-             current_time)) {
-            LOG_INFO("found recycle txn").tag("key", hex(k));
+            (calc_expiration(recycle_txn_pb) <= current_time_ms)) {
+            VLOG_DEBUG << "found recycle txn, key=" << hex(k);
             num_expired++;
         } else {
             return 0;
