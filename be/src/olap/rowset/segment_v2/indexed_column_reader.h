@@ -78,11 +78,8 @@ public:
 private:
     Status load_index_page(const PagePointerPB& pp, PageHandle* handle, IndexPageReader* reader,
                            OlapReaderStatistics* index_load_stats);
-<<<<<<< HEAD
-=======
 
     int64_t get_metadata_size() const override;
->>>>>>> 514b1ac39f
 
     friend class IndexedColumnIterator;
 

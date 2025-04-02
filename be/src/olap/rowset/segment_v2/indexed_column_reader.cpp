@@ -80,13 +80,8 @@ Status IndexedColumnReader::load(bool use_page_cache, bool kept_in_memory,
             _sole_data_page = PagePointer(_meta.ordinal_index_meta().root_page());
         } else {
             RETURN_IF_ERROR(load_index_page(_meta.ordinal_index_meta().root_page(),
-<<<<<<< HEAD
-                                            &_ordinal_index_page_handle, &_ordinal_index_reader,
-                                            index_load_stats));
-=======
                                             &_ordinal_index_page_handle,
                                             _ordinal_index_reader.get(), index_load_stats));
->>>>>>> 514b1ac39f
             _has_index_page = true;
         }
     }
@@ -97,11 +92,7 @@ Status IndexedColumnReader::load(bool use_page_cache, bool kept_in_memory,
             _sole_data_page = PagePointer(_meta.value_index_meta().root_page());
         } else {
             RETURN_IF_ERROR(load_index_page(_meta.value_index_meta().root_page(),
-<<<<<<< HEAD
-                                            &_value_index_page_handle, &_value_index_reader,
-=======
                                             &_value_index_page_handle, _value_index_reader.get(),
->>>>>>> 514b1ac39f
                                             index_load_stats));
             _has_index_page = true;
         }
