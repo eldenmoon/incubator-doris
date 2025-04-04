@@ -107,10 +107,36 @@ public class BinlogManager {
         }
     }
 
+    private boolean isAsyncMvBinlog(TBinlog binlog) {
+        if (!binlog.isSetTableIds()) {
+            return false;
+        }
+
+        // Filter the binlogs belong to async materialized view, since we don't support async mv right now.
+        for (long tableId : binlog.getTableIds()) {
+            if (binlogConfigCache.isAsyncMvTable(binlog.getDbId(), tableId)) {
+                LOG.debug("filter the async mv binlog, db {}, table {}, commit seq {}, ts {}, type {}, data {}",
+                        binlog.getDbId(), binlog.getTableIds(), binlog.getCommitSeq(), binlog.getTimestamp(),
+                        binlog.getType(), binlog.getData());
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     private void addBinlog(TBinlog binlog, Object raw) {
         if (!Config.enable_feature_binlog) {
             return;
         }
+
+        if (isAsyncMvBinlog(binlog)) {
+            return;
+        }
+
+        LOG.debug("add binlog, db {}, table {}, commitSeq {}, timestamp {}, type {}, data {}",
+                binlog.getDbId(), binlog.getTableIds(), binlog.getCommitSeq(), binlog.getTimestamp(), binlog.getType(),
+                binlog.getData());
 
         DBBinlog dbBinlog;
         lock.writeLock().lock();
@@ -130,7 +156,7 @@ public class BinlogManager {
     }
 
     private void addBinlog(long dbId, List<Long> tableIds, long commitSeq, long timestamp, TBinlogType type,
-                           String data, boolean removeEnableCache, Object raw) {
+            String data, boolean removeEnableCache, Object raw) {
         if (!Config.enable_feature_binlog) {
             return;
         }
@@ -447,7 +473,6 @@ public class BinlogManager {
         addBinlog(dbId, tableIds, commitSeq, timestamp, type, data, false, info);
     }
 
-
     private boolean supportedRecoverInfo(RecoverInfo info) {
         //table name and partitionName added together.
         // recover table case, tablename must exist in newer version
@@ -475,6 +500,15 @@ public class BinlogManager {
 
     // get binlog by dbId, return first binlog.version > version
     public Pair<TStatus, TBinlog> getBinlog(long dbId, long tableId, long prevCommitSeq) {
+        Pair<TStatus, List<TBinlog>> result = getBinlog(dbId, tableId, prevCommitSeq, 1);
+        if (result.second != null && result.second.size() > 0) {
+            return Pair.of(result.first, result.second.get(0));
+        }
+        return Pair.of(result.first, null);
+    }
+
+    // get binlogs by dbId, return the first N binlogs, which first binlog.version > prevCommitSeq
+    public Pair<TStatus, List<TBinlog>> getBinlog(long dbId, long tableId, long prevCommitSeq, long numAcquired) {
         TStatus status = new TStatus(TStatusCode.OK);
         lock.readLock().lock();
         try {
@@ -485,14 +519,14 @@ public class BinlogManager {
                 return Pair.of(status, null);
             }
 
-            return dbBinlog.getBinlog(tableId, prevCommitSeq);
+            return dbBinlog.getBinlog(tableId, prevCommitSeq, numAcquired);
         } finally {
             lock.readLock().unlock();
         }
     }
 
     // get binlog by dbId, return first binlog.version > version
-    public Pair<TStatus, Long> getBinlogLag(long dbId, long tableId, long prevCommitSeq) {
+    public Pair<TStatus, BinlogLagInfo> getBinlogLag(long dbId, long tableId, long prevCommitSeq) {
         TStatus status = new TStatus(TStatusCode.OK);
         lock.readLock().lock();
         try {
@@ -502,15 +536,34 @@ public class BinlogManager {
                 LOG.warn("dbBinlog not found. dbId: {}", dbId);
                 return Pair.of(status, null);
             }
-
             return dbBinlog.getBinlogLag(tableId, prevCommitSeq);
         } finally {
             lock.readLock().unlock();
         }
     }
 
+    public Pair<TStatus, Long> lockBinlog(long dbId, long tableId,
+            String jobUniqueId, long lockCommitSeq) {
+        LOG.debug("lock binlog. dbId: {}, tableId: {}, jobUniqueId: {}, lockCommitSeq: {}",
+                dbId, tableId, jobUniqueId, lockCommitSeq);
+
+        DBBinlog dbBinlog = null;
+        lock.readLock().lock();
+        try {
+            dbBinlog = dbBinlogMap.get(dbId);
+        } finally {
+            lock.readLock().unlock();
+        }
+
+        if (dbBinlog == null) {
+            LOG.warn("db binlog not found. dbId: {}", dbId);
+            return Pair.of(new TStatus(TStatusCode.BINLOG_NOT_FOUND_DB), -1L);
+        }
+        return dbBinlog.lockBinlog(tableId, jobUniqueId, lockCommitSeq);
+    }
+
     // get the dropped partitions of the db.
-    public List<Long> getDroppedPartitions(long dbId) {
+    public List<Pair<Long, Long>> getDroppedPartitions(long dbId) {
         lock.readLock().lock();
         try {
             DBBinlog dbBinlog = dbBinlogMap.get(dbId);
@@ -524,7 +577,7 @@ public class BinlogManager {
     }
 
     // get the dropped tables of the db.
-    public List<Long> getDroppedTables(long dbId) {
+    public List<Pair<Long, Long>> getDroppedTables(long dbId) {
         lock.readLock().lock();
         try {
             DBBinlog dbBinlog = dbBinlogMap.get(dbId);
@@ -538,7 +591,7 @@ public class BinlogManager {
     }
 
     // get the dropped indexes of the db.
-    public List<Long> getDroppedIndexes(long dbId) {
+    public List<Pair<Long, Long>> getDroppedIndexes(long dbId) {
         lock.readLock().lock();
         try {
             DBBinlog dbBinlog = dbBinlogMap.get(dbId);
@@ -574,6 +627,7 @@ public class BinlogManager {
                 tombstones.add(dbTombstones);
             }
         }
+
         return tombstones;
     }
 
@@ -623,7 +677,6 @@ public class BinlogManager {
         }
     }
 
-
     private static void writeTBinlogToStream(DataOutputStream dos, TBinlog binlog) throws TException, IOException {
         TMemoryBuffer buffer = new TMemoryBuffer(BUFFER_SIZE);
         TBinaryProtocol protocol = new TBinaryProtocol(buffer);
@@ -632,7 +685,6 @@ public class BinlogManager {
         dos.writeInt(data.length);
         dos.write(data);
     }
-
 
     // not thread safety, do this without lock
     public long write(DataOutputStream dos, long checksum) throws IOException {

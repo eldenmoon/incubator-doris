@@ -136,6 +136,7 @@ import org.apache.doris.nereids.trees.expressions.functions.scalar.CurrentDate;
 import org.apache.doris.nereids.trees.expressions.functions.scalar.CurrentTime;
 import org.apache.doris.nereids.trees.expressions.functions.scalar.CurrentUser;
 import org.apache.doris.nereids.trees.expressions.functions.scalar.CutIpv6;
+import org.apache.doris.nereids.trees.expressions.functions.scalar.CutToFirstSignificantSubdomain;
 import org.apache.doris.nereids.trees.expressions.functions.scalar.Database;
 import org.apache.doris.nereids.trees.expressions.functions.scalar.Date;
 import org.apache.doris.nereids.trees.expressions.functions.scalar.DateDiff;
@@ -157,7 +158,6 @@ import org.apache.doris.nereids.trees.expressions.functions.scalar.Degrees;
 import org.apache.doris.nereids.trees.expressions.functions.scalar.Dexp;
 import org.apache.doris.nereids.trees.expressions.functions.scalar.Dfloor;
 import org.apache.doris.nereids.trees.expressions.functions.scalar.DigitalMasking;
-import org.apache.doris.nereids.trees.expressions.functions.scalar.Dlog1;
 import org.apache.doris.nereids.trees.expressions.functions.scalar.Dlog10;
 import org.apache.doris.nereids.trees.expressions.functions.scalar.Domain;
 import org.apache.doris.nereids.trees.expressions.functions.scalar.DomainWithoutWww;
@@ -177,6 +177,7 @@ import org.apache.doris.nereids.trees.expressions.functions.scalar.Exp;
 import org.apache.doris.nereids.trees.expressions.functions.scalar.ExtractUrlParameter;
 import org.apache.doris.nereids.trees.expressions.functions.scalar.Field;
 import org.apache.doris.nereids.trees.expressions.functions.scalar.FindInSet;
+import org.apache.doris.nereids.trees.expressions.functions.scalar.FirstSignificantSubdomain;
 import org.apache.doris.nereids.trees.expressions.functions.scalar.Floor;
 import org.apache.doris.nereids.trees.expressions.functions.scalar.Fmod;
 import org.apache.doris.nereids.trees.expressions.functions.scalar.Fpow;
@@ -220,6 +221,7 @@ import org.apache.doris.nereids.trees.expressions.functions.scalar.Ipv4StringToN
 import org.apache.doris.nereids.trees.expressions.functions.scalar.Ipv4StringToNumOrNull;
 import org.apache.doris.nereids.trees.expressions.functions.scalar.Ipv4ToIpv6;
 import org.apache.doris.nereids.trees.expressions.functions.scalar.Ipv6CIDRToRange;
+import org.apache.doris.nereids.trees.expressions.functions.scalar.Ipv6FromUInt128StringOrNull;
 import org.apache.doris.nereids.trees.expressions.functions.scalar.Ipv6NumToString;
 import org.apache.doris.nereids.trees.expressions.functions.scalar.Ipv6StringToNum;
 import org.apache.doris.nereids.trees.expressions.functions.scalar.Ipv6StringToNumOrDefault;
@@ -405,8 +407,6 @@ import org.apache.doris.nereids.trees.expressions.functions.scalar.StPolygonfrom
 import org.apache.doris.nereids.trees.expressions.functions.scalar.StX;
 import org.apache.doris.nereids.trees.expressions.functions.scalar.StY;
 import org.apache.doris.nereids.trees.expressions.functions.scalar.StartsWith;
-import org.apache.doris.nereids.trees.expressions.functions.scalar.StrLeft;
-import org.apache.doris.nereids.trees.expressions.functions.scalar.StrRight;
 import org.apache.doris.nereids.trees.expressions.functions.scalar.StrToDate;
 import org.apache.doris.nereids.trees.expressions.functions.scalar.Strcmp;
 import org.apache.doris.nereids.trees.expressions.functions.scalar.StructElement;
@@ -435,6 +435,7 @@ import org.apache.doris.nereids.trees.expressions.functions.scalar.ToIso8601;
 import org.apache.doris.nereids.trees.expressions.functions.scalar.ToMonday;
 import org.apache.doris.nereids.trees.expressions.functions.scalar.ToQuantileState;
 import org.apache.doris.nereids.trees.expressions.functions.scalar.Tokenize;
+import org.apache.doris.nereids.trees.expressions.functions.scalar.TopLevelDomain;
 import org.apache.doris.nereids.trees.expressions.functions.scalar.Translate;
 import org.apache.doris.nereids.trees.expressions.functions.scalar.Trim;
 import org.apache.doris.nereids.trees.expressions.functions.scalar.TrimIn;
@@ -465,6 +466,7 @@ import org.apache.doris.nereids.trees.expressions.functions.scalar.XxHash64;
 import org.apache.doris.nereids.trees.expressions.functions.scalar.Year;
 import org.apache.doris.nereids.trees.expressions.functions.scalar.YearCeil;
 import org.apache.doris.nereids.trees.expressions.functions.scalar.YearFloor;
+import org.apache.doris.nereids.trees.expressions.functions.scalar.YearOfWeek;
 import org.apache.doris.nereids.trees.expressions.functions.scalar.YearWeek;
 import org.apache.doris.nereids.trees.expressions.functions.scalar.YearsAdd;
 import org.apache.doris.nereids.trees.expressions.functions.scalar.YearsDiff;
@@ -598,6 +600,7 @@ public class BuiltinScalarFunctions implements FunctionHelper {
             scalar(CurrentTime.class, "curtime", "current_time"),
             scalar(CurrentUser.class, "current_user"),
             scalar(CutIpv6.class, "cut_ipv6"),
+            scalar(CutToFirstSignificantSubdomain.class, "cut_to_first_significant_subdomain"),
             scalar(Database.class, "database", "schema"),
             scalar(Date.class, "date"),
             scalar(DateDiff.class, "datediff"),
@@ -619,7 +622,6 @@ public class BuiltinScalarFunctions implements FunctionHelper {
             scalar(Dexp.class, "dexp"),
             scalar(Dfloor.class, "dfloor"),
             scalar(DigitalMasking.class, "digital_masking"),
-            scalar(Dlog1.class, "dlog1"),
             scalar(Dlog10.class, "dlog10"),
             scalar(Domain.class, "domain"),
             scalar(DomainWithoutWww.class, "domain_without_www"),
@@ -639,6 +641,7 @@ public class BuiltinScalarFunctions implements FunctionHelper {
             scalar(ExtractUrlParameter.class, "extract_url_parameter"),
             scalar(Field.class, "field"),
             scalar(FindInSet.class, "find_in_set"),
+            scalar(FirstSignificantSubdomain.class, "first_significant_subdomain"),
             scalar(Floor.class, "floor"),
             scalar(Fmod.class, "fmod"),
             scalar(Fpow.class, "fpow"),
@@ -688,6 +691,7 @@ public class BuiltinScalarFunctions implements FunctionHelper {
             scalar(IsIpAddressInRange.class, "is_ip_address_in_range"),
             scalar(Ipv4CIDRToRange.class, "ipv4_cidr_to_range"),
             scalar(Ipv6CIDRToRange.class, "ipv6_cidr_to_range"),
+            scalar(Ipv6FromUInt128StringOrNull.class, "ipv6_from_uint128_string_or_null"),
             scalar(JsonArray.class, "json_array"),
             scalar(JsonObject.class, "json_object"),
             scalar(JsonQuote.class, "json_quote"),
@@ -746,11 +750,11 @@ public class BuiltinScalarFunctions implements FunctionHelper {
             scalar(L2Distance.class, "l2_distance"),
             scalar(LastDay.class, "last_day"),
             scalar(Least.class, "least"),
-            scalar(Left.class, "left"),
+            scalar(Left.class, "left", "strleft"),
             scalar(Length.class, "length"),
             scalar(Crc32.class, "crc32"),
             scalar(Like.class, "like"),
-            scalar(Ln.class, "ln"),
+            scalar(Ln.class, "ln", "dlog1"),
             scalar(Locate.class, "locate"),
             scalar(Log.class, "log"),
             scalar(Log10.class, "log10"),
@@ -829,7 +833,7 @@ public class BuiltinScalarFunctions implements FunctionHelper {
             scalar(Replace.class, "replace"),
             scalar(ReplaceEmpty.class, "replace_empty"),
             scalar(Reverse.class, "reverse"),
-            scalar(Right.class, "right"),
+            scalar(Right.class, "right", "strright"),
             scalar(Round.class, "round"),
             scalar(RoundBankers.class, "round_bankers"),
             scalar(Rpad.class, "rpad"),
@@ -889,8 +893,6 @@ public class BuiltinScalarFunctions implements FunctionHelper {
             scalar(StY.class, "st_y"),
             scalar(StartsWith.class, "starts_with"),
             scalar(Strcmp.class, "strcmp"),
-            scalar(StrLeft.class, "strleft"),
-            scalar(StrRight.class, "strright"),
             scalar(StrToDate.class, "str_to_date"),
             scalar(SubBitmap.class, "sub_bitmap"),
             scalar(SubReplace.class, "sub_replace"),
@@ -916,6 +918,7 @@ public class BuiltinScalarFunctions implements FunctionHelper {
             scalar(ToIso8601.class, "to_iso8601"),
             scalar(Tokenize.class, "tokenize"),
             scalar(ToMonday.class, "to_monday"),
+            scalar(TopLevelDomain.class, "top_level_domain"),
             scalar(ToQuantileState.class, "to_quantile_state"),
             scalar(Translate.class, "translate"),
             scalar(Trim.class, "trim"),
@@ -948,6 +951,7 @@ public class BuiltinScalarFunctions implements FunctionHelper {
             scalar(Year.class, "year"),
             scalar(YearCeil.class, "year_ceil"),
             scalar(YearFloor.class, "year_floor"),
+            scalar(YearOfWeek.class, "year_of_week", "yow"),
             scalar(YearWeek.class, "yearweek"),
             scalar(YearsAdd.class, "years_add"),
             scalar(YearsDiff.class, "years_diff"),

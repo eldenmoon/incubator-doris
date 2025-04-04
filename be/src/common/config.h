@@ -302,6 +302,10 @@ DECLARE_mInt32(download_low_speed_limit_kbps);
 DECLARE_mInt32(download_low_speed_time);
 // whether to download small files in batch.
 DECLARE_mBool(enable_batch_download);
+// whether to check md5sum when download
+DECLARE_mBool(enable_download_md5sum_check);
+// download binlog meta timeout
+DECLARE_mInt32(download_binlog_meta_timeout_ms);
 
 // deprecated, use env var LOG_DIR in be.conf
 DECLARE_String(sys_log_dir);
@@ -768,6 +772,8 @@ DECLARE_mInt32(es_http_timeout_ms);
 // TODO(cmy): use different config to set different client cache if necessary.
 DECLARE_Int32(max_client_cache_size_per_host);
 
+DECLARE_Int32(max_master_fe_client_cache_size);
+
 // Dir to save files downloaded by SmallFileMgr
 DECLARE_String(small_file_dir);
 // path gc
@@ -1076,6 +1082,9 @@ DECLARE_mInt32(segcompaction_num_threads);
 // enable java udf and jdbc scannode
 DECLARE_Bool(enable_java_support);
 
+// enable prefetch tablets before opening
+DECLARE_mBool(enable_prefetch_tablet);
+
 // Set config randomly to check more issues in github workflow
 DECLARE_Bool(enable_fuzzy_mode);
 
@@ -1109,6 +1118,7 @@ DECLARE_mInt32(file_cache_enter_need_evict_cache_in_advance_percent);
 DECLARE_mInt32(file_cache_exit_need_evict_cache_in_advance_percent);
 DECLARE_mInt32(file_cache_evict_in_advance_interval_ms);
 DECLARE_mInt64(file_cache_evict_in_advance_batch_bytes);
+DECLARE_mInt64(file_cache_evict_in_advance_recycle_keys_num_threshold);
 DECLARE_mBool(enable_read_cache_file_directly);
 DECLARE_Bool(file_cache_enable_evict_from_other_queue_by_size);
 // If true, evict the ttl cache using LRU when full.
@@ -1127,6 +1137,7 @@ DECLARE_mInt64(cache_lock_held_long_tail_threshold_us);
 // enable this option; otherwise, it is recommended to leave it disabled.
 DECLARE_mBool(enable_file_cache_keep_base_compaction_output);
 DECLARE_mInt64(file_cache_remove_block_qps_limit);
+DECLARE_mInt64(file_cache_background_gc_interval_ms);
 // inverted index searcher cache
 // cache entry stay time after lookup
 DECLARE_mInt32(index_cache_entry_stay_time_after_lookup_s);
@@ -1243,7 +1254,7 @@ DECLARE_mInt64(LZ4_HC_compression_level);
 // Threshold of a column as sparse column
 // Notice: TEST ONLY
 DECLARE_mDouble(variant_ratio_of_defaults_as_sparse_column);
-DECLARE_mBool(variant_use_cloud_schema_dict);
+DECLARE_mBool(variant_use_cloud_schema_dict_cache);
 // Threshold to estimate a column is sparsed
 // Notice: TEST ONLY
 DECLARE_mInt64(variant_threshold_rows_to_estimate_sparse_column);
@@ -1265,6 +1276,10 @@ DECLARE_mInt32(mow_publish_max_discontinuous_version_num);
 // current txn's publishing version and the max version of the tablet exceeds this value,
 // don't print warning log
 DECLARE_mInt32(publish_version_gap_logging_threshold);
+// get agg by cache for mow table
+DECLARE_mBool(enable_mow_get_agg_by_cache);
+// get agg correctness check for mow table
+DECLARE_mBool(enable_mow_get_agg_correctness_check_core);
 
 // The secure path with user files, used in the `local` table function.
 DECLARE_mString(user_files_secure_path);
@@ -1328,6 +1343,9 @@ DECLARE_Bool(ignore_always_true_predicate_for_segment);
 // Ingest binlog work pool size
 DECLARE_Int32(ingest_binlog_work_pool_size);
 
+// Ingest binlog with persistent connection
+DECLARE_Bool(enable_ingest_binlog_with_persistent_connection);
+
 // Download binlog rate limit, unit is KB/s
 DECLARE_Int32(download_binlog_rate_limit_kbs);
 
@@ -1374,6 +1392,8 @@ DECLARE_Int32(spill_io_thread_pool_queue_size);
 DECLARE_mBool(check_segment_when_build_rowset_meta);
 
 DECLARE_Int32(num_query_ctx_map_partitions);
+
+DECLARE_mBool(force_azure_blob_global_endpoint);
 
 DECLARE_mBool(enable_s3_rate_limiter);
 DECLARE_mInt64(s3_get_bucket_tokens);
@@ -1516,6 +1536,23 @@ DECLARE_mInt32(compaction_num_per_round);
 DECLARE_mInt32(check_tablet_delete_bitmap_interval_seconds);
 DECLARE_mInt32(check_tablet_delete_bitmap_score_top_n);
 DECLARE_mBool(enable_check_tablet_delete_bitmap_score);
+DECLARE_mInt32(schema_dict_cache_capacity);
+
+DECLARE_mBool(enable_mow_verbose_log);
+
+// whether to prune rows with delete sign = 1 in base compaction
+// ATTN: this config is only for test
+DECLARE_mBool(enable_prune_delete_sign_when_base_compaction);
+
+// Because the root_path for the HDFS resource was previously passed an empty string (since v2.1),
+// which was incorrect, this configuration has been added to ensure compatibility
+// and guarantee that the root_path works as expected.
+DECLARE_Bool(enable_root_path_of_hdfs_resource);
+
+DECLARE_mInt32(tablet_sched_delay_time_ms);
+DECLARE_mInt32(load_trigger_compaction_version_percent);
+DECLARE_mInt64(base_compaction_interval_seconds_since_last_operation);
+DECLARE_mBool(enable_compaction_pause_on_high_memory);
 
 #ifdef BE_TEST
 // test s3

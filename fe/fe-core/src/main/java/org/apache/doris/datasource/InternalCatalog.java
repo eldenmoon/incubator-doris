@@ -267,6 +267,10 @@ public class InternalCatalog implements CatalogIf<Database> {
         return Lists.newArrayList(idToDb.keySet());
     }
 
+    public int getDbNum() {
+        return idToDb.size();
+    }
+
     @Nullable
     @Override
     public Database getDbNullable(String dbName) {
@@ -427,6 +431,7 @@ public class InternalCatalog implements CatalogIf<Database> {
         long id = Env.getCurrentEnv().getNextId();
         Database db = new Database(id, fullDbName);
         // check and analyze database properties before create database
+        db.checkStorageVault(properties);
         db.setDbProperties(new DatabaseProperty(properties));
 
         if (!tryLock(false)) {
@@ -1600,6 +1605,11 @@ public class InternalCatalog implements CatalogIf<Database> {
                 }
             }
 
+            if (partitionInfo.getType() != PartitionType.RANGE && partitionInfo.getType() != PartitionType.LIST
+                    && !isTempPartition) {
+                throw new DdlException("Alter table [" + olapTable.getName() + "] failed. Not a partitioned table");
+            }
+
             Map<String, String> properties = singlePartitionDesc.getProperties();
 
             /*
@@ -2729,10 +2739,10 @@ public class InternalCatalog implements CatalogIf<Database> {
 
         if (Config.isCloudMode() && ((CloudEnv) env).getEnableStorageVault()) {
             // <storageVaultName, storageVaultId>
-            Pair<String, String> storageVaultInfoPair = PropertyAnalyzer.analyzeStorageVault(properties);
+            Pair<String, String> storageVaultInfoPair = PropertyAnalyzer.analyzeStorageVault(properties, db);
 
             // Check if user has storage vault usage privilege
-            if (ConnectContext.get() != null && !env.getAuth()
+            if (ConnectContext.get() != null && !env.getAccessManager()
                     .checkStorageVaultPriv(ctx.getCurrentUserIdentity(),
                             storageVaultInfoPair.first, PrivPredicate.USAGE)) {
                 throw new DdlException("USAGE denied to user '" + ConnectContext.get().getQualifiedUser()
@@ -2740,7 +2750,7 @@ public class InternalCatalog implements CatalogIf<Database> {
                         + "' for storage vault '" + storageVaultInfoPair.first + "'");
             }
             Preconditions.checkArgument(StringUtils.isNumeric(storageVaultInfoPair.second),
-                    "Invaild storage vault id :%s", storageVaultInfoPair.second);
+                    "Invalid storage vault id :%s", storageVaultInfoPair.second);
             olapTable.setStorageVaultId(storageVaultInfoPair.second);
         }
 
@@ -2802,7 +2812,7 @@ public class InternalCatalog implements CatalogIf<Database> {
         olapTable.setIsBeingSynced(isBeingSynced);
         if (isBeingSynced) {
             // erase colocate table, storage policy
-            olapTable.ignoreInvaildPropertiesWhenSynced(properties);
+            olapTable.ignoreInvalidPropertiesWhenSynced(properties);
             // remark auto bucket
             if (isAutoBucket) {
                 olapTable.markAutoBucket();
@@ -2899,6 +2909,9 @@ public class InternalCatalog implements CatalogIf<Database> {
             partitionInfo.setIsInMemory(partitionId, isInMemory);
             partitionInfo.setTabletType(partitionId, tabletType);
             partitionInfo.setIsMutable(partitionId, isMutable);
+            if (isBeingSynced) {
+                partitionInfo.refreshTableStoragePolicy("");
+            }
         }
         // check colocation properties
         try {

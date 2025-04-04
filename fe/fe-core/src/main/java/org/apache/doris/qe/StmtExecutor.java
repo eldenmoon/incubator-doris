@@ -567,6 +567,11 @@ public class StmtExecutor {
         UUID uuid;
         int retryTime = Config.max_query_retry_time;
         retryTime = retryTime <= 0 ? 1 : retryTime + 1;
+        // If the query is an `outfile` statement,
+        // we execute it only once to avoid exporting redundant data.
+        if (parsedStmt instanceof Queriable) {
+            retryTime = ((Queriable) parsedStmt).hasOutFileClause() ? 1 : retryTime;
+        }
         for (int i = 1; i <= retryTime; i++) {
             try {
                 execute(queryId);
@@ -691,7 +696,7 @@ public class StmtExecutor {
         }
         context.setQueryId(queryId);
         context.setStartTime();
-        profile.getSummaryProfile().setQueryBeginTime();
+        profile.getSummaryProfile().setQueryBeginTime(TimeUtils.getStartTimeMs());
         List<List<String>> changedSessionVar = VariableMgr.dumpChangedVars(context.getSessionVariable());
         profile.setChangedSessionVar(DebugUtil.prettyPrintChangedSessionVar(changedSessionVar));
         context.setStmtId(STMT_ID_GENERATOR.incrementAndGet());
@@ -941,7 +946,8 @@ public class StmtExecutor {
                 boolean isNeedRetry = false;
                 if (Config.isCloudMode()) {
                     isNeedRetry = false;
-                    // errCode = 2, detailMessage = There is no scanNode Backend available.[10003: not alive]
+                    // errCode = 2, detailMessage = No backend available as scan node,
+                    // please check the status of your backends. [10003: not alive]
                     List<String> bes = Env.getCurrentSystemInfo().getAllBackendIds().stream()
                                 .map(id -> Long.toString(id)).collect(Collectors.toList());
                     String msg = e.getMessage();
@@ -996,7 +1002,7 @@ public class StmtExecutor {
     public void executeByLegacy(TUniqueId queryId) throws Exception {
         context.setStartTime();
 
-        profile.getSummaryProfile().setQueryBeginTime();
+        profile.getSummaryProfile().setQueryBeginTime(TimeUtils.getStartTimeMs());
         context.setStmtId(STMT_ID_GENERATOR.incrementAndGet());
         context.setQueryId(queryId);
 
@@ -1159,7 +1165,7 @@ public class StmtExecutor {
         } catch (Exception e) {
             LOG.warn("execute Exception. {}", context.getQueryIdentifier(), e);
             context.getState().setError(ErrorCode.ERR_UNKNOWN_ERROR,
-                    e.getClass().getSimpleName() + ", msg: " + Util.getRootCauseMessage(e));
+                    e.getClass().getSimpleName() + ", msg: " + Util.getRootCauseWithSuppressedMessage(e));
             if (parsedStmt instanceof KillStmt) {
                 // ignore kill stmt execute err(not monitor it)
                 context.getState().setErrType(QueryState.ErrType.ANALYSIS_ERR);
@@ -1284,7 +1290,7 @@ public class StmtExecutor {
         if (ConnectContext.get() == null || Strings.isNullOrEmpty(clusterName)) {
             return false;
         }
-        return Env.getCurrentEnv().getAuth().checkCloudPriv(ConnectContext.get().getCurrentUserIdentity(),
+        return Env.getCurrentEnv().getAccessManager().checkCloudPriv(ConnectContext.get().getCurrentUserIdentity(),
             clusterName, PrivPredicate.USAGE, ResourceTypeEnum.CLUSTER);
     }
 

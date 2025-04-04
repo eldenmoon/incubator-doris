@@ -33,8 +33,23 @@ public class FeNameFormatTest {
         ExceptionChecker.expectThrowsNoException(() -> FeNameFormat.checkLabel("-lable"));
     }
 
+<<<<<<< HEAD
     @Test
     void testTableName() {
+=======
+        ExceptionChecker.expectThrowsNoException(() -> FeNameFormat.checkColumnName("_id"));
+        ExceptionChecker.expectThrowsNoException(() -> FeNameFormat.checkColumnName("__id"));
+        ExceptionChecker.expectThrowsNoException(() -> FeNameFormat.checkColumnName("___id"));
+        ExceptionChecker.expectThrowsNoException(() -> FeNameFormat.checkColumnName("___id_"));
+        ExceptionChecker.expectThrowsNoException(() -> FeNameFormat.checkColumnName("@timestamp"));
+        ExceptionChecker.expectThrowsNoException(() -> FeNameFormat.checkColumnName("@timestamp#"));
+        ExceptionChecker.expectThrowsNoException(() -> FeNameFormat.checkColumnName("timestamp*"));
+        ExceptionChecker.expectThrowsNoException(() -> FeNameFormat.checkColumnName("timestamp.1"));
+        ExceptionChecker.expectThrowsNoException(() -> FeNameFormat.checkColumnName("timestamp.#"));
+        ExceptionChecker.expectThrowsNoException(() -> FeNameFormat.checkColumnName("?id_"));
+        ExceptionChecker.expectThrowsNoException(() -> FeNameFormat.checkColumnName("#id_"));
+        ExceptionChecker.expectThrowsNoException(() -> FeNameFormat.checkColumnName("$id_"));
+>>>>>>> apache/branch-3.0
         // length 64
         String tblName = "test_sys_partition_list_basic_test_list_partition_bigint_tb-uniq";
         ExceptionChecker.expectThrowsNoException(() -> FeNameFormat.checkTableName(tblName));

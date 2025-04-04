@@ -67,11 +67,20 @@ public class TableAddOrDropColumnsInfoTest {
         Map<Long, List<Column>> oldIndexSchemaMap = new HashMap<>();
         oldIndexSchemaMap.put(tableId, fullSchema);
 
+<<<<<<< HEAD
+        List<Index> indexes = Lists.newArrayList(
+                new Index(0, "index", Lists.newArrayList("testCol1"), IndexDef.IndexType.INVERTED, null, "xxxxxx"));
+=======
+        Map<String, Long> indexNameToId = new HashMap<>();
+        indexNameToId.put("index", 1L);
+>>>>>>> apache/branch-3.0
+
         List<Index> indexes = Lists.newArrayList(
                 new Index(0, "index", Lists.newArrayList("testCol1"), IndexDef.IndexType.INVERTED, null, "xxxxxx"));
 
-        TableAddOrDropColumnsInfo tableAddOrDropColumnsInfo1 = new TableAddOrDropColumnsInfo("", dbId, tableId,
-                indexSchemaMap, oldIndexSchemaMap, indexes, jobId);
+        TableAddOrDropColumnsInfo tableAddOrDropColumnsInfo1 = new TableAddOrDropColumnsInfo(
+                "", dbId, tableId, tableId,
+                indexSchemaMap, oldIndexSchemaMap, indexNameToId, indexes, jobId);
 
         String c1Json = GsonUtils.GSON.toJson(tableAddOrDropColumnsInfo1);
         Text.writeString(out, c1Json);

@@ -734,6 +734,9 @@ void ColumnObject::Subcolumn::pop_back(size_t n) {
     size_t sz = data.size() - num_removed;
     data.resize(sz);
     data_types.resize(sz);
+    // need to update least_common_type when pop_back a column from the last
+    least_common_type = sz > 0 ? LeastCommonType {data_types[sz - 1]}
+                               : LeastCommonType {std::make_shared<DataTypeNothing>()};
     num_of_defaults_in_prefix -= n;
 }
 
@@ -1472,20 +1475,47 @@ Status ColumnObject::serialize_one_row_to_json_format(int row, rapidjson::String
         root.CopyFrom(*doc_structure, doc_structure->GetAllocator());
     }
     Arena mem_pool;
+
+    bool serialize_root = true; // Assume all subcolumns are null by default
+    for (const auto& subcolumn : subcolumns) {
+        if (subcolumn->data.is_root) {
+            continue; // Skip the root column
+        }
+
+        // If any non-root subcolumn is NOT null, set serialize_root to false and exit early
+        if (!assert_cast<const ColumnNullable&, TypeCheckOnRelease::DISABLE>(
+                     *subcolumn->data.get_finalized_column_ptr())
+                     .is_null_at(row)) {
+            serialize_root = false;
+            break;
+        }
+    }
 #ifndef NDEBUG
     VLOG_DEBUG << "dump structure " << JsonFunctions::print_json_value(*doc_structure);
 #endif
+    if (serialize_root && !is_null_root()) {
+        // only serialize root when all other subcolumns is null
+        RETURN_IF_ERROR(
+                subcolumns.get_root()->data.get_least_common_type_serde()->write_one_cell_to_json(
+                        subcolumns.get_root()->data.get_finalized_column(), root,
+                        doc_structure->GetAllocator(), mem_pool, row));
+        output->Clear();
+        compact_null_values(root, doc_structure->GetAllocator());
+        rapidjson::Writer<rapidjson::StringBuffer> writer(*output);
+        root.Accept(writer);
+        return Status::OK();
+    }
+    // handle subcolumns exclude root node
     for (const auto& subcolumn : subcolumns) {
+        if (subcolumn->data.is_root) {
+            continue;
+        }
         RETURN_IF_ERROR(find_and_set_leave_value(
                 subcolumn->data.get_finalized_column_ptr(), subcolumn->path,
                 subcolumn->data.get_least_common_type_serde(),
                 subcolumn->data.get_least_common_type(),
                 subcolumn->data.least_common_type.get_base_type_id(), root,
                 doc_structure->GetAllocator(), mem_pool, row));
-        if (subcolumn->path.empty() && !root.IsObject()) {
-            // root was modified, only handle root node
-            break;
-        }
     }
     compact_null_values(root, doc_structure->GetAllocator());
     if (root.IsNull() && is_null != nullptr) {

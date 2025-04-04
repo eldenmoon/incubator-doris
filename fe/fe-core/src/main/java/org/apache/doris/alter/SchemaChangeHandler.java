@@ -25,7 +25,6 @@ import org.apache.doris.analysis.CancelAlterTableStmt;
 import org.apache.doris.analysis.CancelStmt;
 import org.apache.doris.analysis.ColumnPosition;
 import org.apache.doris.analysis.CreateIndexClause;
-import org.apache.doris.analysis.CreateMaterializedViewStmt;
 import org.apache.doris.analysis.DropColumnClause;
 import org.apache.doris.analysis.DropIndexClause;
 import org.apache.doris.analysis.Expr;
@@ -38,6 +37,7 @@ import org.apache.doris.analysis.SlotRef;
 import org.apache.doris.catalog.AggregateType;
 import org.apache.doris.catalog.BinlogConfig;
 import org.apache.doris.catalog.Column;
+import org.apache.doris.catalog.ColumnType;
 import org.apache.doris.catalog.Database;
 import org.apache.doris.catalog.DistributionInfo;
 import org.apache.doris.catalog.DistributionInfo.DistributionInfoType;
@@ -630,6 +630,13 @@ public class SchemaChangeHandler extends AlterHandler {
                     if (columnPos == null && col.getDataType() == PrimitiveType.VARCHAR
                             && modColumn.getDataType() == PrimitiveType.VARCHAR) {
                         col.checkSchemaChangeAllowed(modColumn);
+                        ColumnType.checkForTypeLengthChange(col.getType(), modColumn.getType());
+                        lightSchemaChange = olapTable.getEnableLightSchemaChange();
+                    }
+                    if (columnPos == null && col.getDataType().isComplexType()
+                            && modColumn.getDataType().isComplexType()) {
+                        col.checkSchemaChangeAllowed(modColumn);
+                        ColumnType.checkSupportSchemaChangeForComplexType(col.getType(), modColumn.getType(), true);
                         lightSchemaChange = olapTable.getEnableLightSchemaChange();
                     }
                     if (col.isClusterKey()) {
@@ -712,8 +719,8 @@ public class SchemaChangeHandler extends AlterHandler {
                 for (Column column : schema) {
                     String columnName = column.getName();
                     if (column.isMaterializedViewColumn()) {
-                        columnName = MaterializedIndexMeta.normalizeName(
-                                CreateMaterializedViewStmt.mvColumnBreaker(columnName));
+                        throw new DdlException("Can not modify column contained by mv, mv="
+                                + olapTable.getIndexNameById(entry.getKey()));
                     }
                     if (columnName.equalsIgnoreCase(modColumn.getName())) {
                         otherIndexIds.add(entry.getKey());
@@ -729,8 +736,8 @@ public class SchemaChangeHandler extends AlterHandler {
                     Column col = otherIndexSchema.get(i);
                     String columnName = col.getName();
                     if (col.isMaterializedViewColumn()) {
-                        columnName = MaterializedIndexMeta.normalizeName(
-                                CreateMaterializedViewStmt.mvColumnBreaker(columnName));
+                        throw new DdlException("Can not modify column contained by mv, mv="
+                                + olapTable.getIndexNameById(otherIndexId));
                     }
                     if (!columnName.equalsIgnoreCase(modColumn.getName())) {
                         continue;
@@ -1375,12 +1382,21 @@ public class SchemaChangeHandler extends AlterHandler {
         } catch (AnalysisException e) {
             throw new DdlException(e.getMessage());
         }
-        // check row store column has change
+
         boolean hasRowStoreChanged = false;
-        if (storeRowColumn || (rsColumns != null && !rsColumns.isEmpty())) {
+        if (storeRowColumn || rsColumns != null) {
             List<String> oriRowStoreColumns = olapTable.getTableProperty().getCopiedRowStoreColumns();
-            if ((oriRowStoreColumns != null && !oriRowStoreColumns.equals(rsColumns))
-                    || storeRowColumn != olapTable.storeRowColumn()) {
+            // correct the comparison logic for null and empty list
+            boolean columnsChanged = false;
+            if (rsColumns == null) {
+                columnsChanged = oriRowStoreColumns != null;
+            } else if (oriRowStoreColumns == null) {
+                columnsChanged = true;
+            } else {
+                columnsChanged = !oriRowStoreColumns.equals(rsColumns);
+            }
+            // partial row store columns changed, or store_row_column enabled, not supported to disable at present
+            if (columnsChanged || (!olapTable.storeRowColumn() && storeRowColumn)) {
                 // only support mow and duplicate model
                 if (!(olapTable.getKeysType() == KeysType.DUP_KEYS
                         || olapTable.getEnableUniqueKeyMergeOnWrite())) {
@@ -2081,11 +2097,8 @@ public class SchemaChangeHandler extends AlterHandler {
                     BuildIndexClause buildIndexClause = (BuildIndexClause) alterClause;
                     IndexDef indexDef = buildIndexClause.getIndexDef();
                     Index index = buildIndexClause.getIndex();
-                    if (!index.isLightIndexChangeSupported() || Config.isCloudMode()) {
-                        throw new DdlException("BUILD INDEX can not be used since index "
-                                + indexDef.getIndexName() + " with type " + indexDef.getIndexType()
-                                + " does not support light index change or cluster cloud mode "
-                                + Config.isCloudMode() + " is true");
+                    if (Config.isCloudMode()) {
+                        throw new DdlException("BUILD INDEX operation failed: No need to do it in cloud mode.");
                     }
 
                     if (!olapTable.isPartitionedTable()) {
@@ -2100,9 +2113,18 @@ public class SchemaChangeHandler extends AlterHandler {
                     for (Index existedIdx : existedIndexes) {
                         if (existedIdx.getIndexName().equalsIgnoreCase(indexDef.getIndexName())) {
                             found = true;
+<<<<<<< HEAD
                             index.setIndexId(existedIdx.getIndexId());
                             index.setColumns(existedIdx.getColumns());
                             index.setProperties(existedIdx.getProperties());
+=======
+                            if (!existedIdx.isLightIndexChangeSupported()) {
+                                throw new DdlException("BUILD INDEX operation failed: The index "
+                                        + existedIdx.getIndexName() + " of type " + existedIdx.getIndexType()
+                                        + " does not support lightweight index changes.");
+                            }
+                            index = existedIdx.clone();
+>>>>>>> apache/branch-3.0
                             if (indexDef.getPartitionNames().isEmpty()) {
                                 invertedIndexOnPartitions.put(index.getIndexId(), olapTable.getPartitionNames());
                             } else {
@@ -2936,8 +2958,10 @@ public class SchemaChangeHandler extends AlterHandler {
                     olapTable.getName(), jobId, isReplay);
         } else {
             if (!isReplay) {
-                TableAddOrDropColumnsInfo info = new TableAddOrDropColumnsInfo(rawSql, db.getId(), olapTable.getId(),
-                        indexSchemaMap, oldIndexSchemaMap, indexes, jobId);
+                Map<String, Long> indexNameToId = new HashMap<>(olapTable.getIndexNameToId());
+                TableAddOrDropColumnsInfo info = new TableAddOrDropColumnsInfo(
+                        rawSql, db.getId(), olapTable.getId(), olapTable.getBaseIndexId(),
+                        indexSchemaMap, oldIndexSchemaMap, indexNameToId, indexes, jobId);
                 if (LOG.isDebugEnabled()) {
                     LOG.debug("logModifyTableAddOrDropColumns info:{}", info);
                 }

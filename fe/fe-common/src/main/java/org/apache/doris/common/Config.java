@@ -81,8 +81,11 @@ public class Config extends ConfigBase {
             options = {"NORMAL", "ASYNC", "BRIEF"})
     public static String sys_log_mode = "ASYNC";
 
-    @ConfField(description = {"FE 日志文件的最大数量。超过这个数量后，最老的日志文件会被删除",
-            "The maximum number of FE log files. After exceeding this number, the oldest log file will be deleted"})
+    @ConfField(description = {"FE 在 sys_log_roll_interval （日志滚动间隔）内允许保留的最大日志文件数。"
+            + "默认值为 10，意味着在每个日志滚动周期内，系统最多会保留 10 个日志文件。",
+            "This parameter defines the maximum number of FE log files that can be retained within the "
+            + "sys_log_roll_interval (log roll interval). The default value is 10, which means the system"
+            + " will keep up to 10 log files during each log roll interval."})
     public static int sys_log_roll_num = 10;
 
     @ConfField(description = {
@@ -1322,6 +1325,14 @@ public class Config extends ConfigBase {
     public static long dynamic_partition_check_interval_seconds = 600;
 
     /**
+     * When scheduling dynamic partition tables,
+     * the execution interval of each table to prevent excessive consumption of FE CPU at the same time
+     * default is 0
+     */
+    @ConfField(mutable = true, masterOnly = true)
+    public static long dynamic_partition_step_interval_ms = 0;
+
+    /**
      * If set to true, dynamic partition feature will open
      */
     @ConfField(mutable = true, masterOnly = true)
@@ -2469,7 +2480,7 @@ public class Config extends ConfigBase {
     public static int max_binlog_messsage_size = 1024 * 1024 * 1024;
 
     @ConfField(mutable = true, masterOnly = true, description = {
-            "是否禁止使用 WITH REOSOURCE 语句创建 Catalog。",
+            "是否禁止使用 WITH RESOURCE 语句创建 Catalog。",
             "Whether to disable creating catalog with WITH RESOURCE statement."})
     public static boolean disallow_create_catalog_with_resource = true;
 
@@ -3135,6 +3146,15 @@ public class Config extends ConfigBase {
             + "for example: s3_load_endpoint_white_list=a,b,c"})
     public static String[] s3_load_endpoint_white_list = {};
 
+    @ConfField(mutable = true, description = {
+            "此参数控制是否强制使用 Azure global endpoint。默认值为 false，系统将使用用户指定的 endpoint。"
+            + "如果设置为 true，系统将强制使用 {account}.blob.core.windows.net。",
+            "This parameter controls whether to force the use of the Azure global endpoint. "
+            + "The default is false, meaning the system will use the user-specified endpoint. "
+            + "If set to true, the system will force the use of {account}.blob.core.windows.net."
+    })
+    public static boolean force_azure_blob_global_endpoint = false;
+
     @ConfField(mutable = true, description = {"指定Jdbc driver url白名单, 举例: jdbc_driver_url_white_list=a,b,c",
             "the white list for jdbc driver url, if it is empty, no white list will be set"
             + "for example: jdbc_driver_url_white_list=a,b,c"
@@ -3241,6 +3261,18 @@ public class Config extends ConfigBase {
     @ConfField(mutable = true, description = {"是否允许使用ShowCacheHotSpotStmt语句",
             "Whether to enable the use of ShowCacheHotSpotStmt, default is false."})
     public static boolean enable_show_file_cache_hotspot_stmt = false;
+
+    @ConfField(mutable = true, description = {"存算分离模式下FE连接meta service的请求超时, 默认30000ms",
+            "Request timeout for FE connecting to meta service in cloud mode, default is 30000ms."})
+    public static int meta_service_brpc_timeout_ms = 30000;
+
+    @ConfField(mutable = true, description = {"存算分离模式下FE连接meta service的连接超时，默认500ms",
+            "Connection timeout for FE connecting to meta service in cloud mode., default is 500ms."})
+    public static int meta_service_brpc_connect_timeout_ms = 500;
+
+    @ConfField(mutable = true, description = {"存算分离模式下FE请求meta service超时的重试次数，默认1次",
+            "In cloud mode, the retry number when the FE requests the meta service times out is 1 by default"})
+    public static int meta_service_rpc_timeout_retry_times = 1;
 
     // ATTN: DONOT add any config not related to cloud mode here
     // ATTN: DONOT add any config not related to cloud mode here

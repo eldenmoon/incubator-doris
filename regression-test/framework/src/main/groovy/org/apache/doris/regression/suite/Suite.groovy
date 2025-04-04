@@ -17,6 +17,12 @@
 
 package org.apache.doris.regression.suite
 
+import com.amazonaws.auth.AWSStaticCredentialsProvider
+import com.amazonaws.auth.BasicAWSCredentials
+import com.amazonaws.client.builder.AwsClientBuilder
+import com.amazonaws.services.s3.AmazonS3
+import com.amazonaws.services.s3.AmazonS3ClientBuilder
+
 import static java.util.concurrent.TimeUnit.SECONDS
 
 import com.google.common.base.Strings
@@ -53,6 +59,7 @@ import org.apache.doris.regression.util.Http
 import org.apache.doris.regression.util.SuiteUtils
 import org.apache.doris.regression.util.DebugPoint
 import org.apache.doris.regression.RunMode
+import org.apache.hadoop.fs.FileSystem
 import org.codehaus.groovy.runtime.IOGroovyMethods
 import org.jetbrains.annotations.NotNull
 import org.junit.jupiter.api.Assertions
@@ -95,6 +102,9 @@ class Suite implements GroovyInterceptable {
     final List<Throwable> lazyCheckExceptions = new Vector<>()
     final List<Future> lazyCheckFutures = new Vector<>()
     static Boolean isTrinoConnectorDownloaded = false
+
+    private AmazonS3 s3Client = null
+    private FileSystem fs = null
 
     Suite(String name, String group, SuiteContext context, SuiteCluster cluster) {
         this.name = name
@@ -443,8 +453,10 @@ class Suite implements GroovyInterceptable {
 
     List<List<Object>> insert_into_sql(String sqlStr, int num) {
         if (context.useArrowFlightSql()) {
+            logger.info("Use arrow flight sql")
             return arrow_flight_insert_into_sql(sqlStr, num)
         } else {
+            logger.info("Use jdbc insert into")
             return jdbc_insert_into_sql(sqlStr, num)
         }
     }
@@ -792,6 +804,25 @@ class Suite implements GroovyInterceptable {
         }
     }
 
+    void waitForBrokerLoadDone(String label, int timeoutInSecond = 60) {
+        if (timeoutInSecond < 0 || label == null) {
+            return
+        }
+        var start = System.currentTimeMillis()
+        var timeout = timeoutInSecond * 1000
+        while (System.currentTimeMillis() - start < timeout) {
+            def lists = sql "show load where label = '${label}'"
+            if (lists.isEmpty()) {
+                return
+            }
+            def state = lists[0][2]
+            if ("FINISHED".equals(state) || "CANCELLED".equals(state)) {
+                return
+            }
+            sleep(300)
+        }
+        logger.warn("broker load with label `${label}` didn't finish in ${timeoutInSecond} second, please check it!")
+    }
 
     void expectException(Closure userFunction, String errorMessage = null) {
         try {
@@ -886,6 +917,16 @@ class Suite implements GroovyInterceptable {
         return enableHdfs.equals("true");
     }
 
+    synchronized FileSystem getHdfs() {
+        if (fs == null) {
+            String hdfsFs = context.config.otherConfigs.get("hdfsFs")
+            String hdfsUser = context.config.otherConfigs.get("hdfsUser")
+            Hdfs hdfs = new Hdfs(hdfsFs, hdfsUser, context.config.dataPath + "/")
+            fs = hdfs.fs
+        }
+        return fs
+    }
+
     String uploadToHdfs(String localFile) {
         // as group can be rewrite the origin data file not relate to group
         String dataDir = context.config.dataPath + "/"
@@ -961,6 +1002,16 @@ class Suite implements GroovyInterceptable {
         String s3Endpoint = context.config.otherConfigs.get("s3Endpoint");
         String s3Url = "http://${s3BucketName}.${s3Endpoint}"
         return s3Url
+    }
+
+    synchronized AmazonS3 getS3Client() {
+        if (s3Client == null) {
+            def credentials = new BasicAWSCredentials(getS3AK(), getS3SK())
+            def endpointConfiguration = new AwsClientBuilder.EndpointConfiguration(getS3Endpoint(), getS3Region())
+            s3Client = AmazonS3ClientBuilder.standard().withEndpointConfiguration(endpointConfiguration)
+                    .withCredentials(new AWSStaticCredentialsProvider(credentials)).build()
+        }
+        return s3Client
     }
 
     String getJdbcPassword() {
@@ -1052,6 +1103,62 @@ class Suite implements GroovyInterceptable {
         Process process = cmd.execute()
         def code = process.waitFor()
         Assert.assertEquals(0, code)
+    }
+
+    void mkdirRemotePathOnAllBE(String username, String path) {
+        def ipList = [:]
+        def portList = [:]
+        getBackendIpHeartbeatPort(ipList, portList)
+
+        def executeCommand = { String cmd, Boolean mustSuc ->
+            try {
+                staticLogger.info("execute ${cmd}")
+                def proc = new ProcessBuilder("/bin/bash", "-c", cmd).redirectErrorStream(true).start()
+                int exitcode = proc.waitFor()
+                if (exitcode != 0) {
+                    staticLogger.info("exit code: ${exitcode}, output\n: ${proc.text}")
+                    if (mustSuc == true) {
+                        Assert.assertEquals(0, exitcode)
+                    }
+                }
+            } catch (IOException e) {
+                Assert.assertTrue(false, "execute timeout")
+            }
+        }
+
+        ipList.each { beid, ip ->
+            String cmd = "ssh -o StrictHostKeyChecking=no ${username}@${ip} \"mkdir -p ${path}\""
+            logger.info("Execute: ${cmd}".toString())
+            executeCommand(cmd, false)
+        }
+    }
+
+    void deleteRemotePathOnAllBE(String username, String path) {
+        def ipList = [:]
+        def portList = [:]
+        getBackendIpHeartbeatPort(ipList, portList)
+
+        def executeCommand = { String cmd, Boolean mustSuc ->
+            try {
+                staticLogger.info("execute ${cmd}")
+                def proc = new ProcessBuilder("/bin/bash", "-c", cmd).redirectErrorStream(true).start()
+                int exitcode = proc.waitFor()
+                if (exitcode != 0) {
+                    staticLogger.info("exit code: ${exitcode}, output\n: ${proc.text}")
+                    if (mustSuc == true) {
+                        Assert.assertEquals(0, exitcode)
+                    }
+                }
+            } catch (IOException e) {
+                Assert.assertTrue(false, "execute timeout")
+            }
+        }
+
+        ipList.each { beid, ip ->
+            String cmd = "ssh -o StrictHostKeyChecking=no ${username}@${ip} \"rm -r ${path}\""
+            logger.info("Execute: ${cmd}".toString())
+            executeCommand(cmd, false)
+        }
     }
 
     String cmd(String cmd, int timeoutSecond = 0) {
@@ -1563,6 +1670,9 @@ class Suite implements GroovyInterceptable {
             logger.info("status is not success")
         }
         Assert.assertEquals("FINISHED", status)
+        // even when job states change to "FINISHED", the table state may not be changed from rollup when creating mv.
+        // so sleep here.
+        sleep(1000)
     }
 
     void waitingPartitionIsExpected(String tableName, String partitionName, boolean expectedStatus) {
@@ -2844,7 +2954,7 @@ class Suite implements GroovyInterceptable {
         def udf_file_dir = new File(udf_file_path).parent
         backendId_to_backendIP.values().each { be_ip ->
             sshExec("root", be_ip, "ssh-keygen -f '/root/.ssh/known_hosts' -R \"${be_ip}\"", false)
-            sshExec("root", be_ip, "ssh -o StrictHostKeyChecking=no root@${be_ip} \"mkdir -p ${udf_file_dir}\"", false)
+            sshExec("root", be_ip, "mkdir -p ${udf_file_dir}", false)
             scpFiles("root", be_ip, udf_file_path, udf_file_path, false)
         }
     }
@@ -2902,7 +3012,7 @@ class Suite implements GroovyInterceptable {
         }
     }
 
-    def getRowsetFileCacheDirFromBe = { beHttpPort, msHttpPort, tabletId, version -> 
+    def getRowsetFileCacheDirFromBe = { beHttpPort, msHttpPort, tabletId, version, fileSuffix = "dat" -> 
         def hashValues = []
         def segmentFiles = []
         getSegmentFilesFromMs(msHttpPort, tabletId, version) {
@@ -2912,7 +3022,7 @@ class Suite implements GroovyInterceptable {
                 // {"rowset_id":"0","partition_id":"27695","tablet_id":"27700","txn_id":"7057526525952","tablet_schema_hash":0,"rowset_type":"BETA_ROWSET","rowset_state":"COMMITTED","start_version":"3","end_version":"3","version_hash":"0","num_rows":"1","total_disk_size":"895","data_disk_size":"895","index_disk_size":"0","empty":false,"load_id":{"hi":"-1646598626735601581","lo":"-6677682539881484579"},"delete_flag":false,"creation_time":"1736153402","num_segments":"1","rowset_id_v2":"0200000000000004694889e84c76391cfd52ec7db0a483ba","resource_id":"1","newest_write_timestamp":"1736153402","segments_key_bounds":[{"min_key":"AoAAAAAAAAAC","max_key":"AoAAAAAAAAAC"}],"txn_expiration":"1736167802","segments_overlap_pb":"NONOVERLAPPING","compaction_level":"0","segments_file_size":["895"],"index_id":"27697","schema_version":0,"enable_segments_file_size":true,"has_variant_type_in_schema":false,"enable_inverted_index_file_info":false}
                 def segmentNum = json.num_segments as int
                 def rowsetId = json.rowset_id_v2 as String
-                segmentFiles = (0..<segmentNum).collect { i -> "${rowsetId}_${i}.dat" }
+                segmentFiles = (0..<segmentNum).collect { i -> "${rowsetId}_${i}.${fileSuffix}" }
         }
 
         segmentFiles.each {
@@ -2926,7 +3036,7 @@ class Suite implements GroovyInterceptable {
     }
 
     // get table's tablet file cache
-    def getTabletFileCacheDirFromBe = { msHttpPort, table, version ->
+    def getTabletFileCacheDirFromBe = { msHttpPort, table, version, fileSuffix = "dat" ->
         // beHost HashFile
         def beHostToHashFile = [:]
 
@@ -2934,7 +3044,7 @@ class Suite implements GroovyInterceptable {
         getTabletsAndHostFromFe.each {
             def beHost = it.Value[1]
             def tabletId = it.Key
-            def hashRet = getRowsetFileCacheDirFromBe(beHost + ":8040", msHttpPort, tabletId, version)
+            def hashRet = getRowsetFileCacheDirFromBe(beHost + ":8040", msHttpPort, tabletId, version, fileSuffix)
             hashRet.each {
                 def hashFile = it
                 if (beHostToHashFile.containsKey(beHost)) {

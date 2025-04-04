@@ -133,8 +133,13 @@ public class OlapGroupCommitInsertExecutor extends OlapInsertExecutor {
             conditions.add(Pair.of(() -> !(insertCtx.isPresent() && insertCtx.get() instanceof OlapInsertCommandContext
                     && ((OlapInsertCommandContext) insertCtx.get()).isOverwrite()), () -> "is overwrite command"));
             Plan tableSinkChild = tableSink.child();
+<<<<<<< HEAD
             conditions.add(Pair.of(() -> tableSinkChild instanceof OneRowRelation
                             || (tableSinkChild instanceof LogicalUnion
+=======
+            conditions.add(Pair.of(
+                    () -> tableSinkChild instanceof OneRowRelation || (tableSinkChild instanceof LogicalUnion
+>>>>>>> apache/branch-3.0
                             && tableSinkChild.getExpressions().size() > 0)
                             || tableSinkChild instanceof LogicalInlineTable,
                     () -> "should be one row relation or union or inline table, class: "

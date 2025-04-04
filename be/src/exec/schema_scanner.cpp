@@ -39,6 +39,7 @@
 #include "exec/schema_scanner/schema_partitions_scanner.h"
 #include "exec/schema_scanner/schema_processlist_scanner.h"
 #include "exec/schema_scanner/schema_profiling_scanner.h"
+#include "exec/schema_scanner/schema_routine_load_job_scanner.h"
 #include "exec/schema_scanner/schema_routine_scanner.h"
 #include "exec/schema_scanner/schema_rowsets_scanner.h"
 #include "exec/schema_scanner/schema_schema_privileges_scanner.h"
@@ -123,6 +124,7 @@ Status SchemaScanner::get_next_block_async(RuntimeState* state) {
                 if (task_lock == nullptr) {
                     return;
                 }
+                DCHECK(_async_thread_running == false);
                 SCOPED_ATTACH_TASK(state);
                 _dependency->block();
                 _async_thread_running = true;
@@ -240,6 +242,8 @@ std::unique_ptr<SchemaScanner> SchemaScanner::create(TSchemaTableType::type type
         return SchemaFileCacheStatisticsScanner::create_unique();
     case TSchemaTableType::SCH_CATALOG_META_CACHE_STATISTICS:
         return SchemaCatalogMetaCacheStatsScanner::create_unique();
+    case TSchemaTableType::SCH_ROUTINE_LOAD_JOBS:
+        return SchemaRoutineLoadJobScanner::create_unique();
     default:
         return SchemaDummyScanner::create_unique();
         break;
