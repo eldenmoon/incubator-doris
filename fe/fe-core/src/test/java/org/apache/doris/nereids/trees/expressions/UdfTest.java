@@ -18,6 +18,7 @@
 package org.apache.doris.nereids.trees.expressions;
 
 import org.apache.doris.catalog.Env;
+import org.apache.doris.common.Config;
 import org.apache.doris.nereids.trees.expressions.functions.scalar.DateFormat;
 import org.apache.doris.nereids.trees.expressions.functions.scalar.DateTrunc;
 import org.apache.doris.nereids.trees.expressions.functions.scalar.DayOfMonth;
@@ -52,6 +53,7 @@ import java.io.DataOutputStream;
 public class UdfTest extends TestWithFeService implements PlanPatternMatchSupported {
     @Override
     protected void runBeforeAll() throws Exception {
+        Config.enable_java_udf = true;
         createDatabase("test");
         createDatabase("test_1");
     }
