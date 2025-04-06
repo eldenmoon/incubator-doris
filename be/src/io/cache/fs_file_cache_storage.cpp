@@ -422,10 +422,6 @@ Status FSFileCacheStorage::upgrade_cache_dir_if_necessary() const {
     auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time);
     LOG(INFO) << "Cache directory upgrade completed. Total files renamed: " << rename_count
               << ", Time taken: " << duration.count() << "ms";
-<<<<<<< HEAD
-
-=======
->>>>>>> apache/branch-3.0
     return Status::OK();
 }
 

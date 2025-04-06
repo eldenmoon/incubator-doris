@@ -943,8 +943,6 @@ public:
         }
     }
 
-<<<<<<< HEAD
-=======
     void test_array_all_null(std::string_view rowset_id, int seg_id, Field* field) {
         EXPECT_TRUE(field->type() == FieldType::OLAP_FIELD_TYPE_ARRAY);
         std::string index_path_prefix {InvertedIndexDescriptor::get_index_file_path_prefix(
@@ -1018,7 +1016,6 @@ public:
                           InvertedIndexStorageFormatPB::V1, &idx_meta);
     }
 
->>>>>>> apache/branch-3.0
 private:
     static void build_slices(vectorized::PaddedPODArray<Slice>& slices,
                              const vectorized::ColumnPtr& column_array, size_t num_strings) {
@@ -1083,10 +1080,7 @@ TEST_F(InvertedIndexArrayTest, ComplexNullCases) {
     Field* field = FieldFactory::create(arrayTabletColumn);
     test_null_write("complex_null", 0, field);
     test_null_write_v2("complex_null_v2", 0, field);
-<<<<<<< HEAD
-=======
     test_array_all_null("complex_null_all_null", 0, field);
->>>>>>> apache/branch-3.0
     delete field;
 }
 

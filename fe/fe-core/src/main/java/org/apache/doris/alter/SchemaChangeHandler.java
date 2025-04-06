@@ -2113,18 +2113,12 @@ public class SchemaChangeHandler extends AlterHandler {
                     for (Index existedIdx : existedIndexes) {
                         if (existedIdx.getIndexName().equalsIgnoreCase(indexDef.getIndexName())) {
                             found = true;
-<<<<<<< HEAD
-                            index.setIndexId(existedIdx.getIndexId());
-                            index.setColumns(existedIdx.getColumns());
-                            index.setProperties(existedIdx.getProperties());
-=======
                             if (!existedIdx.isLightIndexChangeSupported()) {
                                 throw new DdlException("BUILD INDEX operation failed: The index "
                                         + existedIdx.getIndexName() + " of type " + existedIdx.getIndexType()
                                         + " does not support lightweight index changes.");
                             }
                             index = existedIdx.clone();
->>>>>>> apache/branch-3.0
                             if (indexDef.getPartitionNames().isEmpty()) {
                                 invertedIndexOnPartitions.put(index.getIndexId(), olapTable.getPartitionNames());
                             } else {

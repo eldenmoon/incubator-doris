@@ -67,13 +67,8 @@ public class TableAddOrDropColumnsInfoTest {
         Map<Long, List<Column>> oldIndexSchemaMap = new HashMap<>();
         oldIndexSchemaMap.put(tableId, fullSchema);
 
-<<<<<<< HEAD
-        List<Index> indexes = Lists.newArrayList(
-                new Index(0, "index", Lists.newArrayList("testCol1"), IndexDef.IndexType.INVERTED, null, "xxxxxx"));
-=======
         Map<String, Long> indexNameToId = new HashMap<>();
         indexNameToId.put("index", 1L);
->>>>>>> apache/branch-3.0
 
         List<Index> indexes = Lists.newArrayList(
                 new Index(0, "index", Lists.newArrayList("testCol1"), IndexDef.IndexType.INVERTED, null, "xxxxxx"));
