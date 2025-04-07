@@ -22,6 +22,7 @@
 #include <aws/core/client/DefaultRetryStrategy.h>
 #include <aws/s3/S3Client.h>
 #include <bvar/reducer.h>
+#include <cpp/sync_point.h>
 #include <gen_cpp/cloud.pb.h>
 
 #include <algorithm>
@@ -48,20 +49,7 @@
 #include "recycler/s3_obj_client.h"
 #include "recycler/storage_vault_accessor.h"
 
-namespace {
-auto metric_func_factory(bvar::Adder<int64_t>& ns_bvar, bvar::Adder<int64_t>& req_num_bvar) {
-    return [&](int64_t ns) {
-        if (ns > 0) {
-            ns_bvar << ns;
-        } else {
-            req_num_bvar << 1;
-        }
-    };
-}
-} // namespace
-
 namespace doris::cloud {
-
 namespace s3_bvar {
 bvar::LatencyRecorder s3_get_latency("s3_get");
 bvar::LatencyRecorder s3_put_latency("s3_put");
@@ -83,12 +71,12 @@ bvar::Adder<int64_t> put_rate_limit_exceed_req_num("put_rate_limit_exceed_req_nu
 AccessorRateLimiter::AccessorRateLimiter()
         : _rate_limiters(
                   {std::make_unique<S3RateLimiterHolder>(
-                           S3RateLimitType::GET, config::s3_get_token_per_second,
-                           config::s3_get_bucket_tokens, config::s3_get_token_limit,
+                           config::s3_get_token_per_second, config::s3_get_bucket_tokens,
+                           config::s3_get_token_limit,
                            metric_func_factory(get_rate_limit_ns, get_rate_limit_exceed_req_num)),
                    std::make_unique<S3RateLimiterHolder>(
-                           S3RateLimitType::PUT, config::s3_put_token_per_second,
-                           config::s3_put_bucket_tokens, config::s3_put_token_limit,
+                           config::s3_put_token_per_second, config::s3_put_bucket_tokens,
+                           config::s3_put_token_limit,
                            metric_func_factory(put_rate_limit_ns,
                                                put_rate_limit_exceed_req_num))}) {}
 
@@ -205,6 +193,7 @@ std::optional<S3Conf> S3Conf::from_obj_store_info(const ObjectStoreInfoPB& obj_i
     s3_conf.region = obj_info.region();
     s3_conf.bucket = obj_info.bucket();
     s3_conf.prefix = obj_info.prefix();
+    s3_conf.use_virtual_addressing = !obj_info.use_path_style();
 
     return s3_conf;
 }
@@ -223,12 +212,13 @@ std::string S3Accessor::to_uri(const std::string& relative_path) const {
 }
 
 int S3Accessor::create(S3Conf conf, std::shared_ptr<S3Accessor>* accessor) {
+    TEST_SYNC_POINT_RETURN_WITH_VALUE("S3Accessor::init.s3_init_failed", (int)-1);
     switch (conf.provider) {
     case S3Conf::GCS:
-        *accessor = std::make_shared<GcsAccessor>(std::move(conf));
+        *accessor = std::make_shared<GcsAccessor>(conf);
         break;
     default:
-        *accessor = std::make_shared<S3Accessor>(std::move(conf));
+        *accessor = std::make_shared<S3Accessor>(conf);
         break;
     }
 
@@ -252,8 +242,14 @@ int S3Accessor::init() {
         options.Retry.MaxRetries = config::max_s3_client_retry;
         auto cred =
                 std::make_shared<Azure::Storage::StorageSharedKeyCredential>(conf_.ak, conf_.sk);
-        uri_ = fmt::format("{}://{}.blob.core.windows.net/{}", config::s3_client_http_scheme,
-                           conf_.ak, conf_.bucket);
+        if (config::force_azure_blob_global_endpoint) {
+            uri_ = fmt::format("https://{}.blob.core.windows.net/{}", conf_.ak, conf_.bucket);
+        } else {
+            uri_ = fmt::format("{}/{}", conf_.endpoint, conf_.bucket);
+            if (uri_.find("://") == std::string::npos) {
+                uri_ = "https://" + uri_;
+            }
+        }
         // In Azure's HTTP requests, all policies in the vector are called in a chained manner following the HTTP pipeline approach.
         // Within the RetryPolicy, the nextPolicy is called multiple times inside a loop.
         // All policies in the PerRetryPolicies are downstream of the RetryPolicy.
@@ -285,6 +281,7 @@ int S3Accessor::init() {
         aws_config.maxConnections = std::max((long)(config::recycle_pool_parallelism +
                                                     config::instance_recycler_worker_pool_size),
                                              (long)aws_config.maxConnections);
+
         if (config::s3_client_http_scheme == "http") {
             aws_config.scheme = Aws::Http::Scheme::HTTP;
         }
@@ -293,7 +290,7 @@ int S3Accessor::init() {
         auto s3_client = std::make_shared<Aws::S3::S3Client>(
                 std::move(aws_cred), std::move(aws_config),
                 Aws::Client::AWSAuthV4Signer::PayloadSigningPolicy::Never,
-                true /* useVirtualAddressing */);
+                conf_.use_virtual_addressing /* useVirtualAddressing */);
         obj_client_ = std::make_shared<S3ObjClient>(std::move(s3_client), conf_.endpoint);
         return 0;
     }
@@ -423,7 +420,7 @@ int GcsAccessor::delete_prefix_impl(const std::string& path_prefix, int64_t expi
         }
         del++;
 
-        // FIXME(plat1ko): Delete objects by batch
+        // FIXME(plat1ko): Delete objects by batch with genuine GCS client
         int del_ret = obj_client_->delete_object({conf_.bucket, obj->key}).ret;
         del_nonexisted += (del_ret == ObjectStorageResponse::NOT_FOUND);
         static_assert(ObjectStorageResponse::OK == 0);

@@ -21,6 +21,7 @@
 
 #include "common/logging.h"
 #include "common/util.h"
+#include "cpp/sync_point.h"
 #include "meta-service/keys.h"
 #include "meta-service/meta_service_helper.h"
 #include "meta-service/meta_service_tablet_stats.h"
@@ -173,10 +174,12 @@ void convert_tmp_rowsets(
 
         // Accumulate affected rows
         auto& stats = tablet_stats[tmp_rowset_pb.tablet_id()];
-        stats.data_size += tmp_rowset_pb.data_disk_size();
+        stats.data_size += tmp_rowset_pb.total_disk_size();
         stats.num_rows += tmp_rowset_pb.num_rows();
         ++stats.num_rowsets;
         stats.num_segs += tmp_rowset_pb.num_segments();
+        stats.index_size += tmp_rowset_pb.index_disk_size();
+        stats.segment_size += tmp_rowset_pb.data_disk_size();
     }
 
     for (auto& [tablet_id, stats] : tablet_stats) {
@@ -188,6 +191,7 @@ void convert_tmp_rowsets(
         if (code != MetaServiceCode::OK) return;
     }
 
+    TEST_SYNC_POINT_RETURN_WITH_VOID("convert_tmp_rowsets::before_commit", &code);
     err = txn->commit();
     if (err != TxnErrorCode::TXN_OK) {
         code = cast_as<ErrCategory::COMMIT>(err);
@@ -488,7 +492,8 @@ std::pair<MetaServiceCode, std::string> TxnLazyCommitTask::wait() {
     sw.pause();
     if (sw.elapsed_us() > 1000000) {
         LOG(INFO) << "txn_lazy_commit task wait more than 1000ms, cost=" << sw.elapsed_us() / 1000
-                  << " ms";
+                  << " ms"
+                  << " txn_id=" << txn_id_;
     }
     return std::make_pair(this->code_, this->msg_);
 }

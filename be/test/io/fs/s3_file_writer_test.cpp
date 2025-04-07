@@ -310,6 +310,7 @@ public:
                           sp->clear_call_back(mockcallback.point_name);
                       });
         sp->disable_processing();
+        ExecEnv::GetInstance()->_s3_file_upload_thread_pool.reset();
     }
 };
 
@@ -1120,7 +1121,7 @@ public:
     ObjectStorageUploadResponse upload_part(const ObjectStoragePathOptions& opts,
                                             std::string_view stream, int part_num) override {
         upload_part_count++;
-        upload_part_params.push_back({opts, std::string(stream), part_num});
+        // upload_part_params.push_back({opts, std::string(stream), part_num});
         last_opts = opts;
         last_stream = std::string(stream);
         last_part_num = part_num;
@@ -1231,7 +1232,7 @@ public:
     // Vectors to store parameters from each call
     std::vector<ObjectStoragePathOptions> create_multipart_params;
     std::vector<std::pair<ObjectStoragePathOptions, std::string>> put_object_params;
-    std::vector<UploadPartParams> upload_part_params;
+    // std::vector<UploadPartParams> upload_part_params;
     std::vector<CompleteMultipartParams> complete_multipart_params;
     std::map<std::string, std::string> objects;
     std::map<std::string, std::string> complete;
@@ -1255,7 +1256,7 @@ public:
 
         create_multipart_params.clear();
         put_object_params.clear();
-        upload_part_params.clear();
+        // upload_part_params.clear();
         complete_multipart_params.clear();
         objects.clear();
         complete.clear();

@@ -98,7 +98,7 @@ suite("test_auto_range_partition") {
     sql " insert into right_bound values ('9999-12-31 23:59:59'); "
     sql " insert into right_bound values ('9999-12-31 23:59:59.999999'); "
     qt_right_bound " select * from right_bound order by k0; "
-    result2 = sql "show partitions from right_bound"
+    def result2 = sql "show partitions from right_bound"
     logger.info("${result2}")
     assertEquals(result2.size(), 2)
 
@@ -117,7 +117,7 @@ suite("test_auto_range_partition") {
         );
     """
     sql " insert into week_range values (20240408), (20240409); "
-    def result2 = sql "show partitions from week_range"
+    result2 = sql "show partitions from week_range"
     logger.info("${result2}")
     assertEquals(result2.size(), 1)
 
@@ -241,6 +241,6 @@ suite("test_auto_range_partition") {
     """
     test {
         sql "insert into awh_test_range_auto values (1,'20201212')"
-        exception "date_trunc function second param only support argument is"
+        exception "date_trunc function time unit param only support argument is"
     }
 }

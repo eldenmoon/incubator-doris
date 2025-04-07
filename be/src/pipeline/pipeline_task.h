@@ -61,7 +61,7 @@ public:
 
     // if the pipeline create a bunch of pipeline task
     // must be call after all pipeline task is finish to release resource
-    Status close(Status exec_status);
+    Status close(Status exec_status, bool close_sink = true);
 
     PipelineFragmentContext* fragment_context() { return _fragment_context; }
 
@@ -135,11 +135,12 @@ public:
     int task_id() const { return _index; };
     bool is_finalized() const { return _finalized; }
 
-    void clear_blocking_state(bool wake_up_by_downstream = false) {
+    void set_wake_up_early() { _wake_up_early = true; }
+
+    void clear_blocking_state() {
         _state->get_query_ctx()->get_execution_dependency()->set_always_ready();
         // We use a lock to assure all dependencies are not deconstructed here.
         std::unique_lock<std::mutex> lc(_dependency_lock);
-        _wake_up_by_downstream = _wake_up_by_downstream || wake_up_by_downstream;
         if (!_finalized) {
             _execution_dep->set_always_ready();
             for (auto* dep : _filter_dependencies) {
@@ -224,6 +225,8 @@ public:
 
     RuntimeState* runtime_state() const { return _state; }
 
+    RuntimeProfile* get_task_profile() const { return _task_profile.get(); }
+
     std::string task_name() const { return fmt::format("task{}({})", _index, _pipeline->_name); }
 
     void stop_if_finished() {
@@ -234,7 +237,7 @@ public:
 
     PipelineId pipeline_id() const { return _pipeline->id(); }
 
-    bool wake_up_by_downstream() const { return _wake_up_by_downstream; }
+    bool wake_up_early() const { return _wake_up_early; }
 
 private:
     friend class RuntimeFilterDependency;
@@ -316,7 +319,7 @@ private:
 
     std::atomic<bool> _running = false;
     std::atomic<bool> _eos = false;
-    std::atomic<bool> _wake_up_by_downstream = false;
+    std::atomic<bool> _wake_up_early = false;
 };
 
 } // namespace doris::pipeline

@@ -29,6 +29,7 @@ import org.apache.doris.catalog.Type;
 import org.apache.doris.datasource.ExternalTable;
 import org.apache.doris.datasource.SchemaCacheValue;
 import org.apache.doris.datasource.TablePartitionValues;
+import org.apache.doris.datasource.mvcc.MvccSnapshot;
 import org.apache.doris.thrift.TMCTable;
 import org.apache.doris.thrift.TTableDescriptor;
 import org.apache.doris.thrift.TTableType;
@@ -44,12 +45,14 @@ import com.aliyun.odps.type.TypeInfo;
 import com.aliyun.odps.type.VarcharTypeInfo;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Lists;
+import com.google.common.collect.Maps;
 
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Map.Entry;
 import java.util.Optional;
 import java.util.stream.Collectors;
 
@@ -57,11 +60,12 @@ import java.util.stream.Collectors;
  * MaxCompute external table.
  */
 public class MaxComputeExternalTable extends ExternalTable {
-    public MaxComputeExternalTable(long id, String name, String dbName, MaxComputeExternalCatalog catalog) {
-        super(id, name, catalog, dbName, TableType.MAX_COMPUTE_EXTERNAL_TABLE);
+    public MaxComputeExternalTable(long id, String name, String remoteName, MaxComputeExternalCatalog catalog,
+            MaxComputeExternalDatabase db) {
+        super(id, name, remoteName, catalog, db, TableType.MAX_COMPUTE_EXTERNAL_TABLE);
     }
 
-    private Map<String, com.aliyun.odps.Column> columnNameToOdpsColumn  = new HashMap();
+    private Map<String, com.aliyun.odps.Column> columnNameToOdpsColumn = new HashMap();
 
     @Override
     protected synchronized void makeSureInitialized() {
@@ -76,6 +80,11 @@ public class MaxComputeExternalTable extends ExternalTable {
         return true;
     }
 
+    @Override
+    public List<Column> getPartitionColumns(Optional<MvccSnapshot> snapshot) {
+        return getPartitionColumns();
+    }
+
     public List<Column> getPartitionColumns() {
         makeSureInitialized();
         Optional<SchemaCacheValue> schemaCacheValue = getSchemaCacheValue();
@@ -84,16 +93,23 @@ public class MaxComputeExternalTable extends ExternalTable {
     }
 
     @Override
-    public Map<Long, PartitionItem> getNameToPartitionItems() {
+    public Map<String, PartitionItem> getNameToPartitionItems(Optional<MvccSnapshot> snapshot) {
         if (getPartitionColumns().isEmpty()) {
             return Collections.emptyMap();
         }
 
         TablePartitionValues tablePartitionValues = getPartitionValues();
-        return tablePartitionValues.getIdToPartitionItem();
+        Map<Long, PartitionItem> idToPartitionItem = tablePartitionValues.getIdToPartitionItem();
+        Map<Long, String> idToNameMap = tablePartitionValues.getPartitionIdToNameMap();
+
+        Map<String, PartitionItem> nameToPartitionItem = Maps.newHashMapWithExpectedSize(idToPartitionItem.size());
+        for (Entry<Long, PartitionItem> entry : idToPartitionItem.entrySet()) {
+            nameToPartitionItem.put(idToNameMap.get(entry.getKey()), entry.getValue());
+        }
+        return nameToPartitionItem;
     }
 
-    public TablePartitionValues getPartitionValues() {
+    private TablePartitionValues getPartitionValues() {
         makeSureInitialized();
         Optional<SchemaCacheValue> schemaCacheValue = getSchemaCacheValue();
         if (!schemaCacheValue.isPresent()) {

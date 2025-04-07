@@ -26,6 +26,7 @@
 #include <utility>
 
 #include "cloud/config.h"
+#include "common/exception.h"
 #include "common/logging.h"
 #include "common/status.h"
 #include "cpp/sync_point.h"
@@ -74,17 +75,8 @@
 #include "vec/olap/vgeneric_iterators.h"
 
 namespace doris::segment_v2 {
-static bvar::Adder<size_t> g_total_segment_num("doris_total_segment_num");
+
 class InvertedIndexIterator;
-
-io::UInt128Wrapper file_cache_key_from_path(const std::string& seg_path) {
-    std::string base = seg_path.substr(seg_path.rfind('/') + 1); // tricky: npos + 1 == 0
-    return io::BlockFileCache::hash(base);
-}
-
-std::string file_cache_key_str(const std::string& seg_path) {
-    return file_cache_key_from_path(seg_path).to_string();
-}
 
 Status Segment::open(io::FileSystemSPtr fs, const std::string& path, int64_t tablet_id,
                      uint32_t segment_id, RowsetId rowset_id, TabletSchemaSPtr tablet_schema,
@@ -161,16 +153,27 @@ Segment::Segment(uint32_t segment_id, RowsetId rowset_id, TabletSchemaSPtr table
           _meta_mem_usage(0),
           _rowset_id(rowset_id),
           _tablet_schema(std::move(tablet_schema)),
-          _idx_file_info(idx_file_info) {
-    g_total_segment_num << 1;
-}
+          _idx_file_info(idx_file_info) {}
 
 Segment::~Segment() {
-    g_total_segment_num << -1;
+    g_segment_estimate_mem_bytes << -_tracked_meta_mem_usage;
+    // if failed, fix `_tracked_meta_mem_usage` accuracy
+    DCHECK(_tracked_meta_mem_usage == meta_mem_usage());
 }
 
 io::UInt128Wrapper Segment::file_cache_key(std::string_view rowset_id, uint32_t seg_id) {
     return io::BlockFileCache::hash(fmt::format("{}_{}.dat", rowset_id, seg_id));
+}
+
+int64_t Segment::get_metadata_size() const {
+    return sizeof(Segment) + (_footer_pb ? _footer_pb->ByteSizeLong() : 0) +
+           (_pk_index_meta ? _pk_index_meta->ByteSizeLong() : 0);
+}
+
+void Segment::update_metadata_size() {
+    MetadataAdder::update_metadata_size();
+    g_segment_estimate_mem_bytes << _meta_mem_usage - _tracked_meta_mem_usage;
+    _tracked_meta_mem_usage = _meta_mem_usage;
 }
 
 Status Segment::_open() {
@@ -189,6 +192,7 @@ Status Segment::_open() {
     if (_pk_index_meta != nullptr) {
         _meta_mem_usage += _pk_index_meta->ByteSizeLong();
     }
+
     _meta_mem_usage += sizeof(*this);
     _meta_mem_usage += _tablet_schema->num_columns() * config::estimated_mem_per_column_reader;
 
@@ -196,6 +200,8 @@ Status Segment::_open() {
     _meta_mem_usage += (_num_rows + 1023) / 1024 * (36 + 4);
     // 0.01 comes from PrimaryKeyIndexBuilder::init
     _meta_mem_usage += BloomFilter::optimal_bit_num(_num_rows, 0.01) / 8;
+
+    update_metadata_size();
 
     return Status::OK();
 }
@@ -214,7 +220,7 @@ Status Segment::new_iterator(SchemaSPtr schema, const StorageReadOptions& read_o
     if (read_options.runtime_state != nullptr) {
         _be_exec_version = read_options.runtime_state->be_exec_version();
     }
-    RETURN_IF_ERROR(_create_column_readers_once());
+    RETURN_IF_ERROR(_create_column_readers_once(read_options.stats));
 
     read_options.stats->total_segment_number++;
     // trying to prune the current segment by segment-level zone map
@@ -274,7 +280,11 @@ Status Segment::new_iterator(SchemaSPtr schema, const StorageReadOptions& read_o
         }
     }
 
-    RETURN_IF_ERROR(load_index(read_options.stats));
+    {
+        SCOPED_RAW_TIMER(&read_options.stats->segment_load_index_timer_ns);
+        RETURN_IF_ERROR(load_index(read_options.stats));
+    }
+
     if (read_options.delete_condition_predicates->num_of_column_predicate() == 0 &&
         read_options.push_down_agg_type_opt != TPushAggOp::NONE &&
         read_options.push_down_agg_type_opt != TPushAggOp::COUNT_ON_INDEX) {
@@ -463,6 +473,7 @@ Status Segment::_load_pk_bloom_filter(OlapReaderStatistics* stats) {
         // for BE UT "segment_cache_test"
         return _load_pk_bf_once.call([this] {
             _meta_mem_usage += 100;
+            update_metadata_size();
             return Status::OK();
         });
     }
@@ -479,8 +490,13 @@ Status Segment::_load_pk_bloom_filter(OlapReaderStatistics* stats) {
 }
 
 Status Segment::load_pk_index_and_bf(OlapReaderStatistics* index_load_stats) {
-    RETURN_IF_ERROR(load_index(index_load_stats));
-    RETURN_IF_ERROR(_load_pk_bloom_filter(index_load_stats));
+    // `DorisCallOnce` may catch exception in calling stack A and re-throw it in
+    // a different calling stack B which doesn't have catch block. So we add catch block here
+    // to prevent coreudmp
+    RETURN_IF_CATCH_EXCEPTION({
+        RETURN_IF_ERROR(load_index(index_load_stats));
+        RETURN_IF_ERROR(_load_pk_bloom_filter(index_load_stats));
+    });
     return Status::OK();
 }
 
@@ -495,17 +511,16 @@ Status Segment::load_index(OlapReaderStatistics* stats) {
             // read and parse short key index page
             OlapReaderStatistics tmp_stats;
             OlapReaderStatistics* stats_ptr = stats != nullptr ? stats : &tmp_stats;
-            PageReadOptions opts {
-                    .use_page_cache = true,
-                    .type = INDEX_PAGE,
-                    .file_reader = _file_reader.get(),
-                    .page_pointer = PagePointer(_sk_index_page),
-                    // short key index page uses NO_COMPRESSION for now
-                    .codec = nullptr,
-                    .stats = &tmp_stats,
-                    .io_ctx = io::IOContext {.is_index_data = true,
-                                             .file_cache_stats = &stats_ptr->file_cache_stats},
-            };
+            PageReadOptions opts(io::IOContext {.is_index_data = true,
+                                                .file_cache_stats = &stats_ptr->file_cache_stats});
+            opts.use_page_cache = true;
+            opts.type = INDEX_PAGE;
+            opts.file_reader = _file_reader.get();
+            opts.page_pointer = PagePointer(_sk_index_page);
+            // short key index page uses NO_COMPRESSION for now
+            opts.codec = nullptr;
+            opts.stats = &tmp_stats;
+
             Slice body;
             PageFooterPB footer;
             RETURN_IF_ERROR(
@@ -580,7 +595,8 @@ vectorized::DataTypePtr Segment::get_data_type_of(const ColumnIdentifier& identi
     return nullptr;
 }
 
-Status Segment::_create_column_readers_once() {
+Status Segment::_create_column_readers_once(OlapReaderStatistics* stats) {
+    SCOPED_RAW_TIMER(&stats->segment_create_column_readers_timer_ns);
     return _create_column_readers_once_call.call([&] {
         DCHECK(_footer_pb);
         Defer defer([&]() { _footer_pb.reset(); });
@@ -854,10 +870,10 @@ Status Segment::new_column_iterator_with_path(const TabletColumn& tablet_column,
 Status Segment::new_column_iterator(const TabletColumn& tablet_column,
                                     std::unique_ptr<ColumnIterator>* iter,
                                     const StorageReadOptions* opt) {
-    if (opt != nullptr && opt->runtime_state != nullptr) {
+    if (opt->runtime_state != nullptr) {
         _be_exec_version = opt->runtime_state->be_exec_version();
     }
-    RETURN_IF_ERROR(_create_column_readers_once());
+    RETURN_IF_ERROR(_create_column_readers_once(opt->stats));
 
     // init column iterator by path info
     if (tablet_column.has_path_info() || tablet_column.is_variant_type()) {
@@ -885,8 +901,9 @@ Status Segment::new_column_iterator(const TabletColumn& tablet_column,
     return Status::OK();
 }
 
-Status Segment::new_column_iterator(int32_t unique_id, std::unique_ptr<ColumnIterator>* iter) {
-    RETURN_IF_ERROR(_create_column_readers_once());
+Status Segment::new_column_iterator(int32_t unique_id, const StorageReadOptions* opt,
+                                    std::unique_ptr<ColumnIterator>* iter) {
+    RETURN_IF_ERROR(_create_column_readers_once(opt->stats));
     ColumnIterator* it;
     RETURN_IF_ERROR(_column_readers.at(unique_id)->new_iterator(&it));
     iter->reset(it);
@@ -914,8 +931,9 @@ ColumnReader* Segment::_get_column_reader(const TabletColumn& col) {
 }
 
 Status Segment::new_bitmap_index_iterator(const TabletColumn& tablet_column,
+                                          const StorageReadOptions& read_options,
                                           std::unique_ptr<BitmapIndexIterator>* iter) {
-    RETURN_IF_ERROR(_create_column_readers_once());
+    RETURN_IF_ERROR(_create_column_readers_once(read_options.stats));
     ColumnReader* reader = _get_column_reader(tablet_column);
     if (reader != nullptr && reader->has_bitmap_index()) {
         BitmapIndexIterator* it;
@@ -933,7 +951,7 @@ Status Segment::new_inverted_index_iterator(const TabletColumn& tablet_column,
     if (read_options.runtime_state != nullptr) {
         _be_exec_version = read_options.runtime_state->be_exec_version();
     }
-    RETURN_IF_ERROR(_create_column_readers_once());
+    RETURN_IF_ERROR(_create_column_readers_once(read_options.stats));
     ColumnReader* reader = _get_column_reader(tablet_column);
     if (reader != nullptr && index_meta) {
         if (_inverted_index_file_reader == nullptr) {
@@ -1092,6 +1110,7 @@ Status Segment::seek_and_read_by_rowid(const TabletSchema& schema, SlotDescripto
                                        OlapReaderStatistics& stats,
                                        std::unique_ptr<ColumnIterator>& iterator_hint) {
     StorageReadOptions storage_read_opt;
+    storage_read_opt.stats = &stats;
     storage_read_opt.io_ctx.reader_type = ReaderType::READER_QUERY;
     segment_v2::ColumnIteratorOptions opt {
             .use_page_cache = !config::disable_storage_page_cache,

@@ -174,12 +174,12 @@ public class WindowExpression extends Expression {
     }
 
     @Override
-    public int hashCode() {
+    public int computeHashCode() {
         return Objects.hash(function, partitionKeys, orderKeys, windowFrame);
     }
 
     @Override
-    public String toSql() {
+    public String computeToSql() {
         StringBuilder sb = new StringBuilder();
         sb.append(function.toSql()).append(" OVER(");
         if (!partitionKeys.isEmpty()) {

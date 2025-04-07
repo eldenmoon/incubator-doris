@@ -260,7 +260,17 @@ public class InsertUtils {
     /**
      * normalize plan to let it could be process correctly by nereids
      */
-    public static Plan normalizePlan(Plan plan, TableIf table, Optional<InsertCommandContext> insertCtx) {
+    public static Plan normalizePlan(LogicalPlan plan, TableIf table, Optional<InsertCommandContext> insertCtx) {
+        table.readLock();
+        try {
+            return normalizePlanWithoutLock(plan, table, insertCtx);
+        } finally {
+            table.readUnlock();
+        }
+    }
+
+    private static Plan normalizePlanWithoutLock(LogicalPlan plan, TableIf table,
+            Optional<InsertCommandContext> insertCtx) {
         UnboundLogicalSink<? extends Plan> unboundLogicalSink = (UnboundLogicalSink<? extends Plan>) plan;
         if (table instanceof HMSExternalTable) {
             HMSExternalTable hiveTable = (HMSExternalTable) table;
@@ -297,6 +307,7 @@ public class InsertUtils {
                                         + " with sync materialized view.");
                             }
                             boolean hasMissingColExceptAutoIncKey = false;
+                            boolean hasMissingAutoIncKey = false;
                             for (Column col : olapTable.getFullSchema()) {
                                 Optional<String> insertCol = unboundLogicalSink.getColNames().stream()
                                         .filter(c -> c.equalsIgnoreCase(col.getName())).findFirst();
@@ -313,9 +324,18 @@ public class InsertUtils {
                                 if (!(col.isAutoInc() && col.isKey()) && !insertCol.isPresent() && col.isVisible()) {
                                     hasMissingColExceptAutoIncKey = true;
                                 }
+                                if (col.isAutoInc() && col.isKey() && !insertCol.isPresent()) {
+                                    hasMissingAutoIncKey = true;
+                                }
                             }
                             if (!hasMissingColExceptAutoIncKey) {
                                 ((UnboundTableSink<? extends Plan>) unboundLogicalSink).setPartialUpdate(false);
+                            } else {
+                                if (hasMissingAutoIncKey) {
+                                    // becuase of the uniqueness of genetaed value of auto-increment column,
+                                    // we convert this load to upsert when is misses auto-increment key column
+                                    ((UnboundTableSink<? extends Plan>) unboundLogicalSink).setPartialUpdate(false);
+                                }
                             }
                         }
                     }
@@ -404,8 +424,13 @@ public class InsertUtils {
     }
 
     private static Expression castValue(Expression value, DataType targetType) {
-        if (value instanceof UnboundAlias) {
-            return value.withChildren(TypeCoercionUtils.castUnbound(((UnboundAlias) value).child(), targetType));
+        if (value instanceof Alias) {
+            Expression oldChild = value.child(0);
+            Expression newChild = TypeCoercionUtils.castUnbound(oldChild, targetType);
+            return oldChild == newChild ? value : value.withChildren(newChild);
+        } else if (value instanceof UnboundAlias) {
+            UnboundAlias unboundAlias = (UnboundAlias) value;
+            return new Alias(TypeCoercionUtils.castUnbound(unboundAlias.child(), targetType));
         } else {
             return TypeCoercionUtils.castUnbound(value, targetType);
         }
@@ -415,6 +440,14 @@ public class InsertUtils {
      * get target table from names.
      */
     public static TableIf getTargetTable(Plan plan, ConnectContext ctx) {
+        List<String> tableQualifier = getTargetTableQualified(plan, ctx);
+        return RelationUtil.getTable(tableQualifier, ctx.getEnv());
+    }
+
+    /**
+     * get target table from names.
+     */
+    public static List<String> getTargetTableQualified(Plan plan, ConnectContext ctx) {
         UnboundLogicalSink<? extends Plan> unboundTableSink;
         if (plan instanceof UnboundTableSink) {
             unboundTableSink = (UnboundTableSink<? extends Plan>) plan;
@@ -429,8 +462,7 @@ public class InsertUtils {
                     + " [UnboundTableSink, UnboundHiveTableSink, UnboundIcebergTableSink],"
                     + " but it is " + plan.getType());
         }
-        List<String> tableQualifier = RelationUtil.getQualifierName(ctx, unboundTableSink.getNameParts());
-        return RelationUtil.getDbAndTable(tableQualifier, ctx.getEnv()).second;
+        return RelationUtil.getQualifierName(ctx, unboundTableSink.getNameParts());
     }
 
     private static NamedExpression generateDefaultExpression(Column column) {
@@ -475,7 +507,8 @@ public class InsertUtils {
     private static void checkGeneratedColumnForInsertIntoSelect(TableIf table,
             UnboundLogicalSink<? extends Plan> unboundLogicalSink, Optional<InsertCommandContext> insertCtx) {
         // should not check delete stmt, because deletestmt can transform to insert delete sign
-        if (unboundLogicalSink.getDMLCommandType() == DMLCommandType.DELETE) {
+        if (unboundLogicalSink.getDMLCommandType() == DMLCommandType.DELETE
+                || unboundLogicalSink.getDMLCommandType() == DMLCommandType.GROUP_COMMIT) {
             return;
         }
         // This is for the insert overwrite values(),()

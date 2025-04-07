@@ -127,10 +127,10 @@ Status CachedRemoteFileReader::read_at_impl(size_t offset, Slice result, size_t*
     auto defer_func = [&](int*) {
         if (io_ctx->file_cache_stats) {
             // update stats in io_ctx, for query profile
-            _update_state(stats, io_ctx->file_cache_stats);
+            _update_stats(stats, io_ctx->file_cache_stats, io_ctx->is_inverted_index);
             // update stats increment in this reading procedure for file cache metrics
             FileCacheStatistics fcache_stats_increment;
-            _update_state(stats, &fcache_stats_increment);
+            _update_stats(stats, &fcache_stats_increment, io_ctx->is_inverted_index);
             io::FileCacheProfile::instance().update(&fcache_stats_increment);
         }
     };
@@ -320,8 +320,9 @@ Status CachedRemoteFileReader::read_at_impl(size_t offset, Slice result, size_t*
     return Status::OK();
 }
 
-void CachedRemoteFileReader::_update_state(const ReadStatistics& read_stats,
-                                           FileCacheStatistics* statis) const {
+void CachedRemoteFileReader::_update_stats(const ReadStatistics& read_stats,
+                                           FileCacheStatistics* statis,
+                                           bool is_inverted_index) const {
     if (statis == nullptr) {
         return;
     }
@@ -329,6 +330,9 @@ void CachedRemoteFileReader::_update_state(const ReadStatistics& read_stats,
         statis->num_local_io_total++;
         statis->bytes_read_from_local += read_stats.bytes_read;
     } else {
+        if (is_inverted_index) {
+            statis->num_inverted_index_remote_io_total++;
+        }
         statis->num_remote_io_total++;
         statis->bytes_read_from_remote += read_stats.bytes_read;
     }
@@ -337,6 +341,12 @@ void CachedRemoteFileReader::_update_state(const ReadStatistics& read_stats,
     statis->num_skip_cache_io_total += read_stats.skip_cache;
     statis->bytes_write_into_cache += read_stats.bytes_write_into_file_cache;
     statis->write_cache_io_timer += read_stats.local_write_timer;
+    statis->read_cache_file_directly_timer += read_stats.read_cache_file_directly_timer;
+    statis->cache_get_or_set_timer += read_stats.cache_get_or_set_timer;
+    statis->lock_wait_timer += read_stats.lock_wait_timer;
+    statis->get_timer += read_stats.get_timer;
+    statis->set_timer += read_stats.set_timer;
+
     statis->read_cache_file_directly_timer += read_stats.read_cache_file_directly_timer;
     statis->cache_get_or_set_timer += read_stats.cache_get_or_set_timer;
     statis->lock_wait_timer += read_stats.lock_wait_timer;

@@ -106,14 +106,15 @@ std::string hexdump(const char* buf, int len) {
     return ss.str();
 }
 
-// clang-format off
-bvar::Status<uint64_t> be_version_metrics("doris_be_version",
-    [] { std::stringstream ss;
-        ss << version::doris_build_version_major() << 0 << version::doris_build_version_minor() << 0 << version::doris_build_version_patch();
-        if (version::doris_build_version_hotfix() > 0) ss << 0 << version::doris_build_version_hotfix();
-        return std::strtoul(ss.str().c_str(), nullptr, 10);
-    }());
-// clang-format on
+bvar::Status<uint64_t> be_version_metrics("doris_be_version", [] {
+    std::stringstream ss;
+    ss << version::doris_build_version_major() << 0 << version::doris_build_version_minor() << 0
+       << version::doris_build_version_patch();
+    if (version::doris_build_version_hotfix() > 0) {
+        ss << 0 << version::doris_build_version_hotfix();
+    }
+    return std::strtoul(ss.str().c_str(), nullptr, 10);
+}());
 
 std::string PrintThriftNetworkAddress(const TNetworkAddress& add) {
     std::stringstream ss;

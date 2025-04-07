@@ -284,6 +284,7 @@ ObjectStorageResponse S3ObjClient::delete_object(ObjectStoragePathRef path) {
         SCOPED_BVAR_LATENCY(s3_bvar::s3_delete_object_latency);
         return s3_client_->DeleteObject(request);
     });
+    TEST_SYNC_POINT_CALLBACK("S3ObjClient::delete_object", &outcome);
     if (!outcome.IsSuccess()) {
         LOG_WARNING("failed to delete object")
                 .tag("endpoint", endpoint_)
@@ -297,7 +298,7 @@ ObjectStorageResponse S3ObjClient::delete_object(ObjectStoragePathRef path) {
         }
         return {ObjectStorageResponse::UNDEFINED, outcome.GetError().GetMessage()};
     }
-    return 0;
+    return {ObjectStorageResponse::OK};
 }
 
 ObjectStorageResponse S3ObjClient::delete_objects_recursively(ObjectStoragePathRef path,

@@ -110,6 +110,8 @@ class LookupConnectionCache;
 class RowCache;
 class DummyLRUCache;
 class CacheManager;
+class ProcessProfile;
+class HeapProfiler;
 class WalManager;
 class DNSCache;
 
@@ -176,7 +178,6 @@ public:
     std::vector<TrackerLimiterGroup> mem_tracker_limiter_pool;
     void init_mem_tracker();
     std::shared_ptr<MemTrackerLimiter> orphan_mem_tracker() { return _orphan_mem_tracker; }
-    std::shared_ptr<MemTracker> page_no_cache_mem_tracker() { return _page_no_cache_mem_tracker; }
     std::shared_ptr<MemTrackerLimiter> brpc_iobuf_block_memory_tracker() {
         return _brpc_iobuf_block_memory_tracker;
     }
@@ -185,6 +186,15 @@ public:
     }
     std::shared_ptr<MemTrackerLimiter> stream_load_pipe_tracker() {
         return _stream_load_pipe_tracker;
+    }
+    std::shared_ptr<MemTrackerLimiter> tablets_no_cache_mem_tracker() {
+        return _tablets_no_cache_mem_tracker;
+    }
+    std::shared_ptr<MemTrackerLimiter> rowsets_no_cache_mem_tracker() {
+        return _rowsets_no_cache_mem_tracker;
+    }
+    std::shared_ptr<MemTrackerLimiter> segments_no_cache_mem_tracker() {
+        return _segments_no_cache_mem_tracker;
     }
     std::shared_ptr<MemTrackerLimiter> point_query_executor_mem_tracker() {
         return _point_query_executor_mem_tracker;
@@ -274,6 +284,7 @@ public:
     void set_inverted_index_searcher_cache(
             segment_v2::InvertedIndexSearcherCache* inverted_index_searcher_cache);
     void set_cache_manager(CacheManager* cm) { this->_cache_manager = cm; }
+    void set_process_profile(ProcessProfile* pp) { this->_process_profile = pp; }
     void set_tablet_schema_cache(TabletSchemaCache* c) { this->_tablet_schema_cache = c; }
     void set_tablet_column_object_pool(TabletColumnObjectPool* c) {
         this->_tablet_column_object_pool = c;
@@ -283,13 +294,17 @@ public:
     void set_routine_load_task_executor(RoutineLoadTaskExecutor* r) {
         this->_routine_load_task_executor = r;
     }
-    void set_wal_mgr(std::shared_ptr<WalManager> wm) { this->_wal_manager = wm; }
+    void set_wal_mgr(std::shared_ptr<WalManager>&& wm);
+    void clear_wal_mgr();
     void set_dummy_lru_cache(std::shared_ptr<DummyLRUCache> dummy_lru_cache) {
         this->_dummy_lru_cache = dummy_lru_cache;
     }
     void set_write_cooldown_meta_executors();
     static void set_tracking_memory(bool tracking_memory) {
         _s_tracking_memory.store(tracking_memory, std::memory_order_release);
+    }
+    void set_non_block_close_thread_pool(std::unique_ptr<ThreadPool>&& pool) {
+        _non_block_close_thread_pool = std::move(pool);
     }
 #endif
     LoadStreamMapPool* load_stream_map_pool() { return _load_stream_map_pool.get(); }
@@ -310,6 +325,8 @@ public:
     LookupConnectionCache* get_lookup_connection_cache() { return _lookup_connection_cache; }
     RowCache* get_row_cache() { return _row_cache; }
     CacheManager* get_cache_manager() { return _cache_manager; }
+    ProcessProfile* get_process_profile() { return _process_profile; }
+    HeapProfiler* get_heap_profiler() { return _heap_profiler; }
     segment_v2::InvertedIndexSearcherCache* get_inverted_index_searcher_cache() {
         return _inverted_index_searcher_cache;
     }
@@ -371,12 +388,14 @@ private:
     // Ideally, all threads are expected to attach to the specified tracker, so that "all memory has its own ownership",
     // and the consumption of the orphan mem tracker is close to 0, but greater than 0.
     std::shared_ptr<MemTrackerLimiter> _orphan_mem_tracker;
-    // page size not in cache, data page/index page/etc.
-    std::shared_ptr<MemTracker> _page_no_cache_mem_tracker;
     std::shared_ptr<MemTrackerLimiter> _brpc_iobuf_block_memory_tracker;
     // Count the memory consumption of segment compaction tasks.
     std::shared_ptr<MemTrackerLimiter> _segcompaction_mem_tracker;
     std::shared_ptr<MemTrackerLimiter> _stream_load_pipe_tracker;
+
+    std::shared_ptr<MemTrackerLimiter> _tablets_no_cache_mem_tracker;
+    std::shared_ptr<MemTrackerLimiter> _rowsets_no_cache_mem_tracker;
+    std::shared_ptr<MemTrackerLimiter> _segments_no_cache_mem_tracker;
 
     // Tracking memory may be shared between multiple queries.
     std::shared_ptr<MemTrackerLimiter> _point_query_executor_mem_tracker;
@@ -452,6 +471,8 @@ private:
     LookupConnectionCache* _lookup_connection_cache = nullptr;
     RowCache* _row_cache = nullptr;
     CacheManager* _cache_manager = nullptr;
+    ProcessProfile* _process_profile = nullptr;
+    HeapProfiler* _heap_profiler = nullptr;
     segment_v2::InvertedIndexSearcherCache* _inverted_index_searcher_cache = nullptr;
     segment_v2::InvertedIndexQueryCache* _inverted_index_query_cache = nullptr;
     QueryCache* _query_cache = nullptr;

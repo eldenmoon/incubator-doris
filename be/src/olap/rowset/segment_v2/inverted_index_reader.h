@@ -171,7 +171,8 @@ public:
     bool is_empty() const { return (_data_bitmap == nullptr && _null_bitmap == nullptr); }
 };
 
-class InvertedIndexReader : public std::enable_shared_from_this<InvertedIndexReader> {
+class InvertedIndexReader : public std::enable_shared_from_this<InvertedIndexReader>,
+                            public MetadataAdder<InvertedIndexReader> {
 public:
     explicit InvertedIndexReader(
             const TabletIndex* index_meta,
@@ -226,8 +227,7 @@ public:
                                          const io::IOContext* io_ctx, OlapReaderStatistics* stats);
     std::string get_index_file_path();
     static Status create_index_searcher(lucene::store::Directory* dir, IndexSearcherPtr* searcher,
-                                        MemTracker* mem_tracker,
-                                        InvertedIndexReaderType reader_type);
+                                        InvertedIndexReaderType reader_type, size_t& reader_size);
 
 protected:
     Status match_index_search(const io::IOContext* io_ctx, OlapReaderStatistics* stats,

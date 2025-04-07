@@ -247,6 +247,33 @@ Status SegmentWriter::_create_column_writer(uint32_t cid, const TabletColumn& co
 
 #undef DISABLE_INDEX_IF_FIELD_TYPE
 
+    int64_t storage_page_size = _tablet_schema->storage_page_size();
+    // storage_page_size must be between 4KB and 10MB.
+    if (storage_page_size >= 4096 && storage_page_size <= 10485760) {
+        opts.data_page_size = storage_page_size;
+    }
+    DBUG_EXECUTE_IF("VerticalSegmentWriter._create_column_writer.storage_page_size", {
+        auto table_id = DebugPoints::instance()->get_debug_param_or_default<int64_t>(
+                "VerticalSegmentWriter._create_column_writer.storage_page_size", "table_id",
+                INT_MIN);
+        auto target_data_page_size = DebugPoints::instance()->get_debug_param_or_default<int64_t>(
+                "VerticalSegmentWriter._create_column_writer.storage_page_size",
+                "storage_page_size", INT_MIN);
+        if (table_id == INT_MIN || target_data_page_size == INT_MIN) {
+            return Status::Error<ErrorCode::INTERNAL_ERROR>(
+                    "Debug point parameters missing: either 'table_id' or 'storage_page_size' not "
+                    "set.");
+        }
+        if (table_id == _tablet_schema->table_id() &&
+            opts.data_page_size != target_data_page_size) {
+            return Status::Error<ErrorCode::INTERNAL_ERROR>(
+                    "Mismatch in 'storage_page_size': expected size does not match the current "
+                    "data page size. "
+                    "Expected: " +
+                    std::to_string(target_data_page_size) +
+                    ", Actual: " + std::to_string(opts.data_page_size) + ".");
+        }
+    })
     if (column.is_row_store_column()) {
         // smaller page size for row store column
         auto page_size = _tablet_schema->row_store_page_size();
@@ -336,7 +363,9 @@ Status SegmentWriter::append_block_with_variant_subcolumns(vectorized::Block& da
             continue;
         }
         if (_flush_schema == nullptr) {
-            _flush_schema = std::make_shared<TabletSchema>(*_tablet_schema);
+            _flush_schema = std::make_shared<TabletSchema>();
+            // deep copy
+            _flush_schema->copy_from(*_tablet_schema);
         }
         auto column_ref = data.get_by_position(i).column;
         const vectorized::ColumnObject& object_column = assert_cast<vectorized::ColumnObject&>(
@@ -519,6 +548,40 @@ Status SegmentWriter::probe_key_for_mow(
     return Status::OK();
 }
 
+Status SegmentWriter::partial_update_preconditions_check(size_t row_pos) {
+    if (!_is_mow()) {
+        auto msg = fmt::format(
+                "Can only do partial update on merge-on-write unique table, but found: "
+                "keys_type={}, _opts.enable_unique_key_merge_on_write={}, tablet_id={}",
+                _tablet_schema->keys_type(), _opts.enable_unique_key_merge_on_write,
+                _tablet->tablet_id());
+        DCHECK(false) << msg;
+        return Status::InternalError<false>(msg);
+    }
+    if (_opts.rowset_ctx->partial_update_info == nullptr) {
+        auto msg =
+                fmt::format("partial_update_info should not be nullptr, please check, tablet_id={}",
+                            _tablet->tablet_id());
+        DCHECK(false) << msg;
+        return Status::InternalError<false>(msg);
+    }
+    if (!_opts.rowset_ctx->partial_update_info->is_partial_update) {
+        auto msg = fmt::format(
+                "in fixed partial update code, but is_partial_update=false, please check, "
+                "tablet_id={}",
+                _tablet->tablet_id());
+        DCHECK(false) << msg;
+        return Status::InternalError<false>(msg);
+    }
+    if (row_pos != 0) {
+        auto msg = fmt::format("row_pos should be 0, but found {}, tablet_id={}", row_pos,
+                               _tablet->tablet_id());
+        DCHECK(false) << msg;
+        return Status::InternalError<false>(msg);
+    }
+    return Status::OK();
+}
+
 // for partial update, we should do following steps to fill content of block:
 // 1. set block data to data convertor, and get all key_column's converted slice
 // 2. get pk of input block, and read missing columns
@@ -536,10 +599,7 @@ Status SegmentWriter::append_block_with_partial_content(const vectorized::Block*
                             block->columns(), _tablet_schema->num_key_columns(),
                             _tablet_schema->num_columns()));
     }
-    DCHECK(_is_mow());
-
-    DCHECK(_opts.rowset_ctx->partial_update_info);
-    DCHECK(row_pos == 0);
+    RETURN_IF_ERROR(partial_update_preconditions_check(row_pos));
 
     // find missing column cids
     const auto& missing_cids = _opts.rowset_ctx->partial_update_info->missing_cids;

@@ -40,6 +40,7 @@
 #include "pipeline/exec/operator.h"
 #include "pipeline/pipeline_task.h"
 #include "runtime/exec_env.h"
+#include "runtime/fragment_mgr.h"
 #include "runtime/load_path_mgr.h"
 #include "runtime/memory/mem_tracker_limiter.h"
 #include "runtime/memory/thread_mem_tracker_mgr.h"
@@ -131,7 +132,6 @@ RuntimeState::RuntimeState(pipeline::PipelineFragmentContext*, const TUniqueId& 
         : _profile("Fragment " + print_id(instance_id)),
           _load_channel_profile("<unnamed>"),
           _obj_pool(new ObjectPool()),
-          _runtime_filter_mgr(nullptr),
           _unreported_error_idx(0),
           _query_id(query_id),
           _fragment_id(fragment_id),
@@ -298,6 +298,10 @@ Status RuntimeState::init(const TUniqueId& fragment_instance_id, const TQueryOpt
     return Status::OK();
 }
 
+std::weak_ptr<QueryContext> RuntimeState::get_query_ctx_weak() {
+    return _exec_env->fragment_mgr()->get_query_ctx(_query_ctx->query_id());
+}
+
 void RuntimeState::init_mem_trackers(const std::string& name, const TUniqueId& id) {
     _query_mem_tracker = MemTrackerLimiter::create_shared(
             MemTrackerLimiter::Type::OTHER, fmt::format("{}#Id={}", name, print_id(id)));
@@ -356,7 +360,7 @@ Status RuntimeState::create_error_log_file() {
             // https://dev.mysql.com/doc/dev/mysql-server/latest/page_protocol_basic_err_packet.html
             // shorten the path as much as possible to prevent the length of the presigned URL from
             // exceeding the MySQL error packet size limit
-            ss << "error_log/" << _import_label << "_" << std::hex << _fragment_instance_id.hi;
+            ss << "error_log/" << std::hex << _query_id.hi;
             _s3_error_log_file_path = ss.str();
         }
     }
@@ -372,15 +376,16 @@ Status RuntimeState::create_error_log_file() {
         LOG(WARNING) << error_msg.str();
         return Status::InternalError(error_msg.str());
     }
-    VLOG_FILE << "create error log file: " << _error_log_file_path;
+    LOG(INFO) << "create error log file: " << _error_log_file_path
+              << ", query id: " << print_id(_query_id)
+              << ", fragment instance id: " << print_id(_fragment_instance_id);
 
     return Status::OK();
 }
 
 Status RuntimeState::append_error_msg_to_file(std::function<std::string()> line,
                                               std::function<std::string()> error_msg,
-                                              bool* stop_processing, bool is_summary) {
-    *stop_processing = false;
+                                              bool is_summary) {
     if (query_type() != TQueryType::LOAD) {
         return Status::OK();
     }
@@ -401,7 +406,10 @@ Status RuntimeState::append_error_msg_to_file(std::function<std::string()> line,
     if (_num_print_error_rows.fetch_add(1, std::memory_order_relaxed) > MAX_ERROR_NUM &&
         !is_summary) {
         if (_load_zero_tolerance) {
-            *stop_processing = true;
+            return Status::DataQualityError(
+                    "Encountered unqualified data, stop processing. Please check if the source "
+                    "data matches the schema, and consider disabling strict mode or increasing "
+                    "max_filter_ratio.");
         }
         return Status::OK();
     }
@@ -434,6 +442,11 @@ Status RuntimeState::append_error_msg_to_file(std::function<std::string()> line,
 }
 
 std::string RuntimeState::get_error_log_file_path() {
+    DBUG_EXECUTE_IF("RuntimeState::get_error_log_file_path.block", {
+        if (!_error_log_file_path.empty()) {
+            std::this_thread::sleep_for(std::chrono::seconds(1));
+        }
+    });
     std::lock_guard<std::mutex> l(_s3_error_log_file_lock);
     if (_s3_error_fs && _error_log_file && _error_log_file->is_open()) {
         // close error log file
@@ -442,10 +455,7 @@ std::string RuntimeState::get_error_log_file_path() {
                 _exec_env->load_path_mgr()->get_load_error_absolute_path(_error_log_file_path);
         // upload error log file to s3
         Status st = _s3_error_fs->upload(error_log_absolute_path, _s3_error_log_file_path);
-        if (st.ok()) {
-            // remove local error log file
-            std::filesystem::remove(error_log_absolute_path);
-        } else {
+        if (!st.ok()) {
             // upload failed and return local error log file path
             LOG(WARNING) << "Fail to upload error file to s3, error_log_file_path="
                          << _error_log_file_path << ", error=" << st;
@@ -516,14 +526,13 @@ RuntimeFilterMgr* RuntimeState::global_runtime_filter_mgr() {
 }
 
 Status RuntimeState::register_producer_runtime_filter(
-        const TRuntimeFilterDesc& desc, std::shared_ptr<IRuntimeFilter>* producer_filter,
-        bool build_bf_exactly) {
+        const TRuntimeFilterDesc& desc, std::shared_ptr<IRuntimeFilter>* producer_filter) {
     // Producers are created by local runtime filter mgr and shared by global runtime filter manager.
     // When RF is published, consumers in both global and local RF mgr will be found.
-    RETURN_IF_ERROR(local_runtime_filter_mgr()->register_producer_filter(
-            desc, query_options(), producer_filter, build_bf_exactly));
+    RETURN_IF_ERROR(local_runtime_filter_mgr()->register_producer_filter(desc, query_options(),
+                                                                         producer_filter));
     RETURN_IF_ERROR(global_runtime_filter_mgr()->register_local_merge_producer_filter(
-            desc, query_options(), *producer_filter, build_bf_exactly));
+            desc, query_options(), *producer_filter));
     return Status::OK();
 }
 
@@ -532,10 +541,10 @@ Status RuntimeState::register_consumer_runtime_filter(
         std::shared_ptr<IRuntimeFilter>* consumer_filter) {
     if (desc.has_remote_targets || need_local_merge) {
         return global_runtime_filter_mgr()->register_consumer_filter(desc, query_options(), node_id,
-                                                                     consumer_filter, false, true);
+                                                                     consumer_filter, true);
     } else {
         return local_runtime_filter_mgr()->register_consumer_filter(desc, query_options(), node_id,
-                                                                    consumer_filter, false, false);
+                                                                    consumer_filter, false);
     }
 }
 

@@ -81,6 +81,7 @@ public abstract class BaseJdbcExecutor implements JdbcExecutor {
     private static final Map<URL, ClassLoader> classLoaderMap = Maps.newConcurrentMap();
 
     public BaseJdbcExecutor(byte[] thriftParams) throws Exception {
+        setJdbcDriverSystemProperties();
         TJdbcExecutorCtorParams request = new TJdbcExecutorCtorParams();
         TDeserializer deserializer = new TDeserializer(PROTOCOL_FACTORY);
         try {
@@ -105,7 +106,6 @@ public abstract class BaseJdbcExecutor implements JdbcExecutor {
                 .setConnectionPoolMaxLifeTime(request.connection_pool_max_life_time)
                 .setConnectionPoolKeepAlive(request.connection_pool_keep_alive);
         JdbcDataSource.getDataSource().setCleanupInterval(request.connection_pool_cache_clear_time);
-        System.setProperty("com.zaxxer.hikari.useWeakReferences", "true");
         init(config, request.statement);
         this.jdbcDriverVersion = getJdbcDriverVersion();
     }
@@ -156,6 +156,10 @@ public abstract class BaseJdbcExecutor implements JdbcExecutor {
 
     protected void abortReadConnection(Connection connection, ResultSet resultSet)
             throws SQLException {
+    }
+
+    protected void setJdbcDriverSystemProperties() {
+        System.setProperty("com.zaxxer.hikari.useWeakReferences", "true");
     }
 
     public void cleanDataSource() {

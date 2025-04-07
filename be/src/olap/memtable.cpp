@@ -35,6 +35,7 @@
 #include "runtime/exec_env.h"
 #include "runtime/thread_context.h"
 #include "tablet_meta.h"
+#include "util/debug_points.h"
 #include "util/runtime_profile.h"
 #include "util/stopwatch.hpp"
 #include "vec/aggregate_functions/aggregate_function_reader.h"
@@ -44,7 +45,6 @@
 namespace doris {
 
 bvar::Adder<int64_t> g_memtable_cnt("memtable_cnt");
-bvar::Adder<int64_t> g_memtable_input_block_allocated_size("memtable_input_block_allocated_size");
 
 using namespace ErrorCode;
 
@@ -139,6 +139,34 @@ void MemTable::_init_agg_functions(const vectorized::Block* block) {
 
 MemTable::~MemTable() {
     SCOPED_SWITCH_THREAD_MEM_TRACKER_LIMITER(_query_thread_context.query_mem_tracker);
+    {
+        SCOPED_CONSUME_MEM_TRACKER(_mem_tracker);
+        g_memtable_cnt << -1;
+        if (_keys_type != KeysType::DUP_KEYS) {
+            for (auto it = _row_in_blocks.begin(); it != _row_in_blocks.end(); it++) {
+                if (!(*it)->has_init_agg()) {
+                    continue;
+                }
+                // We should release agg_places here, because they are not released when a
+                // load is canceled.
+                for (size_t i = _tablet_schema->num_key_columns(); i < _num_columns; ++i) {
+                    auto function = _agg_functions[i];
+                    DCHECK(function != nullptr);
+                    function->destroy((*it)->agg_places(i));
+                }
+            }
+        }
+        std::for_each(_row_in_blocks.begin(), _row_in_blocks.end(),
+                      std::default_delete<RowInBlock>());
+        // Arena has to be destroyed after agg state, because some agg state's memory may be
+        // allocated in arena.
+        _arena.reset();
+        _vec_row_comparator.reset();
+        _row_in_blocks.clear();
+        _agg_functions.clear();
+        _input_mutable_block.clear();
+        _output_mutable_block.clear();
+    }
     if (_is_flush_success) {
         // If the memtable is flush success, then its memtracker's consumption should be 0
         if (_mem_tracker->consumption() != 0 && config::crash_in_memory_tracker_inaccurate) {
@@ -146,29 +174,6 @@ MemTable::~MemTable() {
                        << _mem_tracker->consumption();
         }
     }
-    g_memtable_input_block_allocated_size << -_input_mutable_block.allocated_bytes();
-    g_memtable_cnt << -1;
-    if (_keys_type != KeysType::DUP_KEYS) {
-        for (auto it = _row_in_blocks.begin(); it != _row_in_blocks.end(); it++) {
-            if (!(*it)->has_init_agg()) {
-                continue;
-            }
-            // We should release agg_places here, because they are not released when a
-            // load is canceled.
-            for (size_t i = _tablet_schema->num_key_columns(); i < _num_columns; ++i) {
-                auto function = _agg_functions[i];
-                DCHECK(function != nullptr);
-                function->destroy((*it)->agg_places(i));
-            }
-        }
-    }
-    std::for_each(_row_in_blocks.begin(), _row_in_blocks.end(), std::default_delete<RowInBlock>());
-    _arena.reset();
-    _vec_row_comparator.reset();
-    _row_in_blocks.clear();
-    _agg_functions.clear();
-    _input_mutable_block.clear();
-    _output_mutable_block.clear();
 }
 
 int RowInBlockComparator::operator()(const RowInBlock* left, const RowInBlock* right) const {
@@ -208,11 +213,8 @@ Status MemTable::insert(const vectorized::Block* input_block,
 
     auto num_rows = row_idxs.size();
     size_t cursor_in_mutableblock = _input_mutable_block.rows();
-    auto block_size0 = _input_mutable_block.allocated_bytes();
     RETURN_IF_ERROR(_input_mutable_block.add_rows(input_block, row_idxs.data(),
                                                   row_idxs.data() + num_rows, &_column_offset));
-    auto block_size1 = _input_mutable_block.allocated_bytes();
-    g_memtable_input_block_allocated_size << block_size1 - block_size0;
     for (int i = 0; i < num_rows; i++) {
         _row_in_blocks.emplace_back(new RowInBlock {cursor_in_mutableblock + i});
     }
@@ -483,6 +485,7 @@ void MemTable::shrink_memtable_by_agg() {
 }
 
 bool MemTable::need_flush() const {
+    DBUG_EXECUTE_IF("MemTable.need_flush", { return true; });
     auto max_size = config::write_buffer_size;
     if (_is_partial_update) {
         auto update_columns_size = _num_columns;
@@ -520,10 +523,7 @@ Status MemTable::_to_block(std::unique_ptr<vectorized::Block>* res) {
         }
         RETURN_IF_ERROR(_sort_by_cluster_keys());
     }
-    g_memtable_input_block_allocated_size << -_input_mutable_block.allocated_bytes();
     _input_mutable_block.clear();
-    // After to block, all data in arena is saved in the block
-    _arena.reset();
     *res = vectorized::Block::create_unique(_output_mutable_block.to_block());
     return Status::OK();
 }

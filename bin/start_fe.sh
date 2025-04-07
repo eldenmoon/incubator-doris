@@ -204,6 +204,7 @@ else
 fi
 log "Using Java version ${java_version}"
 log "${final_java_opt}"
+export JAVA_OPTS="${final_java_opt}"
 
 # add libs to CLASSPATH
 DORIS_FE_JAR=
@@ -256,6 +257,12 @@ log "start time: ${CUR_DATE}"
 if [[ "${HELPER}" != "" ]]; then
     # change it to '-helper' to be compatible with code in Frontend
     HELPER="-helper ${HELPER}"
+fi
+
+if [[ "${OPT_VERSION}" != "" ]]; then
+    export DORIS_LOG_TO_STDERR=1
+    ${LIMIT:+${LIMIT}} "${JAVA}" org.apache.doris.DorisFE --version
+    exit 0
 fi
 
 if [[ "${IMAGE_TOOL}" -eq 1 ]]; then

@@ -454,7 +454,7 @@ if [[ " ${TP_ARCHIVES[*]} " =~ " BRPC " ]]; then
         if [[ ! -f "${PATCHED_MARK}" ]]; then
             for patch_file in "${TP_PATCH_DIR}"/brpc-*; do
                 echo "patch ${patch_file}"
-                patch -p1 <"${patch_file}"
+                patch -p1 --ignore-whitespace <"${patch_file}"
             done
             touch "${PATCHED_MARK}"
         fi
@@ -520,5 +520,22 @@ else
         echo "Finished patching ${BITSHUFFLE_SOURCE}"
     fi
 fi
+
+# patch thrift
+if [[ " ${TP_ARCHIVES[*]} " =~ " THRIFT " ]]; then
+    if [[ "${THRIFT_SOURCE}" == 'thrift-0.16.0' ]]; then
+        cd "${TP_SOURCE_DIR}/${THRIFT_SOURCE}"
+        if [[ ! -f "${PATCHED_MARK}" ]]; then
+            for patch_file in "${TP_PATCH_DIR}"/thrift-0.16*; do
+                echo "patch ${patch_file}"
+                patch -p1 --ignore-whitespace <"${patch_file}"
+            done
+            touch "${PATCHED_MARK}"
+        fi
+        cd -
+    fi
+    echo "Finished patching ${THRIFT_SOURCE}"
+fi
+
 
 # vim: ts=4 sw=4 ts=4 tw=100:

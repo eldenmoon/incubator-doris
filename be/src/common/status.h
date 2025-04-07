@@ -489,6 +489,7 @@ public:
     ERROR_CTOR_NOSTACK(NeedSendAgain, NEED_SEND_AGAIN)
     ERROR_CTOR_NOSTACK(CgroupError, CGROUP_ERROR)
     ERROR_CTOR_NOSTACK(ObtainLockFailed, OBTAIN_LOCK_FAILED)
+    ERROR_CTOR_NOSTACK(NetworkError, NETWORK_ERROR)
 #undef ERROR_CTOR
 
     template <int code>
@@ -569,7 +570,7 @@ private:
 // and another thread is call to_string method, it may core, because the _err_msg is an unique ptr and
 // it is deconstructed during copy method.
 // And also we could not use lock, because we need get status frequently to check if it is cancelled.
-// The defaule value is ok.
+// The default value is ok.
 class AtomicStatus {
 public:
     AtomicStatus() : error_st_(Status::OK()) {}

@@ -252,6 +252,11 @@ public:
     void set_index_unique_id(uint32_t index_unique_id) { _index_unique_id = index_unique_id; }
     uint32_t index_unique_id() const { return _index_unique_id; }
 
+    virtual bool is_rf_wrapper() const {
+        return std::ranges::any_of(_children.begin(), _children.end(),
+                                   [](VExprSPtr child) { return child->is_rf_wrapper(); });
+    }
+
 protected:
     /// Simple debug string that provides no expr subclass-specific information
     std::string debug_string(const std::string& expr_name) const {
@@ -286,7 +291,8 @@ protected:
     /// 1. Set constant columns result of function arguments.
     /// 2. Call function's prepare() to initialize function state, fragment-local or
     /// thread-local according the input `FunctionStateScope` argument.
-    Status init_function_context(VExprContext* context, FunctionContext::FunctionStateScope scope,
+    Status init_function_context(RuntimeState* state, VExprContext* context,
+                                 FunctionContext::FunctionStateScope scope,
                                  const FunctionBasePtr& function) const;
 
     /// Helper function to close function context, fragment-local or thread-local according
@@ -319,7 +325,6 @@ protected:
 
     // ensuring uniqueness during index traversal
     uint32_t _index_unique_id = 0;
-    bool _can_fast_execute = false;
 };
 
 } // namespace vectorized

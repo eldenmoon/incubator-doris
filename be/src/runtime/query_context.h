@@ -50,8 +50,6 @@ class PipelineFragmentContext;
 struct ReportStatusRequest {
     const Status status;
     std::vector<RuntimeState*> runtime_states;
-    RuntimeProfile* profile = nullptr;
-    RuntimeProfile* load_channel_profile = nullptr;
     bool done;
     TNetworkAddress coord_addr;
     TUniqueId query_id;
@@ -59,6 +57,7 @@ struct ReportStatusRequest {
     TUniqueId fragment_instance_id;
     int backend_num;
     RuntimeState* runtime_state;
+    std::string load_error_url;
     std::function<void(const Status&)> cancel_fn;
 };
 
@@ -139,7 +138,7 @@ public:
         }
     }
 
-    Status set_workload_group(WorkloadGroupPtr& tg);
+    void set_workload_group(WorkloadGroupPtr& tg);
 
     int execution_timeout() const {
         return _query_options.__isset.execution_timeout ? _query_options.execution_timeout
@@ -164,6 +163,12 @@ public:
 
     [[nodiscard]] int64_t get_fe_process_uuid() const {
         return _query_options.__isset.fe_process_uuid ? _query_options.fe_process_uuid : 0;
+    }
+
+    bool ignore_runtime_filter_error() const {
+        return _query_options.__isset.ignore_runtime_filter_error
+                       ? _query_options.ignore_runtime_filter_error
+                       : false;
     }
 
     // global runtime filter mgr, the runtime filter have remote target or
@@ -230,17 +235,18 @@ public:
     // MemTracker that is shared by all fragment instances running on this host.
     std::shared_ptr<MemTrackerLimiter> query_mem_tracker;
 
-    std::vector<TUniqueId> fragment_instance_ids;
-
     // plan node id -> TFileScanRangeParams
     // only for file scan node
     std::map<int, TFileScanRangeParams> file_scan_range_params_map;
 
-    void update_wg_cpu_adder(int64_t delta_cpu_time) {
+    void update_cpu_time(int64_t delta_cpu_time) {
         if (_workload_group != nullptr) {
-            _workload_group->update_cpu_adder(delta_cpu_time);
+            _workload_group->update_cpu_time(delta_cpu_time);
         }
     }
+
+    void set_load_error_url(std::string error_url);
+    std::string get_load_error_url();
 
 private:
     int _timeout_second;
@@ -318,6 +324,9 @@ private:
 
     std::unordered_map<int, std::vector<std::shared_ptr<TRuntimeProfileTree>>>
     _collect_realtime_query_profile() const;
+
+    std::mutex _error_url_lock;
+    std::string _load_error_url;
 
 public:
     // when fragment of pipeline is closed, it will register its profile to this map by using add_fragment_profile

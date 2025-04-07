@@ -713,10 +713,12 @@ Status CsvReader::_fill_empty_line(Block* block, std::vector<MutableColumnPtr>& 
 }
 
 Status CsvReader::_validate_line(const Slice& line, bool* success) {
-    if (!_is_proto_format && !validate_utf8(line.data, line.size)) {
+    if (!_is_proto_format && !validate_utf8(_params, line.data, line.size)) {
         if (!_is_load) {
             return Status::InternalError<false>("Only support csv data in utf8 codec");
         } else {
+            _counter->num_rows_filtered++;
+            *success = false;
             RETURN_IF_ERROR(_state->append_error_msg_to_file(
                     [&]() -> std::string { return std::string(line.data, line.size); },
                     [&]() -> std::string {
@@ -725,10 +727,7 @@ Status CsvReader::_validate_line(const Slice& line, bool* success) {
                                        "Unable to display, only support csv data in utf8 codec",
                                        ", please check the data encoding");
                         return fmt::to_string(error_msg);
-                    },
-                    &_line_reader_eof));
-            _counter->num_rows_filtered++;
-            *success = false;
+                    }));
             return Status::OK();
         }
     }
@@ -752,6 +751,8 @@ Status CsvReader::_line_split_to_values(const Slice& line, bool* success) {
             (ignore_col && _split_values.size() < _file_slot_descs.size())) {
             std::string cmp_str =
                     _split_values.size() > _file_slot_descs.size() ? "more than" : "less than";
+            _counter->num_rows_filtered++;
+            *success = false;
             RETURN_IF_ERROR(_state->append_error_msg_to_file(
                     [&]() -> std::string { return std::string(line.data, line.size); },
                     [&]() -> std::string {
@@ -775,10 +776,7 @@ Status CsvReader::_line_split_to_values(const Slice& line, bool* success) {
                         }
                         fmt::format_to(error_msg, "result values:[{}]", fmt::to_string(values));
                         return fmt::to_string(error_msg);
-                    },
-                    &_line_reader_eof));
-            _counter->num_rows_filtered++;
-            *success = false;
+                    }));
             return Status::OK();
         }
     }
@@ -801,6 +799,8 @@ Status CsvReader::_check_array_format(std::vector<Slice>& split_values, bool* is
         }
         const Slice& value = split_values[j];
         if (slot_desc->type().is_array_type() && !_is_null(value) && !_is_array(value)) {
+            _counter->num_rows_filtered++;
+            *is_success = false;
             RETURN_IF_ERROR(_state->append_error_msg_to_file(
                     [&]() -> std::string { return std::string(value.data, value.size); },
                     [&]() -> std::string {
@@ -808,10 +808,7 @@ Status CsvReader::_check_array_format(std::vector<Slice>& split_values, bool* is
                         fmt::format_to(err_msg, "Invalid format for array column({})",
                                        slot_desc->col_name());
                         return fmt::to_string(err_msg);
-                    },
-                    &_line_reader_eof));
-            _counter->num_rows_filtered++;
-            *is_success = false;
+                    }));
             return Status::OK();
         }
     }
@@ -928,9 +925,13 @@ Status CsvReader::_prepare_parse(size_t* read_line, bool* is_parse_name) {
                 _trim_tailing_spaces, _trim_double_quotes, _value_separator,
                 _value_separator_length);
     } else {
+        // If we pass `_file_slot_descs.size() - 1` to EncloseCsvTextFieldSplitter, it will cause BE core dump
+        // because currently _file_slot_descs is an empty vector.
+        // The _file_slot_descs.size() is only used to reserve space,
+        // so it's ok to pass 0 to EncloseCsvLineReaderContext
         text_line_reader_ctx = std::make_shared<EncloseCsvLineReaderContext>(
                 _line_delimiter, _line_delimiter_length, _value_separator, _value_separator_length,
-                _file_slot_descs.size() - 1, _enclose, _escape, _keep_cr);
+                0, _enclose, _escape, _keep_cr);
         _fields_splitter = std::make_unique<EncloseCsvTextFieldSplitter>(
                 _trim_tailing_spaces, false,
                 std::static_pointer_cast<EncloseCsvLineReaderContext>(text_line_reader_ctx),
@@ -950,7 +951,7 @@ Status CsvReader::_parse_col_nums(size_t* col_nums) {
         return Status::InternalError<false>(
                 "The first line is empty, can not parse column numbers");
     }
-    if (!validate_utf8(const_cast<char*>(reinterpret_cast<const char*>(ptr)), size)) {
+    if (!validate_utf8(_params, const_cast<char*>(reinterpret_cast<const char*>(ptr)), size)) {
         return Status::InternalError<false>("Only support csv data in utf8 codec");
     }
     ptr = _remove_bom(ptr, size);
@@ -967,7 +968,7 @@ Status CsvReader::_parse_col_names(std::vector<std::string>* col_names) {
     if (size == 0) {
         return Status::InternalError<false>("The first line is empty, can not parse column names");
     }
-    if (!validate_utf8(const_cast<char*>(reinterpret_cast<const char*>(ptr)), size)) {
+    if (!validate_utf8(_params, const_cast<char*>(reinterpret_cast<const char*>(ptr)), size)) {
         return Status::InternalError<false>("Only support csv data in utf8 codec");
     }
     ptr = _remove_bom(ptr, size);

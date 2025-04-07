@@ -195,6 +195,21 @@ public class CreateTableInfo {
         this.clusterKeysColumnNames = Utils.copyRequiredList(clusterKeyColumnNames);
     }
 
+    /**
+     * withTableNameAndIfNotExists
+     */
+    public CreateTableInfo withTableNameAndIfNotExists(String tableName, boolean ifNotExists) {
+        if (ctasColumns != null) {
+            return new CreateTableInfo(ifNotExists, isExternal, ctlName, dbName, tableName, ctasColumns, engineName,
+                    keysType, keys, comment, partitionTableInfo, distribution, rollups, properties, extProperties,
+                    clusterKeysColumnNames);
+        } else {
+            return new CreateTableInfo(ifNotExists, isExternal, ctlName, dbName, tableName, columns, indexes,
+                    engineName, keysType, keys, comment, partitionTableInfo, distribution, rollups, properties,
+                    extProperties, clusterKeysColumnNames);
+        }
+    }
+
     public List<String> getCtasColumns() {
         return ctasColumns;
     }
@@ -307,6 +322,11 @@ public class CreateTableInfo {
                 throw new AnalysisException(
                         "Disable to create table column with name start with __DORIS_: " + columnNameUpperCase);
             }
+            if (columnDef.getType().isVariantType() && columnNameUpperCase.indexOf('.') != -1) {
+                throw new AnalysisException(
+                        "Disable to create table of `VARIANT` type column named with a `.` character: "
+                                + columnNameUpperCase);
+            }
             if (columnDef.getType().isDateType() && Config.disable_datev1) {
                 throw new AnalysisException(
                         "Disable to create table with `DATE` type columns, please use `DATEV2`.");
@@ -371,8 +391,7 @@ public class CreateTableInfo {
                                 }
                                 break;
                             }
-                            if (type.isFloatLikeType() || type.isStringType() || type.isJsonType()
-                                    || catalogType.isComplexType() || catalogType.isVariantType()) {
+                            if (!catalogType.couldBeShortKey()) {
                                 break;
                             }
                             keys.add(column.getName());
@@ -777,6 +796,10 @@ public class CreateTableInfo {
             }
         }
 
+        if (!clusterKeysColumnNames.isEmpty()) {
+            // forbid cluster key in 3.0 temporarily
+            throw new AnalysisException("Cluster key is not supported");
+        }
         if (!clusterKeysColumnNames.isEmpty()) {
             // the same code as KeysDesc#analyzeClusterKeys
             if (Config.isCloudMode()) {

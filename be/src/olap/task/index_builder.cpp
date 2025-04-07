@@ -81,7 +81,7 @@ Status IndexBuilder::update_inverted_index_info() {
         TabletSchemaSPtr output_rs_tablet_schema = std::make_shared<TabletSchema>();
         const auto& input_rs_tablet_schema = input_rowset->tablet_schema();
         output_rs_tablet_schema->copy_from(*input_rs_tablet_schema);
-        size_t total_index_size = 0;
+        int64_t total_index_size = 0;
         auto* beta_rowset = reinterpret_cast<BetaRowset*>(input_rowset.get());
         auto size_st = beta_rowset->get_inverted_index_size(&total_index_size);
         DBUG_EXECUTE_IF("IndexBuilder::update_inverted_index_info_size_st_not_ok", {
@@ -166,7 +166,6 @@ Status IndexBuilder::update_inverted_index_info() {
                     LOG(WARNING) << "referenced column was missing. "
                                  << "[column=" << t_inverted_index.columns[0]
                                  << " referenced_column=" << column_uid << "]";
-                    output_rs_tablet_schema->append_index(std::move(index));
                     continue;
                 }
                 const TabletColumn& col = output_rs_tablet_schema->column_by_uid(column_uid);
@@ -449,14 +448,13 @@ Status IndexBuilder::handle_single_rowset(RowsetMetaSharedPtr output_rowset_meta
                 }
             }
 
-            if (return_columns.empty()) {
-                // no columns to read
-                break;
-            }
-
+            // DO NOT forget inverted_index_file_writer for the segment, otherwise, original inverted index will be deleted.
             _inverted_index_file_writers.emplace(seg_ptr->id(),
                                                  std::move(inverted_index_file_writer));
-
+            if (return_columns.empty()) {
+                // no columns to read
+                continue;
+            }
             // create iterator for each segment
             StorageReadOptions read_options;
             OlapReaderStatistics stats;
@@ -613,17 +611,14 @@ Status IndexBuilder::_add_nullable(const std::string& column_name,
         // [size, offset_ptr, item_data_ptr, item_nullmap_ptr]
         const auto* data_ptr = reinterpret_cast<const uint64_t*>(*ptr);
         // total number length
-        auto element_cnt = size_t((unsigned long)(*data_ptr));
         auto offset_data = *(data_ptr + 1);
         const auto* offsets_ptr = (const uint8_t*)offset_data;
         try {
-            if (element_cnt > 0) {
-                auto data = *(data_ptr + 2);
-                auto nested_null_map = *(data_ptr + 3);
-                RETURN_IF_ERROR(_inverted_index_builders[index_writer_sign]->add_array_values(
-                        field->get_sub_field(0)->size(), reinterpret_cast<const void*>(data),
-                        reinterpret_cast<const uint8_t*>(nested_null_map), offsets_ptr, num_rows));
-            }
+            auto data = *(data_ptr + 2);
+            auto nested_null_map = *(data_ptr + 3);
+            RETURN_IF_ERROR(_inverted_index_builders[index_writer_sign]->add_array_values(
+                    field->get_sub_field(0)->size(), reinterpret_cast<const void*>(data),
+                    reinterpret_cast<const uint8_t*>(nested_null_map), offsets_ptr, num_rows));
             DBUG_EXECUTE_IF("IndexBuilder::_add_nullable_add_array_values_error", {
                 _CLTHROWA(CL_ERR_IO, "debug point: _add_nullable_add_array_values_error");
             })
@@ -844,10 +839,12 @@ Status IndexBuilder::modify_rowsets(const Merger::Statistics* stats) {
         RETURN_IF_ERROR(_tablet->modify_rowsets(_output_rowsets, _input_rowsets, true));
     }
 
+#ifndef BE_TEST
     {
         std::shared_lock rlock(_tablet->get_header_lock());
         _tablet->save_meta();
     }
+#endif
     return Status::OK();
 }
 

@@ -24,7 +24,6 @@ import org.apache.doris.common.ErrorCode;
 import org.apache.doris.common.ErrorReport;
 import org.apache.doris.common.UserException;
 import org.apache.doris.common.util.InternalDatabaseUtil;
-import org.apache.doris.datasource.InternalCatalog;
 import org.apache.doris.mysql.privilege.PrivPredicate;
 import org.apache.doris.qe.ConnectContext;
 
@@ -74,13 +73,12 @@ public class DropDbStmt extends DdlStmt implements NotFallbackInParser {
             ErrorReport.reportAnalysisException(ErrorCode.ERR_DBACCESS_DENIED_ERROR,
                     analyzer.getQualifiedUser(), dbName);
         }
-
+        String effectiveCatalog = StringUtils.isEmpty(ctlName) ? ConnectContext.get().getCurrentCatalog().getName()
+                : ctlName;
         if (!Env.getCurrentEnv().getAccessManager()
-                .checkDbPriv(ConnectContext.get(),
-                        StringUtils.isEmpty(ctlName) ? InternalCatalog.INTERNAL_CATALOG_NAME : ctlName, dbName,
-                        PrivPredicate.DROP)) {
+                .checkDbPriv(ConnectContext.get(), effectiveCatalog, dbName, PrivPredicate.DROP)) {
             ErrorReport.reportAnalysisException(ErrorCode.ERR_DBACCESS_DENIED_ERROR,
-                    ConnectContext.get().getQualifiedUser(), dbName);
+                    ConnectContext.get().getQualifiedUser(), effectiveCatalog + "." + dbName);
         }
     }
 
@@ -88,6 +86,9 @@ public class DropDbStmt extends DdlStmt implements NotFallbackInParser {
     public String toSql() {
         StringBuilder stringBuilder = new StringBuilder();
         stringBuilder.append("DROP DATABASE ").append("`").append(dbName).append("`");
+        if (forceDrop) {
+            stringBuilder.append(" FORCE");
+        }
         return stringBuilder.toString();
     }
 

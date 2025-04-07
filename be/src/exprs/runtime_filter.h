@@ -212,8 +212,7 @@ public:
 
     static Status create(RuntimeFilterParamsContext* state, const TRuntimeFilterDesc* desc,
                          const TQueryOptions* query_options, const RuntimeFilterRole role,
-                         int node_id, std::shared_ptr<IRuntimeFilter>* res,
-                         bool build_bf_exactly = false);
+                         int node_id, std::shared_ptr<IRuntimeFilter>* res);
 
     RuntimeFilterContextSPtr& get_shared_context_ref();
 
@@ -222,7 +221,7 @@ public:
 
     // publish filter
     // push filter to remote node or push down it to scan_node
-    Status publish(bool publish_local = false);
+    Status publish(RuntimeState* state, bool publish_local = false);
 
     Status send_filter_size(RuntimeState* state, uint64_t local_filter_size);
 
@@ -259,7 +258,7 @@ public:
 
     // init filter with desc
     Status init_with_desc(const TRuntimeFilterDesc* desc, const TQueryOptions* options,
-                          int node_id = -1, bool build_bf_exactly = false);
+                          int node_id = -1);
 
     // serialize _wrapper to protobuf
     Status serialize(PMergeFilterRequest* request, void** data, int* len);
@@ -277,26 +276,29 @@ public:
                                  std::shared_ptr<RuntimePredicateWrapper>* wrapper);
     Status change_to_bloom_filter();
     Status init_bloom_filter(const size_t build_bf_cardinality);
-    Status update_filter(const UpdateRuntimeFilterParams* param);
     void update_filter(std::shared_ptr<RuntimePredicateWrapper> filter_wrapper, int64_t merge_time,
-                       int64_t start_apply);
+                       int64_t start_apply, uint64_t local_merge_time);
 
     void set_ignored();
 
     bool get_ignored();
+
+    void set_disabled();
+    bool get_disabled() const;
 
     RuntimeFilterType get_real_type();
 
     bool need_sync_filter_size();
 
     // async push runtimefilter to remote node
-    Status push_to_remote(const TNetworkAddress* addr);
+    Status push_to_remote(RuntimeState* state, const TNetworkAddress* addr,
+                          uint64_t local_merge_time);
 
     void init_profile(RuntimeProfile* parent_profile);
 
     std::string debug_string() const;
 
-    void update_runtime_filter_type_to_profile();
+    void update_runtime_filter_type_to_profile(uint64_t local_merge_time);
 
     int filter_id() const { return _filter_id; }
 
@@ -413,6 +415,7 @@ protected:
     // parent profile
     // only effect on consumer
     std::unique_ptr<RuntimeProfile> _profile;
+    RuntimeProfile::Counter* _wait_timer = nullptr;
 
     std::vector<std::shared_ptr<pipeline::RuntimeFilterTimer>> _filter_timer;
 

@@ -87,8 +87,11 @@ private:
 
     size_t ALWAYS_INLINE offset_at(ssize_t i) const { return offsets[i - 1]; }
 
-    /// Size of i-th element, including terminating zero.
-    size_t ALWAYS_INLINE size_at(ssize_t i) const { return offsets[i] - offsets[i - 1]; }
+    // Size of i-th element, including terminating zero.
+    // assume that the length of a single element is less than 32-bit
+    uint32_t ALWAYS_INLINE size_at(ssize_t i) const {
+        return uint32_t(offsets[i] - offsets[i - 1]);
+    }
 
     template <bool positive>
     struct less;
@@ -163,6 +166,8 @@ public:
         sanity_check_simple();
     }
 
+    void insert_many_from(const IColumn& src, size_t position, size_t length) override;
+
     bool is_column_string64() const override { return sizeof(T) == sizeof(uint64_t); }
 
     void insert_from(const IColumn& src_, size_t n) override {
@@ -219,6 +224,7 @@ public:
     void insert_many_strings_without_reserve(const StringRef* strings, size_t num) {
         Char* data = chars.data();
         size_t offset = chars.size();
+        data += offset;
         size_t length = 0;
 
         const char* ptr = strings[0].data;
@@ -381,7 +387,7 @@ public:
 
         for (size_t i = start_index; i < start_index + num; i++) {
             int32_t codeword = data_array[i];
-            auto& src = dict[codeword];
+            const auto& src = dict[codeword];
             memcpy(chars.data() + old_size, src.data, src.size);
             old_size += src.size;
         }

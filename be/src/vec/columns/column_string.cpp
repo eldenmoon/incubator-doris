@@ -121,9 +121,9 @@ void ColumnStr<T>::insert_range_from_ignore_overflow(const doris::vectorized::IC
 
     const auto& src_concrete = assert_cast<const ColumnStr<T>&>(src);
     if (start + length > src_concrete.offsets.size()) {
-        throw doris::Exception(
-                doris::ErrorCode::INTERNAL_ERROR,
-                "Parameter out of bound in IColumnStr<T>::insert_range_from method.");
+        throw doris::Exception(doris::ErrorCode::INTERNAL_ERROR,
+                               "Parameter out of bound in "
+                               "IColumnStr<T>::insert_range_from_ignore_overflow method.");
     }
 
     size_t nested_offset = src_concrete.offset_at(start);
@@ -202,6 +202,28 @@ void ColumnStr<T>::insert_range_from(const IColumn& src, size_t start, size_t le
 }
 
 template <typename T>
+void ColumnStr<T>::insert_many_from(const IColumn& src, size_t position, size_t length) {
+    const auto& string_column = assert_cast<const ColumnStr<T>&>(src);
+    auto [data_val, data_length] = string_column.get_data_at(position);
+
+    size_t old_chars_size = chars.size();
+    check_chars_length(old_chars_size + data_length * length, offsets.size() + length);
+    chars.resize(old_chars_size + data_length * length);
+
+    auto old_size = offsets.size();
+    offsets.resize(old_size + length);
+
+    auto start_pos = old_size;
+    auto end_pos = old_size + length;
+    auto prev_pos = old_chars_size;
+    for (; start_pos < end_pos; ++start_pos) {
+        memcpy(&chars[prev_pos], data_val, data_length);
+        offsets[start_pos] = prev_pos + data_length;
+        prev_pos = prev_pos + data_length;
+    }
+}
+
+template <typename T>
 void ColumnStr<T>::insert_indices_from(const IColumn& src, const uint32_t* indices_begin,
                                        const uint32_t* indices_end) {
     auto do_insert = [&](const auto& src_str) {
@@ -270,11 +292,11 @@ void ColumnStr<T>::update_crcs_with_value(uint32_t* __restrict hashes, doris::Pr
 
 template <typename T>
 ColumnPtr ColumnStr<T>::filter(const IColumn::Filter& filt, ssize_t result_size_hint) const {
-    if (offsets.size() == 0) {
-        return ColumnStr<T>::create();
-    }
-
     if constexpr (std::is_same_v<UInt32, T>) {
+        if (offsets.size() == 0) {
+            return ColumnStr<T>::create();
+        }
+
         auto res = ColumnStr<T>::create();
         Chars& res_chars = res->chars;
         IColumn::Offsets& res_offsets = res->offsets;
@@ -290,13 +312,13 @@ ColumnPtr ColumnStr<T>::filter(const IColumn::Filter& filt, ssize_t result_size_
 
 template <typename T>
 size_t ColumnStr<T>::filter(const IColumn::Filter& filter) {
-    CHECK_EQ(filter.size(), offsets.size());
-    if (offsets.size() == 0) {
-        resize(0);
-        return 0;
-    }
-
     if constexpr (std::is_same_v<UInt32, T>) {
+        CHECK_EQ(filter.size(), offsets.size());
+        if (offsets.size() == 0) {
+            resize(0);
+            return 0;
+        }
+
         auto res = filter_arrays_impl<UInt8, IColumn::Offset>(chars, offsets, filter);
         sanity_check_simple();
         return res;
@@ -382,8 +404,8 @@ ColumnPtr ColumnStr<T>::permute(const IColumn::Permutation& perm, size_t limit) 
 template <typename T>
 StringRef ColumnStr<T>::serialize_value_into_arena(size_t n, Arena& arena,
                                                    char const*& begin) const {
-    uint32_t string_size(size_at(n));
-    uint32_t offset(offset_at(n));
+    auto string_size(size_at(n));
+    auto offset(offset_at(n));
 
     StringRef res;
     res.size = sizeof(string_size) + string_size;
@@ -397,7 +419,7 @@ StringRef ColumnStr<T>::serialize_value_into_arena(size_t n, Arena& arena,
 
 template <typename T>
 const char* ColumnStr<T>::deserialize_and_insert_from_arena(const char* pos) {
-    const uint32_t string_size = unaligned_load<uint32_t>(pos);
+    const auto string_size = unaligned_load<uint32_t>(pos);
     pos += sizeof(string_size);
 
     const size_t old_size = chars.size();
@@ -416,7 +438,7 @@ size_t ColumnStr<T>::get_max_row_byte_size() const {
     size_t max_size = 0;
     size_t num_rows = offsets.size();
     for (size_t i = 0; i < num_rows; ++i) {
-        max_size = std::max(max_size, size_at(i));
+        max_size = std::max(max_size, size_t(size_at(i)));
     }
 
     return max_size + sizeof(uint32_t);
@@ -426,8 +448,8 @@ template <typename T>
 void ColumnStr<T>::serialize_vec(std::vector<StringRef>& keys, size_t num_rows,
                                  size_t max_row_byte_size) const {
     for (size_t i = 0; i < num_rows; ++i) {
-        uint32_t offset(offset_at(i));
-        uint32_t string_size(size_at(i));
+        auto offset(offset_at(i));
+        auto string_size(size_at(i));
 
         auto* ptr = const_cast<char*>(keys[i].data + keys[i].size);
         memcpy_fixed<uint32_t>(ptr, (char*)&string_size);
@@ -453,7 +475,7 @@ void ColumnStr<T>::serialize_vec_with_null_map(std::vector<StringRef>& keys, siz
                 UInt32 offset(offset_at(i));
                 UInt32 string_size(size_at(i));
 
-                memcpy_fixed<UInt32>(dest + 1, (char*)&string_size);
+                memcpy_fixed<uint32_t>(dest + 1, (char*)&string_size);
                 memcpy(dest + 1 + sizeof(string_size), &chars[offset], string_size);
                 keys[i].size += sizeof(string_size) + string_size + sizeof(UInt8);
             } else {
@@ -470,7 +492,7 @@ void ColumnStr<T>::serialize_vec_with_null_map(std::vector<StringRef>& keys, siz
             UInt32 offset(offset_at(i));
             UInt32 string_size(size_at(i));
 
-            memcpy_fixed<UInt32>(dest + 1, (char*)&string_size);
+            memcpy_fixed<uint32_t>(dest + 1, (char*)&string_size);
             memcpy(dest + 1 + sizeof(string_size), &chars[offset], string_size);
             keys[i].size += sizeof(string_size) + string_size + sizeof(UInt8);
         }
@@ -480,7 +502,7 @@ void ColumnStr<T>::serialize_vec_with_null_map(std::vector<StringRef>& keys, siz
 template <typename T>
 void ColumnStr<T>::deserialize_vec(std::vector<StringRef>& keys, const size_t num_rows) {
     for (size_t i = 0; i != num_rows; ++i) {
-        auto original_ptr = keys[i].data;
+        const auto* original_ptr = keys[i].data;
         keys[i].data = deserialize_and_insert_from_arena(original_ptr);
         keys[i].size -= keys[i].data - original_ptr;
     }
@@ -491,7 +513,7 @@ void ColumnStr<T>::deserialize_vec_with_null_map(std::vector<StringRef>& keys,
                                                  const size_t num_rows, const uint8_t* null_map) {
     for (size_t i = 0; i != num_rows; ++i) {
         if (null_map[i] == 0) {
-            auto original_ptr = keys[i].data;
+            const auto* original_ptr = keys[i].data;
             keys[i].data = deserialize_and_insert_from_arena(original_ptr);
             keys[i].size -= keys[i].data - original_ptr;
         } else {
@@ -614,8 +636,11 @@ void ColumnStr<T>::compare_internal(size_t rhs_row_id, const IColumn& rhs, int n
         size_t end = simd::find_one(cmp_res, begin + 1);
         for (size_t row_id = begin; row_id < end; row_id++) {
             auto value_a = get_data_at(row_id);
-            int res = memcmp_small_allow_overflow15(value_a.data, value_a.size, cmp_base.data,
-                                                    cmp_base.size);
+            // need to covert to unsigned char, orelse the compare semantic is not consistent
+            // with other member functions, e.g. get_permutation and compare_at,
+            // and will result wrong result.
+            int res = memcmp_small_allow_overflow15((Char*)value_a.data, value_a.size,
+                                                    (Char*)cmp_base.data, cmp_base.size);
             cmp_res[row_id] = res != 0;
             filter[row_id] = res * direction < 0;
         }

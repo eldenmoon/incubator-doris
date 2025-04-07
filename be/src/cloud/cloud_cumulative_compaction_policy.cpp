@@ -31,6 +31,7 @@
 #include "olap/tablet_meta.h"
 
 namespace doris {
+#include "common/compile_check_begin.h"
 
 CloudSizeBasedCumulativeCompactionPolicy::CloudSizeBasedCumulativeCompactionPolicy(
         int64_t promotion_size, double promotion_ratio, int64_t promotion_min_size,
@@ -48,11 +49,32 @@ int64_t CloudSizeBasedCumulativeCompactionPolicy::_level_size(const int64_t size
     return (int64_t)1 << (sizeof(size) * 8 - 1 - __builtin_clzl(size));
 }
 
-int32_t CloudSizeBasedCumulativeCompactionPolicy::pick_input_rowsets(
+int64_t CloudSizeBasedCumulativeCompactionPolicy::pick_input_rowsets(
         CloudTablet* tablet, const std::vector<RowsetSharedPtr>& candidate_rowsets,
         const int64_t max_compaction_score, const int64_t min_compaction_score,
         std::vector<RowsetSharedPtr>* input_rowsets, Version* last_delete_version,
         size_t* compaction_score, bool allow_delete) {
+    DBUG_EXECUTE_IF(
+            "CloudSizeBasedCumulativeCompactionPolicy::pick_input_rowsets.set_input_rowsets", {
+                auto target_tablet_id = dp->param<int64_t>("tablet_id", -1);
+                if (target_tablet_id == tablet->tablet_id()) {
+                    auto start_version = dp->param<int64_t>("start_version", -1);
+                    auto end_version = dp->param<int64_t>("end_version", -1);
+                    for (auto& rowset : candidate_rowsets) {
+                        if (rowset->start_version() >= start_version &&
+                            rowset->end_version() <= end_version) {
+                            input_rowsets->push_back(rowset);
+                        }
+                    }
+                    LOG_INFO(
+                            "[CloudSizeBasedCumulativeCompactionPolicy::pick_input_rowsets.set_"
+                            "input_rowsets] tablet_id={}, start={}, end={}, "
+                            "input_rowsets->size()={}",
+                            target_tablet_id, start_version, end_version, input_rowsets->size());
+                    return input_rowsets->size();
+                }
+            })
+
     size_t promotion_size = cloud_promotion_size(tablet);
     auto max_version = tablet->max_version().first;
     int transient_size = 0;
@@ -114,8 +136,8 @@ int32_t CloudSizeBasedCumulativeCompactionPolicy::pick_input_rowsets(
     size_t new_compaction_score = *compaction_score;
     while (rs_begin != input_rowsets->end()) {
         auto& rs_meta = (*rs_begin)->rowset_meta();
-        int current_level = _level_size(rs_meta->total_disk_size());
-        int remain_level = _level_size(total_size - rs_meta->total_disk_size());
+        int64_t current_level = _level_size(rs_meta->total_disk_size());
+        int64_t remain_level = _level_size(total_size - rs_meta->total_disk_size());
         // if current level less then remain level, input rowsets contain current rowset
         // and process return; otherwise, input rowsets do not contain current rowset.
         if (current_level <= remain_level) {
@@ -185,7 +207,7 @@ int32_t CloudSizeBasedCumulativeCompactionPolicy::pick_input_rowsets(
 }
 
 int64_t CloudSizeBasedCumulativeCompactionPolicy::cloud_promotion_size(CloudTablet* t) const {
-    int64_t promotion_size = int64_t(t->base_size() * _promotion_ratio);
+    int64_t promotion_size = int64_t(static_cast<double>(t->base_size()) * _promotion_ratio);
     // promotion_size is between _size_based_promotion_size and _size_based_promotion_min_size
     return promotion_size > _promotion_size       ? _promotion_size
            : promotion_size < _promotion_min_size ? _promotion_min_size
@@ -207,15 +229,14 @@ int64_t CloudSizeBasedCumulativeCompactionPolicy::new_cumulative_point(
                                              config::compaction_promotion_version_count;
     // if rowsets have delete version, move to the last directly.
     // if rowsets have no delete version, check output_rowset total disk size satisfies promotion size.
-    return output_rowset->start_version() == last_cumulative_point &&
-                           (last_delete_version.first != -1 ||
-                            output_rowset->total_disk_size() >= cloud_promotion_size(tablet) ||
-                            satisfy_promotion_version)
+    return (last_delete_version.first != -1 ||
+            output_rowset->total_disk_size() >= cloud_promotion_size(tablet) ||
+            satisfy_promotion_version)
                    ? output_rowset->end_version() + 1
                    : last_cumulative_point;
 }
 
-int32_t CloudTimeSeriesCumulativeCompactionPolicy::pick_input_rowsets(
+int64_t CloudTimeSeriesCumulativeCompactionPolicy::pick_input_rowsets(
         CloudTablet* tablet, const std::vector<RowsetSharedPtr>& candidate_rowsets,
         const int64_t max_compaction_score, const int64_t min_compaction_score,
         std::vector<RowsetSharedPtr>* input_rowsets, Version* last_delete_version,
@@ -377,4 +398,5 @@ int64_t CloudTimeSeriesCumulativeCompactionPolicy::new_cumulative_point(
     return output_rowset->end_version() + 1;
 }
 
+#include "common/compile_check_end.h"
 } // namespace doris

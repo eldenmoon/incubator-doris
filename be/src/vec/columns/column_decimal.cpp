@@ -100,12 +100,10 @@ void ColumnDecimal<T>::serialize_vec_with_null_map(std::vector<StringRef>& keys,
         }
     } else {
         for (size_t i = 0; i < num_rows; ++i) {
-            if (null_map[i] == 0) {
-                char* __restrict dest = const_cast<char*>(keys[i].data + +keys[i].size);
-                memset(dest, 0, 1);
-                memcpy_fixed<T>(dest + 1, (char*)&data[i]);
-                keys[i].size += sizeof(T) + sizeof(UInt8);
-            }
+            char* __restrict dest = const_cast<char*>(keys[i].data + +keys[i].size);
+            memset(dest, 0, 1);
+            memcpy_fixed<T>(dest + 1, (char*)&data[i]);
+            keys[i].size += sizeof(T) + sizeof(UInt8);
         }
     }
 }
@@ -298,6 +296,14 @@ void ColumnDecimal<T>::insert_many_fix_len_data(const char* data_ptr, size_t num
     } else {
         memcpy(data.data() + old_size, data_ptr, num * sizeof(T));
     }
+}
+
+template <typename T>
+void ColumnDecimal<T>::insert_many_from(const IColumn& src, size_t position, size_t length) {
+    auto old_size = data.size();
+    data.resize(old_size + length);
+    auto& vals = assert_cast<const Self&>(src).get_data();
+    std::fill(&data[old_size], &data[old_size + length], vals[position]);
 }
 
 template <typename T>

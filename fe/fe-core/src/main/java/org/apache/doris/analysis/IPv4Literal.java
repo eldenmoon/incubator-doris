@@ -115,7 +115,7 @@ public class IPv4Literal extends LiteralExpr {
 
     @Override
     protected String toSqlImpl() {
-        return getStringValue();
+        return "\"" + getStringValue() + "\"";
     }
 
     @Override
@@ -130,8 +130,18 @@ public class IPv4Literal extends LiteralExpr {
     }
 
     @Override
-    public int compareLiteral(LiteralExpr expr) {
-        return 0;
+    public int compareLiteral(LiteralExpr other) {
+        if (other instanceof IPv4Literal) {
+            return Long.compare(value, ((IPv4Literal) other).value);
+        }
+        if (other instanceof NullLiteral) {
+            return 1;
+        }
+        if (other instanceof MaxLiteral) {
+            return -1;
+        }
+        throw new RuntimeException("Cannot compare two values with different data types: "
+                + this + " (" + getClass() + ") vs " + other + " (" + other.getClass() + ")");
     }
 
     @Override

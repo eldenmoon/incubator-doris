@@ -65,11 +65,16 @@ excludeGroups = ""
 excludeSuites = "000_the_start_sentinel_do_not_touch," + // keep this line as the first line
     "test_dump_image," +
     "test_index_failure_injection," +
+    "test_compaction_uniq_cluster_keys_with_delete," +
+    "test_compaction_uniq_keys_cluster_key," +
+    "test_pk_uk_case_cluster," +
+    "test_point_query_ck," +
+    "test_rowstore_ck," +
+    "test_point_query_partition_ck," +
     "test_profile," +
     "test_refresh_mtmv," +
     "test_spark_load," +
     "test_broker_load_func," +
-    "test_stream_stub_fault_injection," +
     "test_index_compaction_failure_injection," +
     "test_full_compaction_run_status," +
     "test_topn_fault_injection," + 
@@ -80,7 +85,9 @@ excludeDirectories = "000_the_start_sentinel_do_not_touch," + // keep this line 
     "cloud," +
     "cloud_p0," +
     "nereids_rules_p0/subquery," +
+    "unique_with_mow_c_p0," +
     "workload_manager_p1," +
+    "plsql_p0," + // plsql is not developped any more
     "zzz_the_end_sentinel_do_not_touch"// keep this line as the last line
 
 customConf1 = "test_custom_conf_value"
@@ -137,7 +144,8 @@ es_8_port=39200
 
 cacheDataPath = "/data/regression/"
 
-s3Source="aliyun"
+s3Source = "aliyun"
+s3Endpoint = "oss-cn-hongkong-internal.aliyuncs.com"
 
 //arrow flight sql test config
 extArrowFlightSqlHost = "127.0.0.1"

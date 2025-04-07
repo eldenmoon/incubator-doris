@@ -35,11 +35,13 @@
 #include "common/consts.h"
 #include "common/status.h"
 #include "gutil/stringprintf.h"
+#include "olap/metadata_adder.h"
 #include "olap/olap_common.h"
 #include "olap/rowset/segment_v2/options.h"
 #include "runtime/define_primitive_type.h"
 #include "runtime/descriptors.h"
 #include "runtime/memory/lru_cache_policy.h"
+#include "util/debug_points.h"
 #include "util/string_util.h"
 #include "vec/aggregate_functions/aggregate_function.h"
 #include "vec/common/string_ref.h"
@@ -61,7 +63,7 @@ class TabletColumn;
 
 using TabletColumnPtr = std::shared_ptr<TabletColumn>;
 
-class TabletColumn {
+class TabletColumn : public MetadataAdder<TabletColumn> {
 public:
     TabletColumn();
     TabletColumn(const ColumnPB& column);
@@ -252,7 +254,7 @@ bool operator!=(const TabletColumn& a, const TabletColumn& b);
 
 class TabletSchema;
 
-class TabletIndex {
+class TabletIndex : public MetadataAdder<TabletIndex> {
 public:
     TabletIndex() = default;
     void init_from_thrift(const TOlapTableIndex& index, const TabletSchema& tablet_schema);
@@ -294,7 +296,7 @@ private:
     std::map<string, string> _properties;
 };
 
-class TabletSchema {
+class TabletSchema : public MetadataAdder<TabletSchema> {
 public:
     enum ColumnType { NORMAL = 0, DROPPED = 1, VARIANT = 2 };
     // TODO(yingchun): better to make constructor as private to avoid
@@ -328,12 +330,12 @@ public:
     // Must make sure the row column is always the last column
     void add_row_column();
     void copy_from(const TabletSchema& tablet_schema);
+    // lightweight copy, take care of lifecycle of TabletColumn
+    void shawdow_copy_without_columns(const TabletSchema& tablet_schema);
     void update_index_info_from(const TabletSchema& tablet_schema);
     std::string to_key() const;
-    // Don't use.
-    // TODO: memory size of TabletSchema cannot be accurately tracked.
-    // In some places, temporarily use num_columns() as TabletSchema size.
-    int64_t mem_size() const { return _mem_size; }
+    // get_metadata_size is only the memory of the TabletSchema itself, not include child objects.
+    int64_t mem_size() const { return get_metadata_size(); }
     size_t row_size() const;
     int32_t field_index(const std::string& field_name) const;
     int32_t field_index(const vectorized::PathInData& path) const;
@@ -342,6 +344,7 @@ public:
     Result<const TabletColumn*> column(const std::string& field_name) const;
     Status have_column(const std::string& field_name) const;
     bool exist_column(const std::string& field_name) const;
+    bool has_column_unique_id(int32_t col_unique_id) const;
     const TabletColumn& column_by_uid(int32_t col_unique_id) const;
     TabletColumn& mutable_column_by_uid(int32_t col_unique_id);
     TabletColumn& mutable_column(size_t ordinal);
@@ -390,6 +393,8 @@ public:
     segment_v2::CompressionTypePB compression_type() const { return _compression_type; }
     void set_row_store_page_size(long page_size) { _row_store_page_size = page_size; }
     long row_store_page_size() const { return _row_store_page_size; }
+    void set_storage_page_size(long storage_page_size) { _storage_page_size = storage_page_size; }
+    long storage_page_size() const { return _storage_page_size; }
 
     const std::vector<const TabletIndex*> inverted_indexes() const {
         std::vector<const TabletIndex*> inverted_indexes;
@@ -402,8 +407,17 @@ public:
     }
     bool has_inverted_index() const {
         for (const auto& index : _indexes) {
+            DBUG_EXECUTE_IF("tablet_schema::has_inverted_index", {
+                if (index.col_unique_ids().empty()) {
+                    throw Exception(Status::InternalError("col unique ids cannot be empty"));
+                }
+            });
+
             if (index.index_type() == IndexType::INVERTED) {
-                return true;
+                //if index_id == -1, ignore it.
+                if (!index.col_unique_ids().empty() && index.col_unique_ids()[0] >= 0) {
+                    return true;
+                }
             }
         }
         return false;
@@ -522,9 +536,12 @@ public:
 
     const std::vector<int32_t>& row_columns_uids() const { return _row_store_column_unique_ids; }
 
+    int64_t get_metadata_size() const override;
+
 private:
     friend bool operator==(const TabletSchema& a, const TabletSchema& b);
     friend bool operator!=(const TabletSchema& a, const TabletSchema& b);
+    TabletSchema(const TabletSchema&) = default;
 
     void clear_column_cache_handlers();
 
@@ -549,6 +566,7 @@ private:
     CompressKind _compress_kind = COMPRESS_NONE;
     segment_v2::CompressionTypePB _compression_type = segment_v2::CompressionTypePB::LZ4F;
     long _row_store_page_size = segment_v2::ROW_STORE_PAGE_SIZE_DEFAULT_VALUE;
+    long _storage_page_size = segment_v2::STORAGE_PAGE_SIZE_DEFAULT_VALUE;
     size_t _next_column_unique_id = 0;
     std::string _auto_increment_column;
 
@@ -563,7 +581,6 @@ private:
     int64_t _db_id = -1;
     bool _disable_auto_compaction = false;
     bool _enable_single_replica_compaction = false;
-    int64_t _mem_size = 0;
     bool _store_row_column = false;
     bool _skip_write_index_on_load = false;
     InvertedIndexStorageFormatPB _inverted_index_storage_format = InvertedIndexStorageFormatPB::V1;
@@ -572,6 +589,7 @@ private:
     // ATTN: For compability reason empty cids means all columns of tablet schema are encoded to row column
     std::vector<int32_t> _row_store_column_unique_ids;
     bool _variant_enable_flatten_nested = false;
+    int64_t _vl_field_mem_size {0}; // variable length field
 };
 
 bool operator==(const TabletSchema& a, const TabletSchema& b);

@@ -110,6 +110,16 @@ public class RoutineLoadManager implements Writable {
     public RoutineLoadManager() {
     }
 
+    public List<RoutineLoadJob> getAllRoutineLoadJobs() {
+        return new ArrayList<>(idToRoutineLoadJob.values());
+    }
+
+    public List<RoutineLoadJob> getActiveRoutineLoadJobs() {
+        return idToRoutineLoadJob.values().stream()
+                .filter(job -> !job.state.isFinalState())
+                .collect(Collectors.toList());
+    }
+
     public void addMultiLoadTaskTxnIdToRoutineLoadJobId(long txnId, long routineLoadJobId) {
         multiLoadTaskTxnIdToRoutineLoadJobId.put(txnId, routineLoadJobId);
     }
@@ -487,6 +497,7 @@ public class RoutineLoadManager implements Writable {
         // check if be has idle slot
         readLock();
         try {
+            updateBeIdToMaxConcurrentTasks();
             Map<Long, Integer> beIdToConcurrentTasks = getBeCurrentTasksNumMap();
             int previousBeIdleTaskNum = 0;
 

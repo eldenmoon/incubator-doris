@@ -858,6 +858,7 @@ nonterminal String opt_job_ends;
 nonterminal String job_at_time;
 nonterminal ColocateGroupName colocate_group_name;
 nonterminal TableScanParams opt_scan_params_ref;
+nonterminal String opt_profile_path;
 
 nonterminal LoadTask.MergeType opt_merge_type, opt_with_merge_type;
 
@@ -1013,6 +1014,8 @@ nonterminal List<Expr> copy_select_expr_list;
 
 //genearted column
 nonterminal Boolean opt_generated_always;
+
+nonterminal Boolean opt_detailed;
 
 precedence nonassoc COMMA;
 precedence nonassoc STRING_LITERAL;
@@ -1541,6 +1544,14 @@ quantity ::=
     | ident:number_unit
     {:
         RESULT = number_unit;
+    :}
+    ;
+
+opt_profile_path ::=
+    /* empty */
+    | STRING_LITERAL:queryIdPath
+    {:
+        RESULT = queryIdPath;
     :}
     ;
 
@@ -3675,6 +3686,20 @@ partition_key_item_list ::=
     {:
         RESULT = Lists.newArrayList(new PartitionValue("", true));
     :}
+    | partition_key_item_list:l COMMA KW_NULL
+    {:
+        l.add(new PartitionValue("", true));
+        RESULT = l;
+    :}
+    | KW_MAX_VALUE
+    {:
+        RESULT = Lists.newArrayList(PartitionValue.MAX_VALUE);
+    :}
+    | partition_key_item_list:l COMMA KW_MAX_VALUE
+    {:
+        l.add(PartitionValue.MAX_VALUE);
+        RESULT = l;
+    :}
     ;
 
 partition_key_list ::=
@@ -4493,13 +4518,13 @@ show_param ::=
         RESULT = new ShowDataSkewStmt(table_ref);
     :}
     /* Show data statement: used to show data size of specified range */
-     | KW_DATA order_by_clause:orderByClause opt_properties:prop
+     | KW_DATA opt_detailed:detailed order_by_clause:orderByClause opt_properties:prop
     {:
-        RESULT = new ShowDataStmt(null, orderByClause, prop);
+        RESULT = new ShowDataStmt(null, orderByClause, prop, detailed);
     :}
-    | KW_DATA KW_FROM table_name:dbTblName order_by_clause:orderByClause
+    | KW_DATA opt_detailed:detailed KW_FROM table_name:dbTblName order_by_clause:orderByClause
     {:
-        RESULT = new ShowDataStmt(dbTblName, orderByClause, null);
+        RESULT = new ShowDataStmt(dbTblName, orderByClause, null, detailed);
     :}
     | opt_tmp:tmp KW_PARTITIONS KW_FROM table_name:tblName opt_wild_where order_by_clause:orderByClause limit_clause: limitClause
     {:
@@ -4630,13 +4655,13 @@ show_param ::=
     {:
         RESULT = new ShowTransactionStmt(dbName, parser.where);
     :}
-    | KW_QUERY KW_PROFILE STRING_LITERAL:queryIdPath
+    | KW_QUERY KW_PROFILE opt_profile_path:queryIdPath limit_clause:limitClause
     {:
-        RESULT = new ShowQueryProfileStmt(queryIdPath);
+        RESULT = new ShowQueryProfileStmt(queryIdPath, limitClause);
     :}
-    | KW_LOAD KW_PROFILE STRING_LITERAL:loadIdPath
+    | KW_LOAD KW_PROFILE opt_profile_path:loadIdPath limit_clause:limitClause
     {:
-        RESULT = new ShowLoadProfileStmt(loadIdPath);
+        RESULT = new ShowLoadProfileStmt(loadIdPath, limitClause);
     :}
     | KW_CACHE KW_HOTSPOT STRING_LITERAL:tablePath
     {:
@@ -5060,6 +5085,17 @@ cancel_param ::=
     | KW_WARM KW_UP KW_JOB opt_wild_where
     {:
         RESULT = new CancelCloudWarmUpStmt(parser.where);
+    :}
+    ;
+
+opt_detailed ::=
+     /* empty */
+    {:
+        RESULT = false;
+    :}
+    | KW_ALL
+    {:
+        RESULT = true;
     :}
     ;
 

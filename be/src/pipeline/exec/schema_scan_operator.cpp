@@ -48,7 +48,7 @@ Status SchemaScanLocalState::init(RuntimeState* state, LocalStateInfo& info) {
     // new one scanner
     _schema_scanner = SchemaScanner::create(schema_table->schema_table_type());
 
-    _schema_scanner->set_dependency(_data_dependency, _finish_dependency);
+    _schema_scanner->set_dependency(_data_dependency);
     if (nullptr == _schema_scanner) {
         return Status::InternalError("schema scanner get nullptr pointer.");
     }
@@ -70,7 +70,9 @@ SchemaScanOperatorX::SchemaScanOperatorX(ObjectPool* pool, const TPlanNode& tnod
           _common_scanner_param(new SchemaScannerCommonParam()),
           _tuple_id(tnode.schema_scan_node.tuple_id),
           _tuple_idx(0),
-          _slot_num(0) {}
+          _slot_num(0) {
+    Base::_is_serial_operator = tnode.__isset.is_serial_operator && tnode.is_serial_operator;
+}
 
 Status SchemaScanOperatorX::init(const TPlanNode& tnode, RuntimeState* state) {
     RETURN_IF_ERROR(Base::init(tnode, state));
@@ -266,9 +268,6 @@ Status SchemaScanOperatorX::get_block(RuntimeState* state, vectorized::Block* bl
     } while (block->rows() == 0 && !*eos);
 
     local_state.reached_limit(block, eos);
-    if (*eos) {
-        local_state._finish_dependency->set_always_ready();
-    }
     return Status::OK();
 }
 

@@ -225,6 +225,16 @@ void QueryContext::cancel(Status new_status, int fragment_id) {
     cancel_all_pipeline_context(new_status, fragment_id);
 }
 
+void QueryContext::set_load_error_url(std::string error_url) {
+    std::lock_guard<std::mutex> lock(_error_url_lock);
+    _load_error_url = error_url;
+}
+
+std::string QueryContext::get_load_error_url() {
+    std::lock_guard<std::mutex> lock(_error_url_lock);
+    return _load_error_url;
+}
+
 void QueryContext::cancel_all_pipeline_context(const Status& reason, int fragment_id) {
     std::vector<std::weak_ptr<pipeline::PipelineFragmentContext>> ctx_to_cancel;
     {
@@ -325,14 +335,13 @@ ThreadPool* QueryContext::get_memtable_flush_pool() {
     }
 }
 
-Status QueryContext::set_workload_group(WorkloadGroupPtr& tg) {
+void QueryContext::set_workload_group(WorkloadGroupPtr& tg) {
     _workload_group = tg;
     // Should add query first, then the workload group will not be deleted.
     // see task_group_manager::delete_workload_group_by_ids
     _workload_group->add_mem_tracker_limiter(query_mem_tracker);
     _workload_group->get_query_scheduler(&_task_scheduler, &_scan_task_scheduler,
                                          &_memtable_flush_pool, &_remote_scan_task_scheduler);
-    return Status::OK();
 }
 
 void QueryContext::add_fragment_profile(
@@ -354,8 +363,9 @@ void QueryContext::add_fragment_profile(
 #endif
 
     std::lock_guard<std::mutex> l(_profile_mutex);
-    LOG_INFO("Query X add fragment profile, query {}, fragment {}, pipeline profile count {} ",
-             print_id(this->_query_id), fragment_id, pipeline_profiles.size());
+    VLOG_ROW << fmt::format(
+            "Query add fragment profile, query {}, fragment {}, pipeline profile count {} ",
+            print_id(this->_query_id), fragment_id, pipeline_profiles.size());
 
     _profile_map.insert(std::make_pair(fragment_id, pipeline_profiles));
 
@@ -366,9 +376,6 @@ void QueryContext::add_fragment_profile(
 
 void QueryContext::_report_query_profile() {
     std::lock_guard<std::mutex> lg(_profile_mutex);
-    LOG_INFO(
-            "Pipeline x query context, register query profile, query {}, fragment profile count {}",
-            print_id(_query_id), _profile_map.size());
 
     for (auto& [fragment_id, fragment_profile] : _profile_map) {
         std::shared_ptr<TRuntimeProfileTree> load_channel_profile = nullptr;

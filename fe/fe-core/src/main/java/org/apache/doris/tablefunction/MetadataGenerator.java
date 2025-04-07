@@ -55,7 +55,7 @@ import org.apache.doris.datasource.TablePartitionValues;
 import org.apache.doris.datasource.hive.HMSExternalCatalog;
 import org.apache.doris.datasource.hive.HMSExternalTable;
 import org.apache.doris.datasource.hive.HiveMetaStoreCache;
-import org.apache.doris.datasource.hudi.source.HudiCachedPartitionProcessor;
+import org.apache.doris.datasource.hudi.source.HudiMetadataCacheMgr;
 import org.apache.doris.datasource.iceberg.IcebergExternalCatalog;
 import org.apache.doris.datasource.iceberg.IcebergMetadataCache;
 import org.apache.doris.datasource.maxcompute.MaxComputeExternalCatalog;
@@ -63,6 +63,7 @@ import org.apache.doris.job.common.JobType;
 import org.apache.doris.job.extensions.mtmv.MTMVJob;
 import org.apache.doris.job.task.AbstractTask;
 import org.apache.doris.mtmv.MTMVPartitionUtil;
+import org.apache.doris.mtmv.MTMVStatus;
 import org.apache.doris.mysql.privilege.PrivPredicate;
 import org.apache.doris.plsql.metastore.PlsqlManager;
 import org.apache.doris.plsql.metastore.PlsqlProcedureKey;
@@ -844,22 +845,26 @@ public class MetadataGenerator {
                 }
                 MTMV mv = (MTMV) table;
                 if (LOG.isDebugEnabled()) {
-                    LOG.debug("mv: " + mv.toInfoString());
+                    LOG.debug("mv: {}", mv.toInfoString());
                 }
+
+                boolean isSync = MTMVPartitionUtil.isMTMVSync(mv);
+
+                MTMVStatus mtmvStatus = mv.getStatus();
                 TRow trow = new TRow();
                 trow.addToColumnValue(new TCell().setLongVal(mv.getId()));
                 trow.addToColumnValue(new TCell().setStringVal(mv.getName()));
                 trow.addToColumnValue(new TCell().setStringVal(mv.getJobInfo().getJobName()));
-                trow.addToColumnValue(new TCell().setStringVal(mv.getStatus().getState().name()));
-                trow.addToColumnValue(new TCell().setStringVal(mv.getStatus().getSchemaChangeDetail()));
-                trow.addToColumnValue(new TCell().setStringVal(mv.getStatus().getRefreshState().name()));
+                trow.addToColumnValue(new TCell().setStringVal(mtmvStatus.getState().name()));
+                trow.addToColumnValue(new TCell().setStringVal(mtmvStatus.getSchemaChangeDetail()));
+                trow.addToColumnValue(new TCell().setStringVal(mtmvStatus.getRefreshState().name()));
                 trow.addToColumnValue(new TCell().setStringVal(mv.getRefreshInfo().toString()));
                 trow.addToColumnValue(new TCell().setStringVal(mv.getQuerySql()));
                 trow.addToColumnValue(new TCell().setStringVal(mv.getMvProperties().toString()));
                 trow.addToColumnValue(new TCell().setStringVal(mv.getMvPartitionInfo().toNameString()));
-                trow.addToColumnValue(new TCell().setBoolVal(MTMVPartitionUtil.isMTMVSync(mv)));
+                trow.addToColumnValue(new TCell().setBoolVal(isSync));
                 if (LOG.isDebugEnabled()) {
-                    LOG.debug("mvend: " + mv.getName());
+                    LOG.debug("mv end: {}", mv.getName());
                 }
                 dataBatch.add(trow);
             }
@@ -1330,9 +1335,8 @@ public class MetadataGenerator {
                     fillBatch(dataBatch, cache.getStats(), catalog.getName());
                 }
                 // 2. hudi cache
-                HudiCachedPartitionProcessor processor
-                        = (HudiCachedPartitionProcessor) mgr.getHudiPartitionProcess(catalog);
-                fillBatch(dataBatch, processor.getCacheStats(), catalog.getName());
+                HudiMetadataCacheMgr hudiMetadataCacheMgr = mgr.getHudiMetadataCacheMgr();
+                fillBatch(dataBatch, hudiMetadataCacheMgr.getCacheStats(catalog), catalog.getName());
             } else if (catalogIf instanceof IcebergExternalCatalog) {
                 // 3. iceberg cache
                 IcebergMetadataCache icebergCache = mgr.getIcebergMetadataCache();

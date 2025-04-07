@@ -31,6 +31,7 @@
 #include "common/config.h"
 #include "common/exception.h"
 #include "common/status.h"
+#include "pipeline/pipeline_task.h"
 #include "runtime/define_primitive_type.h"
 #include "vec/columns/column_vector.h"
 #include "vec/columns/columns_number.h"
@@ -562,7 +563,7 @@ void VExpr::register_function_context(RuntimeState* state, VExprContext* context
     _fn_context_index = context->register_function_context(state, _type, arg_types);
 }
 
-Status VExpr::init_function_context(VExprContext* context,
+Status VExpr::init_function_context(RuntimeState* state, VExprContext* context,
                                     FunctionContext::FunctionStateScope scope,
                                     const FunctionBasePtr& function) const {
     FunctionContext* fn_ctx = context->fn_context(_fn_context_index);
@@ -574,6 +575,12 @@ Status VExpr::init_function_context(VExprContext* context,
             constant_cols.push_back(const_col);
         }
         fn_ctx->set_constant_cols(constant_cols);
+    } else {
+        if (function->is_udf_function()) {
+            auto* timer = ADD_TIMER(state->get_task()->get_task_profile(),
+                                    "UDF[" + function->get_name() + "]");
+            fn_ctx->set_udf_execute_timer(timer);
+        }
     }
 
     if (scope == FunctionContext::FRAGMENT_LOCAL) {
@@ -642,7 +649,7 @@ Status VExpr::_evaluate_inverted_index(VExprContext* context, const FunctionBase
                         context->get_inverted_index_context()
                                 ->get_storage_name_and_type_by_column_id(column_id);
                 auto storage_type = remove_nullable(storage_name_type->second);
-                auto target_type = cast_expr->get_target_type();
+                auto target_type = remove_nullable(cast_expr->get_target_type());
                 auto origin_primitive_type = storage_type->get_type_as_type_descriptor().type;
                 auto target_primitive_type = target_type->get_type_as_type_descriptor().type;
                 if (is_complex_type(storage_type)) {
@@ -662,7 +669,7 @@ Status VExpr::_evaluate_inverted_index(VExprContext* context, const FunctionBase
                     }
                 }
                 if (origin_primitive_type != TYPE_VARIANT &&
-                    (origin_primitive_type == target_primitive_type ||
+                    (storage_type->equals(*target_type) ||
                      (is_string_type(target_primitive_type) &&
                       is_string_type(origin_primitive_type)))) {
                     children_exprs.emplace_back(expr_without_cast(child));
@@ -724,8 +731,6 @@ Status VExpr::_evaluate_inverted_index(VExprContext* context, const FunctionBase
         for (int column_id : column_ids) {
             index_context->set_true_for_inverted_index_status(this, column_id);
         }
-        // set fast_execute when expr evaluated by inverted index correctly
-        _can_fast_execute = true;
     }
     return Status::OK();
 }

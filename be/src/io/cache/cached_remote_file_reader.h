@@ -67,7 +67,8 @@ private:
     std::shared_mutex _mtx;
     std::map<size_t, FileBlockSPtr> _cache_file_readers;
 
-    void _update_state(const ReadStatistics& stats, FileCacheStatistics* state) const;
+    void _update_stats(const ReadStatistics& stats, FileCacheStatistics* state,
+                       bool is_inverted_index) const;
 };
 
 } // namespace doris::io

@@ -349,17 +349,17 @@ Status AnalyticLocalState::_get_next_for_rows(size_t current_block_rows) {
         int64_t range_start, range_end;
         if (!_parent->cast<AnalyticSourceOperatorX>()._window.__isset.window_start &&
             _parent->cast<AnalyticSourceOperatorX>()._window.window_end.type ==
-                    TAnalyticWindowBoundaryType::
-                            CURRENT_ROW) { //[preceding, current_row],[current_row, following]
+                    TAnalyticWindowBoundaryType::CURRENT_ROW) {
+            // [preceding, current_row], [current_row, following] rewrite it's same
+            // as could reuse the previous calculate result, so don't call _reset_agg_status function
+            // going on calculate, add up data, no need to reset state
             range_start = _shared_state->current_row_position;
-            range_end = _shared_state->current_row_position +
-                        1; //going on calculate,add up data, no need to reset state
+            range_end = _shared_state->current_row_position + 1;
         } else {
             _reset_agg_status();
             range_end = _shared_state->current_row_position + _rows_end_offset + 1;
-            if (!_parent->cast<AnalyticSourceOperatorX>()
-                         ._window.__isset
-                         .window_start) { //[preceding, offset]        --unbound: [preceding, following]
+            //[preceding, offset]        --unbound: [preceding, following]
+            if (!_parent->cast<AnalyticSourceOperatorX>()._window.__isset.window_start) {
                 range_start = _partition_by_start.pos;
             } else {
                 range_start = _shared_state->current_row_position + _rows_start_offset;
@@ -445,7 +445,9 @@ bool AnalyticLocalState::init_next_partition(BlockRowPos found_partition_end) {
 Status AnalyticLocalState::output_current_block(vectorized::Block* block) {
     block->swap(std::move(_shared_state->input_blocks[_output_block_index]));
     _blocks_memory_usage->add(-block->allocated_bytes());
-    mem_tracker()->consume(-block->allocated_bytes());
+    if (_shared_state->origin_cols.size() < block->columns()) {
+        block->erase_not_in(_shared_state->origin_cols);
+    }
 
     DCHECK(_parent->cast<AnalyticSourceOperatorX>()._change_to_nullable_flags.size() ==
            _result_window_columns.size());

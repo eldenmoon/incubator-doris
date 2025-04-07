@@ -21,6 +21,7 @@ import org.apache.doris.analysis.DataSortInfo;
 import org.apache.doris.analysis.DateLiteral;
 import org.apache.doris.catalog.Column;
 import org.apache.doris.catalog.DataProperty;
+import org.apache.doris.catalog.Database;
 import org.apache.doris.catalog.DatabaseIf;
 import org.apache.doris.catalog.Env;
 import org.apache.doris.catalog.EnvFactory;
@@ -34,6 +35,7 @@ import org.apache.doris.catalog.Type;
 import org.apache.doris.common.AnalysisException;
 import org.apache.doris.common.Config;
 import org.apache.doris.common.DdlException;
+import org.apache.doris.common.Pair;
 import org.apache.doris.datasource.CatalogIf;
 import org.apache.doris.datasource.CatalogMgr;
 import org.apache.doris.datasource.ExternalCatalog;
@@ -60,6 +62,7 @@ import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
 import java.util.Arrays;
+import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
@@ -99,6 +102,9 @@ public class PropertyAnalyzer {
     // row store page size, default 16KB
     public static final String PROPERTIES_ROW_STORE_PAGE_SIZE = "row_store_page_size";
     public static final long ROW_STORE_PAGE_SIZE_DEFAULT_VALUE = 16384L;
+
+    public static final String PROPERTIES_STORAGE_PAGE_SIZE = "storage_page_size";
+    public static final long STORAGE_PAGE_SIZE_DEFAULT_VALUE = 65536L;
 
     public static final String PROPERTIES_ENABLE_LIGHT_SCHEMA_CHANGE = "light_schema_change";
 
@@ -329,6 +335,7 @@ public class PropertyAnalyzer {
         String newStoragePolicy = oldStoragePolicy;
         boolean hasStoragePolicy = false;
         boolean storageMediumSpecified = false;
+        boolean isBeingSynced = false;
 
         for (Map.Entry<String, String> entry : properties.entrySet()) {
             String key = entry.getKey();
@@ -354,6 +361,8 @@ public class PropertyAnalyzer {
             } else if (key.equalsIgnoreCase(PROPERTIES_STORAGE_POLICY)) {
                 hasStoragePolicy = true;
                 newStoragePolicy = value;
+            } else if (key.equalsIgnoreCase(PROPERTIES_IS_BEING_SYNCED)) {
+                isBeingSynced = Boolean.parseBoolean(value);
             }
         } // end for properties
 
@@ -381,6 +390,12 @@ public class PropertyAnalyzer {
 
         if (storageMedium == TStorageMedium.SSD && !hasCooldown) {
             cooldownTimestamp = DataProperty.MAX_COOLDOWN_TIME_MS;
+        }
+
+        // when isBeingSynced property is set to true, the storage policy will be ignored
+        if (isBeingSynced) {
+            hasStoragePolicy = false;
+            newStoragePolicy = "";
         }
 
         if (hasStoragePolicy && !"".equals(newStoragePolicy)) {
@@ -634,6 +649,9 @@ public class PropertyAnalyzer {
             }
 
             String[] bfColumnArr = bfColumnsStr.split(COMMA_SEPARATOR);
+            if (bfColumnArr.length == 0) {
+                return bfColumns;
+            }
             Set<String> bfColumnSet = Sets.newTreeSet(String.CASE_INSENSITIVE_ORDER);
             for (String bfColumn : bfColumnArr) {
                 bfColumn = bfColumn.trim();
@@ -642,11 +660,8 @@ public class PropertyAnalyzer {
                     if (column.getName().equalsIgnoreCase(bfColumn)) {
                         PrimitiveType type = column.getDataType();
 
-                        // tinyint/float/double columns don't support
                         // key columns and none/replace aggregate non-key columns support
-                        if (type == PrimitiveType.TINYINT || type == PrimitiveType.FLOAT
-                                || type == PrimitiveType.DOUBLE || type == PrimitiveType.BOOLEAN
-                                || type.isComplexType()) {
+                        if (!column.isSupportBloomFilter()) {
                             throw new AnalysisException(type + " is not supported in bloom filter index. "
                                     + "invalid column: " + bfColumn);
                         } else if (keysType != KeysType.AGG_KEYS || column.isKey()) {
@@ -1075,6 +1090,24 @@ public class PropertyAnalyzer {
         return rowStorePageSize;
     }
 
+    public static long analyzeStoragePageSize(Map<String, String> properties) throws AnalysisException {
+        long storagePageSize = STORAGE_PAGE_SIZE_DEFAULT_VALUE;
+        if (properties != null && properties.containsKey(PROPERTIES_STORAGE_PAGE_SIZE)) {
+            String storagePageSizeStr = properties.get(PROPERTIES_STORAGE_PAGE_SIZE);
+            try {
+                storagePageSize = Long.parseLong(storagePageSizeStr);
+            } catch (NumberFormatException e) {
+                throw new AnalysisException("Invalid storage page size: " + storagePageSizeStr);
+            }
+            if (storagePageSize < 4096 || storagePageSize > 10485760) {
+                throw new AnalysisException("Storage page size must be between 4KB and 10MB.");
+            }
+            storagePageSize = alignTo4K(storagePageSize);
+            properties.remove(PROPERTIES_STORAGE_PAGE_SIZE);
+        }
+        return storagePageSize;
+    }
+
     // analyzeStorageFormat will parse the storage format from properties
     // sql: alter table tablet_name set ("storage_format" = "v2")
     // Use this sql to convert all tablets(base and rollup index) to a new format segment
@@ -1156,14 +1189,71 @@ public class PropertyAnalyzer {
         return storagePolicy;
     }
 
-    public static String analyzeStorageVault(Map<String, String> properties) {
-        String storageVault = null;
+    public static String analyzeStorageVaultName(Map<String, String> properties) {
+        String storageVaultName = null;
         if (properties != null && properties.containsKey(PROPERTIES_STORAGE_VAULT_NAME)) {
-            storageVault = properties.get(PROPERTIES_STORAGE_VAULT_NAME);
+            storageVaultName = properties.get(PROPERTIES_STORAGE_VAULT_NAME);
             properties.remove(PROPERTIES_STORAGE_VAULT_NAME);
         }
 
-        return storageVault;
+        return storageVaultName;
+    }
+
+    /**
+     * @param properties, db
+     * @return <storageVaultName, storageVaultId>
+     * @throws AnalysisException
+     */
+    public static Pair<String, String> analyzeStorageVault(Map<String, String> properties, Database db)
+            throws AnalysisException {
+        String storageVaultName = analyzeStorageVaultName(properties);
+        String storageVaultId = null;
+
+        if (Strings.isNullOrEmpty(storageVaultName)) {
+            // If user does not specify one storage vault then FE would check db's storage vault then the default vault
+            // the storage vault inherit order is as follows: table -> db -> default
+            if (db.getDbProperties() != null) {
+                Map<String, String> dbProperties = new HashMap<>(db.getDbProperties().getProperties());
+                storageVaultName = PropertyAnalyzer.analyzeStorageVaultName(dbProperties);
+            }
+
+            if (!Strings.isNullOrEmpty(storageVaultName)) {
+                storageVaultId = Env.getCurrentEnv().getStorageVaultMgr().getVaultIdByName(storageVaultName);
+                LOG.info("Using database[{}] storage vault: name={}, id={}",
+                        db.getName(), storageVaultName, storageVaultId);
+            } else {
+                // continue to check default vault
+                Pair<String, String> info = Env.getCurrentEnv().getStorageVaultMgr().getDefaultStorageVault();
+                if (info == null) {
+                    throw new AnalysisException("No default storage vault."
+                            + " You can use `SHOW STORAGE VAULT` to get all available vaults,"
+                            + " and pick one set default vault with `SET <vault_name> AS DEFAULT STORAGE VAULT`");
+                }
+                storageVaultName = info.first;
+                LOG.info("Using default storage vault, name:{} id:{}", info.first, info.second);
+            }
+        }
+
+        if (Strings.isNullOrEmpty(storageVaultName)) {
+            throw new AnalysisException("Invalid Storage Vault. "
+                    + " You can use `SHOW STORAGE VAULT` to get all available vaults,"
+                    + " and pick one to set the table property `\"storage_vault_name\" = \"<vault_name>\"`");
+        }
+
+        storageVaultId = Env.getCurrentEnv().getStorageVaultMgr().getVaultIdByName(storageVaultName);
+        if (Strings.isNullOrEmpty(storageVaultId)) {
+            throw new AnalysisException("Storage vault '" + storageVaultName + "' does not exist. "
+                    + "You can use `SHOW STORAGE VAULT` to get all available vaults, "
+                    + "or create a new one with `CREATE STORAGE VAULT`.");
+        }
+
+        if (properties != null && properties.containsKey(PROPERTIES_STORAGE_VAULT_ID)) {
+            Preconditions.checkArgument(storageVaultId.equals(properties.get(PROPERTIES_STORAGE_VAULT_ID)),
+                    "storageVaultId check failed, %s-%s", storageVaultId, properties.get(PROPERTIES_STORAGE_VAULT_ID));
+            properties.remove(PROPERTIES_STORAGE_VAULT_ID);
+        }
+
+        return Pair.of(storageVaultName, storageVaultId);
     }
 
     // analyze property like : "type" = "xxx";

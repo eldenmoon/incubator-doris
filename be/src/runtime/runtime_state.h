@@ -38,6 +38,7 @@
 #include "agent/be_exec_version_manager.h"
 #include "cctz/time_zone.h"
 #include "common/compiler_util.h" // IWYU pragma: keep
+#include "common/config.h"
 #include "common/factory_creator.h"
 #include "common/status.h"
 #include "gutil/integral_types.h"
@@ -50,6 +51,10 @@
 
 namespace doris {
 class IRuntimeFilter;
+
+inline int32_t get_execution_rpc_timeout_ms(int32_t execution_timeout_sec) {
+    return std::min(config::execution_max_rpc_timeout_sec, execution_timeout_sec) * 1000;
+}
 
 namespace pipeline {
 class PipelineXLocalStateBase;
@@ -178,6 +183,11 @@ public:
         return _query_options.__isset.enable_decimal256 && _query_options.enable_decimal256;
     }
 
+    bool new_is_ip_address_in_range() const {
+        return _query_options.__isset.new_is_ip_address_in_range &&
+               _query_options.new_is_ip_address_in_range;
+    }
+
     bool enable_common_expr_pushdown() const {
         return _query_options.__isset.enable_common_expr_pushdown &&
                _query_options.enable_common_expr_pushdown;
@@ -269,7 +279,7 @@ public:
     // is_summary is true, means we are going to write the summary line
     // If we need to stop the processing, set stop_processing to true
     Status append_error_msg_to_file(std::function<std::string()> line,
-                                    std::function<std::string()> error_msg, bool* stop_processing,
+                                    std::function<std::string()> error_msg,
                                     bool is_summary = false);
 
     int64_t num_bytes_load_total() { return _num_bytes_load_total.load(); }
@@ -423,19 +433,33 @@ public:
         return _query_options.partitioned_hash_agg_rows_threshold;
     }
 
-    const std::vector<TTabletCommitInfo>& tablet_commit_infos() const {
+    std::vector<TTabletCommitInfo> tablet_commit_infos() const {
+        std::lock_guard<std::mutex> lock(_tablet_infos_mutex);
         return _tablet_commit_infos;
     }
 
-    std::vector<TTabletCommitInfo>& tablet_commit_infos() { return _tablet_commit_infos; }
+    void add_tablet_commit_infos(std::vector<TTabletCommitInfo>& commit_infos) {
+        std::lock_guard<std::mutex> lock(_tablet_infos_mutex);
+        _tablet_commit_infos.insert(_tablet_commit_infos.end(),
+                                    std::make_move_iterator(commit_infos.begin()),
+                                    std::make_move_iterator(commit_infos.end()));
+    }
+
+    std::vector<TErrorTabletInfo> error_tablet_infos() const {
+        std::lock_guard<std::mutex> lock(_tablet_infos_mutex);
+        return _error_tablet_infos;
+    }
+
+    void add_error_tablet_infos(std::vector<TErrorTabletInfo>& tablet_infos) {
+        std::lock_guard<std::mutex> lock(_tablet_infos_mutex);
+        _error_tablet_infos.insert(_error_tablet_infos.end(),
+                                   std::make_move_iterator(tablet_infos.begin()),
+                                   std::make_move_iterator(tablet_infos.end()));
+    }
 
     std::vector<THivePartitionUpdate>& hive_partition_updates() { return _hive_partition_updates; }
 
     std::vector<TIcebergCommitData>& iceberg_commit_datas() { return _iceberg_commit_datas; }
-
-    const std::vector<TErrorTabletInfo>& error_tablet_infos() const { return _error_tablet_infos; }
-
-    std::vector<TErrorTabletInfo>& error_tablet_infos() { return _error_tablet_infos; }
 
     // local runtime filter mgr, the runtime filter do not have remote target or
     // not need local merge should regist here. the instance exec finish, the local
@@ -450,6 +474,8 @@ public:
 
     QueryContext* get_query_ctx() { return _query_ctx; }
 
+    std::weak_ptr<QueryContext> get_query_ctx_weak();
+
     void set_query_mem_tracker(const std::shared_ptr<MemTrackerLimiter>& tracker) {
         _query_mem_tracker = tracker;
     }
@@ -458,11 +484,6 @@ public:
 
     bool enable_profile() const {
         return _query_options.__isset.enable_profile && _query_options.enable_profile;
-    }
-
-    bool enable_scan_node_run_serial() const {
-        return _query_options.__isset.enable_scan_node_run_serial &&
-               _query_options.enable_scan_node_run_serial;
     }
 
     bool enable_share_hash_table_for_broadcast_join() const {
@@ -554,8 +575,7 @@ public:
     }
 
     Status register_producer_runtime_filter(const doris::TRuntimeFilterDesc& desc,
-                                            std::shared_ptr<IRuntimeFilter>* producer_filter,
-                                            bool build_bf_exactly);
+                                            std::shared_ptr<IRuntimeFilter>* producer_filter);
 
     Status register_consumer_runtime_filter(const doris::TRuntimeFilterDesc& desc,
                                             bool need_local_merge, int node_id,
@@ -584,6 +604,11 @@ public:
     bool enable_local_merge_sort() const {
         return _query_options.__isset.enable_local_merge_sort &&
                _query_options.enable_local_merge_sort;
+    }
+
+    bool fuzzy_disable_runtime_filter_in_be() const {
+        return _query_options.__isset.fuzzy_disable_runtime_filter_in_be &&
+               _query_options.fuzzy_disable_runtime_filter_in_be;
     }
 
     int64_t min_revocable_mem() const {
@@ -701,6 +726,7 @@ private:
     int64_t _error_row_number;
     std::string _error_log_file_path;
     std::unique_ptr<std::ofstream> _error_log_file; // error file path, absolute path
+    mutable std::mutex _tablet_infos_mutex;
     std::vector<TTabletCommitInfo> _tablet_commit_infos;
     std::vector<TErrorTabletInfo> _error_tablet_infos;
     int _max_operator_id = 0;

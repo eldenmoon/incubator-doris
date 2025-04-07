@@ -58,7 +58,7 @@ public class AccessControllerManager {
     public AccessControllerManager(Auth auth) {
         this.auth = auth;
         if (Config.access_controller_type.equalsIgnoreCase("ranger-doris")) {
-            defaultAccessController = new RangerDorisAccessController("doris");
+            defaultAccessController = RangerDorisAccessController.getInstance("doris");
         } else {
             defaultAccessController = new InternalAccessController(auth);
         }
@@ -215,6 +215,13 @@ public class AccessControllerManager {
         return defaultAccessController.checkCloudPriv(currentUser, cloudName, wanted, type);
     }
 
+    public boolean checkStorageVaultPriv(ConnectContext ctx, String storageVaultName, PrivPredicate wanted) {
+        return checkStorageVaultPriv(ctx.getCurrentUserIdentity(), storageVaultName, wanted);
+    }
+
+    public boolean checkStorageVaultPriv(UserIdentity currentUser, String storageVaultName, PrivPredicate wanted) {
+        return defaultAccessController.checkStorageVaultPriv(currentUser, storageVaultName, wanted);
+    }
 
     public boolean checkWorkloadGroupPriv(ConnectContext ctx, String workloadGroupName, PrivPredicate wanted) {
         return checkWorkloadGroupPriv(ctx.getCurrentUserIdentity(), workloadGroupName, wanted);

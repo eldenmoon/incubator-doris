@@ -195,14 +195,14 @@ public:
 
     /**
      * Proactively evict cache blocks to free up space before cache is full.
-     *
-     * This function attempts to evict blocks from both NORMAL and TTL queues to maintain
+     * 
+     * This function attempts to evict blocks from both NORMAL and TTL queues to maintain 
      * cache size below high watermark. Unlike try_reserve() which blocks until space is freed,
      * this function initiates asynchronous eviction in background.
-     *
+     * 
      * @param size Number of bytes to try to evict
      * @param cache_lock Lock that must be held while accessing cache data structures
-     *
+     * 
      * @pre Caller must hold cache_lock
      * @pre _need_evict_cache_in_advance must be true
      * @pre _recycle_keys queue must have capacity for evicted blocks
@@ -566,6 +566,7 @@ private:
     std::shared_ptr<bvar::Status<double>> _hit_ratio_1h;
     std::shared_ptr<bvar::Status<size_t>> _disk_limit_mode_metrics;
     std::shared_ptr<bvar::Status<size_t>> _need_evict_cache_in_advance_metrics;
+
     std::shared_ptr<bvar::LatencyRecorder> _cache_lock_wait_time_us;
     std::shared_ptr<bvar::LatencyRecorder> _get_or_set_latency_us;
     std::shared_ptr<bvar::LatencyRecorder> _storage_sync_remove_latency_us;

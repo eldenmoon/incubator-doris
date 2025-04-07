@@ -85,6 +85,8 @@ void doris_rowset_meta_to_cloud(RowsetMetaCloudPB* out, const RowsetMetaPB& in) 
     out->set_has_variant_type_in_schema(in.has_has_variant_type_in_schema());
     out->set_enable_inverted_index_file_info(in.enable_inverted_index_file_info());
     out->mutable_inverted_index_file_info()->CopyFrom(in.inverted_index_file_info());
+    out->set_source_rowset_id(in.source_rowset_id());
+    out->set_source_tablet_id(in.source_tablet_id());
 }
 
 void doris_rowset_meta_to_cloud(RowsetMetaCloudPB* out, RowsetMetaPB&& in) {
@@ -137,6 +139,8 @@ void doris_rowset_meta_to_cloud(RowsetMetaCloudPB* out, RowsetMetaPB&& in) {
     out->set_has_variant_type_in_schema(in.has_variant_type_in_schema());
     out->set_enable_inverted_index_file_info(in.enable_inverted_index_file_info());
     out->mutable_inverted_index_file_info()->Swap(in.mutable_inverted_index_file_info());
+    out->set_source_rowset_id(in.source_rowset_id());
+    out->set_source_tablet_id(in.source_tablet_id());
 }
 
 static void fill_schema_with_dict(const RowsetMetaCloudPB& in, RowsetMetaPB* out,
@@ -235,6 +239,8 @@ void cloud_rowset_meta_to_doris(RowsetMetaPB* out, const RowsetMetaCloudPB& in,
     out->set_enable_segments_file_size(in.enable_segments_file_size());
     out->set_enable_inverted_index_file_info(in.enable_inverted_index_file_info());
     out->mutable_inverted_index_file_info()->CopyFrom(in.inverted_index_file_info());
+    out->set_source_rowset_id(in.source_rowset_id());
+    out->set_source_tablet_id(in.source_tablet_id());
 }
 
 void cloud_rowset_meta_to_doris(RowsetMetaPB* out, RowsetMetaCloudPB&& in,
@@ -288,6 +294,8 @@ void cloud_rowset_meta_to_doris(RowsetMetaPB* out, RowsetMetaCloudPB&& in,
     out->set_enable_segments_file_size(in.enable_segments_file_size());
     out->set_enable_inverted_index_file_info(in.enable_inverted_index_file_info());
     out->mutable_inverted_index_file_info()->Swap(in.mutable_inverted_index_file_info());
+    out->set_source_rowset_id(in.source_rowset_id());
+    out->set_source_tablet_id(in.source_tablet_id());
 }
 
 TabletSchemaCloudPB doris_tablet_schema_to_cloud(const TabletSchemaPB& in) {
@@ -329,6 +337,7 @@ void doris_tablet_schema_to_cloud(TabletSchemaCloudPB* out, const TabletSchemaPB
     out->mutable_row_store_column_unique_ids()->CopyFrom(in.row_store_column_unique_ids());
     out->set_inverted_index_storage_format(in.inverted_index_storage_format());
     out->set_enable_variant_flatten_nested(in.variant_enable_flatten_nested());
+    out->set_storage_page_size(in.storage_page_size());
 }
 
 void doris_tablet_schema_to_cloud(TabletSchemaCloudPB* out, TabletSchemaPB&& in) {
@@ -356,6 +365,7 @@ void doris_tablet_schema_to_cloud(TabletSchemaCloudPB* out, TabletSchemaPB&& in)
     out->mutable_row_store_column_unique_ids()->Swap(in.mutable_row_store_column_unique_ids());
     out->set_inverted_index_storage_format(in.inverted_index_storage_format());
     out->set_enable_variant_flatten_nested(in.variant_enable_flatten_nested());
+    out->set_storage_page_size(in.storage_page_size());
 }
 
 TabletSchemaPB cloud_tablet_schema_to_doris(const TabletSchemaCloudPB& in) {
@@ -396,6 +406,7 @@ void cloud_tablet_schema_to_doris(TabletSchemaPB* out, const TabletSchemaCloudPB
     out->mutable_row_store_column_unique_ids()->CopyFrom(in.row_store_column_unique_ids());
     out->set_inverted_index_storage_format(in.inverted_index_storage_format());
     out->set_variant_enable_flatten_nested(in.enable_variant_flatten_nested());
+    out->set_storage_page_size(in.storage_page_size());
 }
 
 void cloud_tablet_schema_to_doris(TabletSchemaPB* out, TabletSchemaCloudPB&& in) {
@@ -424,6 +435,7 @@ void cloud_tablet_schema_to_doris(TabletSchemaPB* out, TabletSchemaCloudPB&& in)
     out->mutable_row_store_column_unique_ids()->Swap(in.mutable_row_store_column_unique_ids());
     out->set_inverted_index_storage_format(in.inverted_index_storage_format());
     out->set_variant_enable_flatten_nested(in.enable_variant_flatten_nested());
+    out->set_storage_page_size(in.storage_page_size());
 }
 
 TabletMetaCloudPB doris_tablet_meta_to_cloud(const TabletMetaPB& in) {
