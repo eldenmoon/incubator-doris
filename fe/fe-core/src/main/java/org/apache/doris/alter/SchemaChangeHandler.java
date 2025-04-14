@@ -98,7 +98,6 @@ import org.apache.doris.task.AgentTaskExecutor;
 import org.apache.doris.task.AgentTaskQueue;
 import org.apache.doris.task.ClearAlterTask;
 import org.apache.doris.task.UpdateTabletMetaInfoTask;
-import org.apache.doris.thrift.TInvertedIndexFileStorageFormat;
 import org.apache.doris.thrift.TStorageFormat;
 import org.apache.doris.thrift.TStorageMedium;
 import org.apache.doris.thrift.TTaskType;
@@ -2118,6 +2117,19 @@ public class SchemaChangeHandler extends AlterHandler {
                                         + existedIdx.getIndexName() + " of type " + existedIdx.getIndexType()
                                         + " does not support lightweight index changes.");
                             }
+                            for (Column column : olapTable.getBaseSchema()) {
+                                if (!column.getType().isVariantType()) {
+                                    continue;
+                                }
+                                // variant type column can not support for building index
+                                for (String indexColumn : existedIdx.getColumns()) {
+                                    if (column.getName().equalsIgnoreCase(indexColumn)) {
+                                        throw new DdlException("BUILD INDEX operation failed: The "
+                                                + indexDef.getIndexName() + " index can not be built on the "
+                                                + indexColumn + " column, because it is a variant type column.");
+                                    }
+                                }
+                            }
                             index = existedIdx.clone();
                             if (indexDef.getPartitionNames().isEmpty()) {
                                 invertedIndexOnPartitions.put(index.getIndexId(), olapTable.getPartitionNames());
@@ -2720,15 +2732,12 @@ public class SchemaChangeHandler extends AlterHandler {
             alterIndex.setIndexId(Env.getCurrentEnv().getNextId());
         }
 
-        boolean disableInvertedIndexV1ForVariant = olapTable.getInvertedIndexFileStorageFormat()
-                        == TInvertedIndexFileStorageFormat.V1 && ConnectContext.get().getSessionVariable()
-                                                                        .getDisableInvertedIndexV1ForVaraint();
         for (String col : indexDef.getColumns()) {
             Column column = olapTable.getColumn(col);
             if (column != null) {
                 indexDef.checkColumn(column, olapTable.getKeysType(),
                         olapTable.getTableProperty().getEnableUniqueKeyMergeOnWrite(),
-                                                                        disableInvertedIndexV1ForVariant);
+                        olapTable.getInvertedIndexFileStorageFormat());
             } else {
                 throw new DdlException("index column does not exist in table. invalid column: " + col);
             }
