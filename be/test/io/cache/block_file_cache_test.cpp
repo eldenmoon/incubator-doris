@@ -2176,7 +2176,7 @@ TEST_F(BlockFileCacheTest, ttl_normal) {
     SyncPoint::CallbackGuard guard1;
     sp->set_call_back(
             "BlockFileCache::set_sleep_time",
-            [](auto&& args) { *try_any_cast<int64_t*>(args[0]) = 1; }, &guard1);
+            [](auto&& args) { *try_any_cast<int64_t*>(args[0]) = 1000; }, &guard1);
     sp->enable_processing();
     TUniqueId query_id;
     query_id.hi = 1;
@@ -2275,7 +2275,7 @@ TEST_F(BlockFileCacheTest, ttl_modify) {
     SyncPoint::CallbackGuard guard1;
     sp->set_call_back(
             "BlockFileCache::set_sleep_time",
-            [](auto&& args) { *try_any_cast<int64_t*>(args[0]) = 1; }, &guard1);
+            [](auto&& args) { *try_any_cast<int64_t*>(args[0]) = 1000; }, &guard1);
     sp->enable_processing();
     TUniqueId query_id;
     query_id.hi = 1;
@@ -2358,7 +2358,7 @@ TEST_F(BlockFileCacheTest, ttl_modify_memory_storage) {
     SyncPoint::CallbackGuard guard1;
     sp->set_call_back(
             "BlockFileCache::set_sleep_time",
-            [](auto&& args) { *try_any_cast<int64_t*>(args[0]) = 1; }, &guard1);
+            [](auto&& args) { *try_any_cast<int64_t*>(args[0]) = 1000; }, &guard1);
     sp->enable_processing();
     TUniqueId query_id;
     query_id.hi = 1;
@@ -2999,7 +2999,7 @@ TEST_F(BlockFileCacheTest, recyle_cache_async_ttl) {
     SyncPoint::CallbackGuard guard1;
     sp->set_call_back(
             "BlockFileCache::set_sleep_time",
-            [](auto&& args) { *try_any_cast<int64_t*>(args[0]) = 1; }, &guard1);
+            [](auto&& args) { *try_any_cast<int64_t*>(args[0]) = 1000; }, &guard1);
     SyncPoint::CallbackGuard guard2;
     sp->set_call_back(
             "BlockFileCache::set_remove_batch",
@@ -3129,7 +3129,7 @@ TEST_F(BlockFileCacheTest, test_factory_1) {
     SyncPoint::CallbackGuard guard1;
     sp->set_call_back(
             "BlockFileCache::set_sleep_time",
-            [](auto&& args) { *try_any_cast<int64_t*>(args[0]) = 1; }, &guard1);
+            [](auto&& args) { *try_any_cast<int64_t*>(args[0]) = 1000; }, &guard1);
     SyncPoint::CallbackGuard guard2;
     sp->set_call_back(
             "BlockFileCache::set_remove_batch",
@@ -4915,7 +4915,7 @@ TEST_F(BlockFileCacheTest, reset_capacity) {
         sp->clear_call_back("BlockFileCache::set_sleep_time");
     }};
     sp->set_call_back("BlockFileCache::set_sleep_time",
-                      [](auto&& args) { *try_any_cast<int64_t*>(args[0]) = 1; });
+                      [](auto&& args) { *try_any_cast<int64_t*>(args[0]) = 1000; });
     sp->set_call_back("BlockFileCache::set_remove_batch",
                       [](auto&& args) { *try_any_cast<int*>(args[0]) = 2; });
     sp->enable_processing();
@@ -6767,7 +6767,7 @@ TEST_F(BlockFileCacheTest, evict_in_advance) {
     SyncPoint::CallbackGuard guard1;
     sp->set_call_back(
             "BlockFileCache::set_sleep_time",
-            [](auto&& args) { *try_any_cast<int64_t*>(args[0]) = 1; }, &guard1);
+            [](auto&& args) { *try_any_cast<int64_t*>(args[0]) = 1000; }, &guard1);
     sp->enable_processing();
     fs::create_directories(cache_base_path);
     TUniqueId query_id;
