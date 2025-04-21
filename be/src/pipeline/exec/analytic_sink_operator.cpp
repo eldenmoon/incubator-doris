@@ -283,6 +283,13 @@ Status AnalyticSinkOperatorX::sink(doris::RuntimeState* state, vectorized::Block
     local_state._shared_state->all_block_end.row_num = block_rows;
     local_state._shared_state->all_block_end.pos = local_state._shared_state->input_total_rows;
 
+    if (local_state._shared_state->origin_cols
+                .empty()) { //record origin columns, maybe be after this, could cast some column but no need to save
+        for (int c = 0; c < input_block->columns(); ++c) {
+            local_state._shared_state->origin_cols.emplace_back(c);
+        }
+    }
+
     {
         SCOPED_TIMER(local_state._compute_agg_data_timer);
         for (size_t i = 0; i < _agg_functions_size;
