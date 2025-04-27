@@ -161,7 +161,7 @@ TEST(MetaServerTest, StartAndStop) {
 
     brpc::ServerOptions options;
     options.num_threads = 1;
-    brpc::Server brpc_server;
+    brpc::Server& brpc_server = *(new brpc::Server());
 
     auto sp = SyncPoint::get_instance();
 
