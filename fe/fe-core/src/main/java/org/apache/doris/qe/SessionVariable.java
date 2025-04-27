@@ -708,6 +708,7 @@ public class SessionVariable implements Serializable, Writable {
     public static final String ADAPTIVE_PIPELINE_TASK_SERIAL_READ_ON_LIMIT =
                                     "adaptive_pipeline_task_serial_read_on_limit";
 
+    public static final String GLOBAL_VARIANT_SUBCOLUMNS_COUNT = "global_variant_max_subcolumns_count";
     public static final String ENABLE_TEXT_VALIDATE_UTF8 = "enable_text_validate_utf8";
 
     public static final String ENABLE_SQL_CONVERTOR_FEATURES = "enable_sql_convertor_features";
@@ -2426,6 +2427,13 @@ public class SessionVariable implements Serializable, Writable {
     @VariableMgr.VarAttr(name = NEW_IS_IP_ADDRESS_IN_RANGE, needForward = true, flag = VariableMgr.INVISIBLE
             | VariableMgr.READ_ONLY)
     public boolean newIsIpAddressInRange = true;
+    @VariableMgr.VarAttr(
+            name = GLOBAL_VARIANT_SUBCOLUMNS_COUNT,
+            needForward = true,
+            checker = "checkGlobalVariantMaxSubcolumnsCount",
+            fuzzy = true
+    )
+    public int globalVariantMaxSubcolumnsCount = 20000;
 
     @VariableMgr.VarAttr(name = ENABLE_SQL_CONVERTOR_FEATURES, needForward = true,
             checker = "checkSqlConvertorFeatures",
@@ -2498,7 +2506,7 @@ public class SessionVariable implements Serializable, Writable {
         this.partitionedHashJoinRowsThreshold = random.nextBoolean() ? 8 : 1048576;
         this.partitionedHashAggRowsThreshold = random.nextBoolean() ? 8 : 1048576;
         this.enableShareHashTableForBroadcastJoin = random.nextBoolean();
-        // this.enableHashJoinEarlyStartProbe = random.nextBoolean();
+        this.globalVariantMaxSubcolumnsCount = random.nextInt(10);
         int randomInt = random.nextInt(4);
         if (randomInt % 2 == 0) {
             this.rewriteOrToInPredicateThreshold = 100000;
@@ -3828,6 +3836,14 @@ public class SessionVariable implements Serializable, Writable {
         }
     }
 
+    public void checkGlobalVariantMaxSubcolumnsCount(String variantMaxSubcolumnsCount) {
+        int value = Integer.valueOf(variantMaxSubcolumnsCount);
+        if (value < 0 || value > 10000) {
+            throw new UnsupportedOperationException(
+                    "variant max subcolumns count is: " + variantMaxSubcolumnsCount + "it must between 0 and 10000");
+        }
+    }
+
     public void checkQueryTimeoutValid(String newQueryTimeout) {
         int value = Integer.valueOf(newQueryTimeout);
         if (value <= 0) {
@@ -4753,6 +4769,10 @@ public class SessionVariable implements Serializable, Writable {
                         + ", current support: ctas, delete_all_comment");
             }
         }
+    }
+
+    public int getGlobalVariantMaxSubcolumnsCount() {
+        return globalVariantMaxSubcolumnsCount;
     }
 }
 
