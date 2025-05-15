@@ -35,6 +35,7 @@
 #include "olap/storage_engine.h"
 #include "olap/tablet_manager.h"
 #include "olap/tablet_schema.h"
+#include "olap/utils.h"
 #include "runtime/exec_env.h"
 #include "runtime/runtime_state.h"
 #include "runtime/thread_context.h"
@@ -76,13 +77,19 @@ Status Reusable::init(const TDescriptorTable& t_desc_tbl, const std::vector<TExp
     _create_timestamp = butil::gettimeofday_ms();
     _data_type_serdes = vectorized::create_data_type_serdes(tuple_desc()->slots());
     _col_default_values.resize(tuple_desc()->slots().size());
+    bool has_delete_sign = false;
     for (int i = 0; i < tuple_desc()->slots().size(); ++i) {
         auto* slot = tuple_desc()->slots()[i];
+        if (slot->col_name() == DELETE_SIGN) {
+            has_delete_sign = true;
+        }
         _col_uid_to_idx[slot->col_unique_id()] = i;
         _col_default_values[i] = slot->col_default_value();
     }
     // get the delete sign idx in block
-    _delete_sign_idx = _col_uid_to_idx[schema.columns()[schema.delete_sign_idx()]->unique_id()];
+    if (has_delete_sign) {
+        _delete_sign_idx = _col_uid_to_idx[schema.columns()[schema.delete_sign_idx()]->unique_id()];
+    }
     return Status::OK();
 }
 
