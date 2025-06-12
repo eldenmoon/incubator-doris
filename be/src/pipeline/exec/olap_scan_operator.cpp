@@ -480,7 +480,8 @@ Status OlapScanLocalState::hold_tablets() {
                     return Status::OK();
                 });
             }
-            RETURN_IF_ERROR(cloud::bthread_fork_join(tasks, 10));
+            RETURN_IF_ERROR(
+                    cloud::bthread_fork_join(tasks, config::init_scanner_sync_rowsets_parallelism));
         }
         COUNTER_UPDATE(_sync_rowset_timer, duration_ns);
         auto total_rowsets = std::accumulate(
@@ -507,6 +508,14 @@ Status OlapScanLocalState::hold_tablets() {
                            sync_stats.get_remote_delete_bitmap_bytes);
             COUNTER_UPDATE(_sync_rowset_get_remote_delete_bitmap_rpc_timer,
                            sync_stats.get_remote_delete_bitmap_rpc_ns);
+        }
+        if (duration_ns >= config::sync_rowsets_slow_threshold_ms) {
+            // clang-format off
+            LOG(INFO) << "sync_rowset takes too long, elapsed(ns)=" << duration_ns
+                      << " num_tablets=" << _tablets.size() << " tablet_ids=["
+                      << [this]{auto& tt=_tablets; std::stringstream ss; for (size_t i=0; i<std::min(100UL, tt.size()); ++i) ss << tt[i].tablet->tablet_id() << ","; return ss.str();}()
+                      << "...]";
+            // clang-format on
         }
     } else {
         for (size_t i = 0; i < _scan_ranges.size(); i++) {
