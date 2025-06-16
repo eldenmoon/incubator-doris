@@ -552,7 +552,7 @@ Status CloudMetaMgr::sync_tablet_rowsets(CloudTablet* tablet, bool warmup_delta_
                         .error(st);
                 return st;
             }
-            tablet->tablet_meta()->delete_bitmap().merge(delete_bitmap);
+            tablet->tablet_meta()->delete_bitmap()->merge(delete_bitmap);
         }
         {
             const auto& stats = resp.stats();
