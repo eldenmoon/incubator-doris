@@ -18,6 +18,7 @@
 
 #include <brpc/channel.h>
 #include <brpc/controller.h>
+#include <brpc/errno.pb.h>
 #include <bthread/bthread.h>
 #include <bthread/condition_variable.h>
 #include <bthread/mutex.h>
@@ -388,9 +389,11 @@ Status retry_rpc(std::string_view op_name, const Request& req, Response* res,
         }
         cntl.set_max_retry(kBrpcRetryTimes);
         res->Clear();
+        int error_code = 0;
         (stub.get()->*method)(&cntl, &req, res, nullptr);
         if (cntl.Failed()) [[unlikely]] {
             error_msg = cntl.ErrorText();
+            error_code = cntl.ErrorCode();
             proxy->set_unhealthy();
         } else if (res->status().code() == MetaServiceCode::OK) {
             return Status::OK();
@@ -408,7 +411,12 @@ Status retry_rpc(std::string_view op_name, const Request& req, Response* res,
             g_cloud_meta_mgr_rpc_timeout_count << 1;
         }
 
-        if (++retry_times > config::meta_service_rpc_retry_times) {
+        ++retry_times;
+        if (retry_times > config::meta_service_rpc_retry_times ||
+            (retry_times > config::meta_service_rpc_timeout_retry_times &&
+             error_code == brpc::ERPCTIMEDOUT) ||
+            (retry_times > config::meta_service_conflict_error_retry_times &&
+             res->status().code() == MetaServiceCode::KV_TXN_CONFLICT)) {
             break;
         }
 
