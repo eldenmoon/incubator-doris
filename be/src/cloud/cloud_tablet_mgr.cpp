@@ -32,6 +32,10 @@
 
 namespace doris {
 uint64_t g_tablet_report_inactive_duration_ms = 0;
+bvar::Adder<uint64_t> g_base_compaction_not_frozen_tablet_num(
+        "base_compaction_not_frozen_tablet_num");
+bvar::Adder<uint64_t> g_cumu_compaction_not_frozen_tablet_num(
+        "cumu_compaction_not_frozen_tablet_num");
 namespace {
 
 // port from
@@ -360,14 +364,23 @@ Status CloudTabletMgr::get_topn_tablets_to_compact(
     auto now = duration_cast<milliseconds>(system_clock::now().time_since_epoch()).count();
     auto skip = [now, compaction_type](CloudTablet* t) {
         if (compaction_type == CompactionType::BASE_COMPACTION) {
-            return now - t->last_base_compaction_success_time_ms < config::base_compaction_freeze_interval_s * 1000;
+            bool is_recent_failure = now - t->last_base_compaction_failure_time() < config::min_compaction_failure_interval_ms;
+            bool is_frozen = (now - t->last_load_time_ms > config::compaction_load_max_freeze_interval_s * 1000
+                   && now - t->last_base_compaction_success_time_ms < config::base_compaction_freeze_interval_s * 1000
+                   && t->fetch_add_approximate_num_rowsets(0) < config::max_tablet_version_num / 2);
+            g_base_compaction_not_frozen_tablet_num << !is_frozen;
+            return is_recent_failure || is_frozen;
         }
+        
         // If tablet has too many rowsets but not be compacted for a long time, compaction should be performed
         // regardless of whether there is a load job recently.
-        return now - t->last_cumu_no_suitable_version_ms < config::min_compaction_failure_interval_ms ||
-               (now - t->last_load_time_ms > config::cu_compaction_freeze_interval_s * 1000
+        bool is_recent_failure = now - t->last_cumu_compaction_failure_time() < config::min_compaction_failure_interval_ms;
+        bool is_recent_no_suitable_version = now - t->last_cumu_no_suitable_version_ms < config::min_compaction_failure_interval_ms;
+        bool is_frozen = (now - t->last_load_time_ms > config::compaction_load_max_freeze_interval_s * 1000
                && now - t->last_cumu_compaction_success_time_ms < config::cumu_compaction_interval_s * 1000
                && t->fetch_add_approximate_num_rowsets(0) < config::max_tablet_version_num / 2);
+        g_cumu_compaction_not_frozen_tablet_num << !is_frozen;
+        return is_recent_failure || is_recent_no_suitable_version || is_frozen;
     };
     // We don't schedule tablets that are disabled for compaction
     auto disable = [](CloudTablet* t) { return t->tablet_meta()->tablet_schema()->disable_auto_compaction(); };
