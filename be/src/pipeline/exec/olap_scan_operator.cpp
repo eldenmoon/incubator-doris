@@ -509,7 +509,7 @@ Status OlapScanLocalState::hold_tablets() {
             COUNTER_UPDATE(_sync_rowset_get_remote_delete_bitmap_rpc_timer,
                            sync_stats.get_remote_delete_bitmap_rpc_ns);
         }
-        if (duration_ns >= config::sync_rowsets_slow_threshold_ms) {
+        if (duration_ns / 1000'000 >= config::sync_rowsets_slow_threshold_ms) {
             // clang-format off
             LOG(INFO) << "sync_rowset takes too long, elapsed(ns)=" << duration_ns
                       << " num_tablets=" << _tablets.size() << " tablet_ids=["
