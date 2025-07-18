@@ -588,12 +588,9 @@ class BE(Node):
 
     def get_add_init_config(self):
         cfg = super().get_add_init_config()
-<<<<<<< HEAD
         cfg += [
             'enable_java_support = false',
         ]
-=======
->>>>>>> 3.0.6.2
         if self.cluster.be_config:
             cfg += self.cluster.be_config
         if self.cluster.is_cloud:
