@@ -40,6 +40,7 @@ public abstract class IcebergExternalCatalog extends ExternalCatalog {
     public static final String ICEBERG_HADOOP = "hadoop";
     public static final String ICEBERG_GLUE = "glue";
     public static final String ICEBERG_DLF = "dlf";
+    public static final String ICEBERG_S3_TABLES = "s3tables";
     public static final String EXTERNAL_CATALOG_NAME = "external_catalog.name";
     protected String icebergCatalogType;
     protected Catalog catalog;
@@ -52,8 +53,15 @@ public abstract class IcebergExternalCatalog extends ExternalCatalog {
     protected abstract void initCatalog();
 
     @Override
+    protected synchronized void initPreExecutionAuthenticator() {
+        if (preExecutionAuthenticator == null) {
+            preExecutionAuthenticator = new PreExecutionAuthenticator(getConfiguration());
+        }
+    }
+
+    @Override
     protected void initLocalObjectsImpl() {
-        preExecutionAuthenticator = new PreExecutionAuthenticator();
+        initPreExecutionAuthenticator();
         initCatalog();
         IcebergMetadataOps ops = ExternalMetadataOperations.newIcebergMetadataOps(this, catalog);
         transactionManager = TransactionManagerFactory.createIcebergTransactionManager(ops);
@@ -80,6 +88,14 @@ public abstract class IcebergExternalCatalog extends ExternalCatalog {
     public List<String> listTableNames(SessionContext ctx, String dbName) {
         makeSureInitialized();
         return metadataOps.listTableNames(dbName);
+    }
+
+    @Override
+    public void onClose() {
+        super.onClose();
+        if (null != catalog) {
+            catalog = null;
+        }
     }
 
     protected void initS3Param(Configuration conf) {

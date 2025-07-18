@@ -156,6 +156,14 @@ Status CloudCompactionAction::_handle_run_compaction(HttpRequest* req, std::stri
         return Status::NotFound("Tablet not found. tablet_id={}", tablet_id);
     }
 
+    if (compaction_type == PARAM_COMPACTION_BASE) {
+        tablet->set_last_base_compaction_schedule_time(UnixMillis());
+    } else if (compaction_type == PARAM_COMPACTION_CUMULATIVE) {
+        tablet->set_last_cumu_compaction_schedule_time(UnixMillis());
+    } else if (compaction_type == PARAM_COMPACTION_FULL) {
+        tablet->set_last_full_compaction_schedule_time(UnixMillis());
+    }
+
     LOG(INFO) << "manual submit compaction task, tablet id: " << tablet_id
               << " table id: " << table_id;
     // 3. submit compaction task
@@ -168,8 +176,7 @@ Status CloudCompactionAction::_handle_run_compaction(HttpRequest* req, std::stri
     LOG(INFO) << "Manual compaction task is successfully triggered, tablet id: " << tablet_id
               << " table id: " << table_id;
     *json_result =
-            "{\"status\": \"Success\", \"msg\": \"compaction task is successfully triggered. Table "
-            "id: " +
+            R"({"status": "Success", "msg": "compaction task is successfully triggered. Table id: )" +
             std::to_string(table_id) + ". Tablet id: " + std::to_string(tablet_id) + "\"}";
     return Status::OK();
 }

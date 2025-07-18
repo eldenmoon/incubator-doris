@@ -1685,6 +1685,12 @@ visible_functions = {
         [['repeat'], 'STRING', ['STRING', 'INT'], 'ALWAYS_NULLABLE'],
         [['lpad'], 'STRING', ['STRING', 'INT', 'STRING'], 'ALWAYS_NULLABLE'],
         [['rpad'], 'STRING', ['STRING', 'INT', 'STRING'], 'ALWAYS_NULLABLE'],
+        [['format_round'], 'STRING', ['BIGINT'], ''],
+        [['format_round'], 'STRING', ['LARGEINT'], ''],
+        [['format_round'], 'STRING', ['DOUBLE', 'INT'], ''],
+        [['format_round'], 'STRING', ['DECIMAL32', 'INT'], ''],
+        [['format_round'], 'STRING', ['DECIMAL64', 'INT'], ''],
+        [['format_round'], 'STRING', ['DECIMAL128', 'INT'], ''],
         [['append_trailing_char_if_absent'], 'STRING', ['STRING', 'STRING'], 'ALWAYS_NULLABLE'],
         [['length'], 'INT', ['STRING'], ''],
         [['crc32'], 'BIGINT', ['STRING'], ''],
@@ -1822,6 +1828,8 @@ visible_functions = {
         [['json_parse_notnull'], 'JSONB', ['VARCHAR'], ''],
         [['json_parse_notnull_error_to_value'], 'JSONB', ['VARCHAR', 'VARCHAR'], ''],
         [['json_parse_notnull_error_to_invalid'], 'JSONB', ['VARCHAR'], ''],
+
+        [['json_search'], 'JSONB', ['VARCHAR', 'VARCHAR', 'VARCHAR'], 'ALWAYS_NULLABLE'],
 
         [['json_exists_path'], 'BOOLEAN', ['JSONB', 'VARCHAR'], ''],
         [['json_exists_path'], 'BOOLEAN', ['JSONB', 'STRING'], ''],

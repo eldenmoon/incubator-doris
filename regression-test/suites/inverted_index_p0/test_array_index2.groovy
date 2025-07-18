@@ -104,9 +104,15 @@ suite("test_array_index2") {
     """
 
     test {
+<<<<<<< HEAD
         sql """ ALTER TABLE ${tableName2} ADD INDEX idx_nested_arr (nested_arr) USING INVERTED; """
         exception "is not supported in"
     }
+=======
+         sql """ ALTER TABLE ${tableName2} ADD INDEX idx_nested_arr (nested_arr) USING INVERTED; """
+         exception "is not supported in"
+    } 
+>>>>>>> 3.0.6.2
 
     // Test creating index on array of map - should fail
     test {

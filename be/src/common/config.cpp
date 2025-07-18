@@ -257,7 +257,7 @@ DEFINE_mInt32(download_low_speed_time, "300");
 // whether to download small files in batch
 DEFINE_mBool(enable_batch_download, "false");
 // whether to check md5sum when download
-DEFINE_mBool(enable_download_md5sum_check, "true");
+DEFINE_mBool(enable_download_md5sum_check, "false");
 // download binlog meta timeout, default 30s
 DEFINE_mInt32(download_binlog_meta_timeout_ms, "30000");
 
@@ -500,6 +500,16 @@ DEFINE_Validator(low_priority_compaction_task_num_per_disk,
 
 // How many rounds of cumulative compaction for each round of base compaction when compaction tasks generation.
 DEFINE_mInt32(cumulative_compaction_rounds_for_each_base_compaction_round, "9");
+// Minimum number of threads required in the thread pool to activate the large cumu compaction delay strategy.
+// The delay strategy is only applied when the thread pool has at least this many threads.
+// Default -1 means disable.
+DEFINE_mInt32(large_cumu_compaction_task_min_thread_num, "-1");
+// Maximum size threshold (in bytes) for input rowsets. Compaction tasks with input size
+// exceeding this threshold will be delayed when thread pool is near capacity. Default 512MB.
+DEFINE_mInt32(large_cumu_compaction_task_bytes_threshold, "536870912");
+// Maximum row count threshold for compaction input. Compaction tasks with row count
+// exceeding this threshold will be delayed when thread pool is near capacity. Default 1 million.
+DEFINE_mInt32(large_cumu_compaction_task_row_num_threshold, "1000000");
 
 // Not compact the invisible versions, but with some limitations:
 // if not timeout, keep no more than compaction_keep_invisible_version_max_count versions;
@@ -826,8 +836,7 @@ DEFINE_mInt32(zone_map_row_num_threshold, "20");
 //    Info = 4,
 //    Debug = 5,
 //    Trace = 6
-// Default to turn off aws sdk log, because aws sdk errors that need to be cared will be output through Doris logs
-DEFINE_Int32(aws_log_level, "0");
+DEFINE_Int32(aws_log_level, "2");
 
 // the buffer size when read data from remote storage like s3
 DEFINE_mInt32(remote_storage_read_buffer_mb, "16");
@@ -922,7 +931,7 @@ DEFINE_Int32(multi_table_max_wait_tables, "5");
 // Doris treats it as a high priority task.
 // high priority tasks use a separate thread pool for flush and do not block rpc by memory cleanup logic.
 // this threshold is mainly used to identify routine load tasks and should not be modified if not necessary.
-DEFINE_mInt32(load_task_high_priority_threshold_second, "120");
+DEFINE_mInt32(load_task_high_priority_threshold_second, "600");
 
 // The min timeout of load rpc (add batch, close, etc.)
 // Because a load rpc may be blocked for a while.
@@ -936,8 +945,8 @@ DEFINE_String(function_service_protocol, "h2:grpc");
 DEFINE_String(rpc_load_balancer, "rr");
 
 // a soft limit of string type length, the hard limit is 2GB - 4, but if too long will cause very low performance,
-// so we set a soft limit, default is 1MB
-DEFINE_Int32(string_type_length_soft_limit_bytes, "1048576");
+// so we set a soft limit, default is 10MB
+DEFINE_Int32(string_type_length_soft_limit_bytes, "10485760");
 
 DEFINE_Validator(string_type_length_soft_limit_bytes,
                  [](const int config) -> bool { return config > 0 && config <= 2147483643; });
@@ -1098,8 +1107,15 @@ DEFINE_mInt64(cache_lock_held_long_tail_threshold_us, "30000000");
 DEFINE_mBool(enable_file_cache_keep_base_compaction_output, "false");
 DEFINE_mInt64(file_cache_remove_block_qps_limit, "1000");
 DEFINE_mInt64(file_cache_background_gc_interval_ms, "100");
+<<<<<<< HEAD
 DEFINE_mInt64(file_cache_background_monitor_interval_ms, "5000");
 DEFINE_mInt64(file_cache_background_ttl_gc_interval_ms, "20000");
+=======
+DEFINE_mBool(enable_reader_dryrun_when_download_file_cache, "true");
+DEFINE_mInt64(file_cache_background_monitor_interval_ms, "5000");
+DEFINE_mInt64(file_cache_background_ttl_gc_interval_ms, "3000");
+DEFINE_mInt64(file_cache_background_ttl_gc_batch, "1000");
+>>>>>>> 3.0.6.2
 
 DEFINE_mInt32(index_cache_entry_stay_time_after_lookup_s, "1800");
 DEFINE_mInt32(inverted_index_cache_stale_sweep_time_sec, "600");
@@ -1325,6 +1341,7 @@ DEFINE_mBool(force_azure_blob_global_endpoint, "false");
 DEFINE_mInt32(max_s3_client_retry, "10");
 DEFINE_mInt32(s3_read_base_wait_time_ms, "100");
 DEFINE_mInt32(s3_read_max_wait_time_ms, "800");
+DEFINE_mBool(enable_s3_object_check_after_upload, "true");
 
 DEFINE_mBool(enable_s3_rate_limiter, "false");
 DEFINE_mInt64(s3_get_bucket_tokens, "1000000000000000000");
@@ -1481,7 +1498,11 @@ DEFINE_mInt32(load_trigger_compaction_version_percent, "66");
 DEFINE_mInt64(base_compaction_interval_seconds_since_last_operation, "86400");
 DEFINE_mBool(enable_compaction_pause_on_high_memory, "true");
 
+<<<<<<< HEAD
 DEFINE_mBool(enable_fetch_rowsets_from_peer_replicas, "false");
+=======
+DEFINE_mBool(enable_calc_delete_bitmap_between_segments_concurrently, "false");
+>>>>>>> 3.0.6.2
 
 // clang-format off
 #ifdef BE_TEST

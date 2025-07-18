@@ -1270,6 +1270,13 @@ public class Config extends ConfigBase {
     @ConfField(mutable = true, masterOnly = true)
     public static int max_get_kafka_meta_timeout_second = 60;
 
+
+    /**
+     * the expire time of routine load blacklist.
+     */
+    @ConfField(mutable = true, masterOnly = true)
+    public static int routine_load_blacklist_expire_time_second = 300;
+
     /**
      * The max number of files store in SmallFileMgr
      */
@@ -1481,7 +1488,7 @@ public class Config extends ConfigBase {
      * Used to set default db data quota bytes.
      */
     @ConfField(mutable = true, masterOnly = true)
-    public static long default_db_data_quota_bytes = 1024L * 1024 * 1024 * 1024 * 1024L; // 1PB
+    public static long default_db_data_quota_bytes = Long.MAX_VALUE; // 8192 PB
 
     /**
      * Used to set default db replica quota num.
@@ -2141,7 +2148,7 @@ public class Config extends ConfigBase {
             "Max cache number of partition at table level in Hive Metastore."})
     public static long max_hive_partition_cache_num = 10000;
 
-    @ConfField(description = {"Hudi/Iceberg 表级别缓存的最大数量。",
+    @ConfField(description = {"Hudi/Iceberg/Paimon 表级别缓存的最大数量。",
             "Max cache number of hudi/iceberg table."})
     public static long max_external_table_cache_num = 1000;
 
@@ -2631,12 +2638,21 @@ public class Config extends ConfigBase {
     public static int autobucket_max_buckets = 128;
 
     @ConfField(mutable = true, masterOnly = true, description = {
+<<<<<<< HEAD
         "Auto Buckets中按照partition size去估算bucket数，存算一体partition size 1G估算一个bucket，"
             + "但存算分离下partition size 10G估算一个bucket。 若配置小于0，会在在代码中会自适应存算一体模式默认1G，在存算分离默认10G",
         "In Auto Buckets, the number of buckets is estimated based on the partition size. "
             + "For storage and computing integration, a partition size of 1G is estimated as one bucket."
             + " but for cloud, a partition size of 10G is estimated as one bucket. "
             + "If the configuration is less than 0, the code will have an adaptive non-cloud mode with a default of 1G,"
+=======
+        "Auto Buckets中按照partition size去估算bucket数，存算一体partition size 5G估算一个bucket，"
+            + "但存算分离下partition size 10G估算一个bucket。 若配置小于0，会在在代码中会自适应存算一体模式默认5G，在存算分离默认10G",
+        "In Auto Buckets, the number of buckets is estimated based on the partition size. "
+            + "For storage and computing integration, a partition size of 5G is estimated as one bucket."
+            + " but for cloud, a partition size of 10G is estimated as one bucket. "
+            + "If the configuration is less than 0, the code will have an adaptive non-cloud mode with a default of 5G,"
+>>>>>>> 3.0.6.2
             + " and in cloud mode with a default of 10G."
     })
     public static int autobucket_partition_size_per_bucket_gb = -1;
@@ -2804,6 +2820,15 @@ public class Config extends ConfigBase {
             + "the default value is 10000."
     })
     public static int backup_restore_batch_task_num_per_rpc = 10000;
+
+    @ConfField(mutable = true, masterOnly = true, description = {
+            "一个 BE 同时执行的恢复任务的并发数",
+            "The number of concurrent restore tasks per be"})
+    public static int restore_task_concurrency_per_be = 5000;
+
+    @ConfField(mutable = true, description = {"执行 agent task 时，BE心跳超过多长时间，认为BE不可用",
+            "The time after which BE is considered unavailable if the heartbeat is not received"})
+    public static int agent_task_be_unavailable_heartbeat_timeout_second = 300;
 
     @ConfField(description = {"是否开启通过http接口获取log文件的功能",
             "Whether to enable the function of getting log files through http interface"})
@@ -3344,4 +3369,8 @@ public class Config extends ConfigBase {
     @ConfField(mutable = true, masterOnly = true, description = {"是否允许 variant 类型的列使用倒排索引格式 v1",
             "Whether to allow the use of inverted index v1 for variant"})
     public static boolean enable_inverted_index_v1_for_variant = false;
+
+    @ConfField(mutable = true, description = {"Prometheus 输出表维度指标的个数限制",
+            "Prometheus output table dimension metric count limit"})
+    public static int prom_output_table_metrics_limit = 10000;
 }

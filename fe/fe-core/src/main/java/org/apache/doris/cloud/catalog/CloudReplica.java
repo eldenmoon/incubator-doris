@@ -602,6 +602,7 @@ public class CloudReplica extends Replica {
         secondaryClusterToBackends.remove(cluster);
     }
 
+<<<<<<< HEAD
     public List<Backend> getAllPrimaryBes() {
         List<Backend> result = new ArrayList<Backend>();
         primaryClusterToBackends.keySet().forEach(clusterId -> {
@@ -618,6 +619,8 @@ public class CloudReplica extends Replica {
         return result;
     }
 
+=======
+>>>>>>> 3.0.6.2
     // ATTN: This func is only used by redundant tablet report clean in bes.
     // Only the master node will do the diff logic,
     // so just only need to clean up secondaryClusterToBackends on the master node.

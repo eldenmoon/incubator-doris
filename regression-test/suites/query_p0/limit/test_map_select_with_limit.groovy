@@ -34,6 +34,10 @@ suite("test_map_select_with_limit", "query") {
     // prepare data
     sql """ 
         INSERT INTO test_map_select_with_limit VALUES (100, {1: "amory", 2: "is", 3: "better"}), (101, {1: "amory", 2: "is", 3: "better"});
+<<<<<<< HEAD
+=======
+        analyze table test_map_select_with_limit with sync;
+>>>>>>> 3.0.6.2
         alter table test_map_select_with_limit modify column k1 set stats ('ndv'='41700404', 'num_nulls'='0', 'min_value'='810', 'max_value'='602901', 'row_count'='1500000000');
         """
 

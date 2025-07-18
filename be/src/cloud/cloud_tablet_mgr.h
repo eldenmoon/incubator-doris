@@ -47,7 +47,11 @@ public:
     Result<std::shared_ptr<CloudTablet>> get_tablet(int64_t tablet_id, bool warmup_data = false,
                                                     bool sync_delete_bitmap = true,
                                                     SyncRowsetStats* sync_stats = nullptr,
+<<<<<<< ours
                                                     bool local_only = false);
+=======
+                                                    bool force_use_cache = false);
+>>>>>>> theirs
 
     void erase_tablet(int64_t tablet_id);
 
@@ -87,6 +91,9 @@ public:
 
     void get_topn_tablet_delete_bitmap_score(uint64_t* max_delete_bitmap_score,
                                              uint64_t* max_base_rowset_delete_bitmap_score);
+
+    // **ATTN: JUST FOR UT**
+    void put_tablet_for_UT(std::shared_ptr<CloudTablet> tablet);
 
 private:
     CloudStorageEngine& _engine;

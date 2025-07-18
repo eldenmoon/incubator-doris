@@ -953,7 +953,16 @@ void TabletMeta::delete_stale_rs_meta_by_version(const Version& version) {
                 delete_bitmap()->remove({(*it)->rowset_id(), 0, 0},
                                         {(*it)->rowset_id(), UINT32_MAX, 0});
                 rowset_cache_version_size =
+<<<<<<< HEAD
                         delete_bitmap()->remove_rowset_cache_version((*it)->rowset_id());
+=======
+                        delete_bitmap().remove_rowset_cache_version((*it)->rowset_id());
+                if (config::enable_mow_verbose_log) {
+                    LOG_INFO(
+                            "delete stale rowset's delete bitmap. tablet={}, version={}, rowset={}",
+                            tablet_id(), version.to_string(), (*it)->rowset_id().to_string());
+                }
+>>>>>>> 3.0.6.2
             }
             it = _stale_rs_metas.erase(it);
         } else {

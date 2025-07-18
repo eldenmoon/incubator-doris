@@ -345,6 +345,22 @@ struct leg_info {
 
     ///type: 0 is member 1 is array
     unsigned int type;
+
+    bool to_string(std::string* str) const {
+        if (type == MEMBER_CODE) {
+            str->push_back(BEGIN_MEMBER);
+            str->append(leg_ptr, leg_len);
+            return true;
+        } else if (type == ARRAY_CODE) {
+            str->push_back(BEGIN_ARRAY);
+            std::string int_str = std::to_string(array_index);
+            str->append(int_str);
+            str->push_back(END_ARRAY);
+            return true;
+        } else {
+            return false;
+        }
+    }
 };
 
 class JsonbPath {
@@ -360,6 +376,19 @@ public:
 
     void add_leg_to_leg_vector(std::unique_ptr<leg_info> leg) {
         leg_vector.emplace_back(leg.release());
+    }
+
+    void pop_leg_from_leg_vector() { leg_vector.pop_back(); }
+
+    bool to_string(std::string* res) const {
+        res->push_back(SCOPE);
+        for (const auto& leg : leg_vector) {
+            auto valid = leg->to_string(res);
+            if (!valid) {
+                return false;
+            }
+        }
+        return true;
     }
 
     size_t get_leg_vector_size() { return leg_vector.size(); }
@@ -1461,10 +1490,27 @@ inline JsonbValue* JsonbValue::findValue(JsonbPath& path, hDictFind handler) {
 }
 
 inline bool JsonbPath::parsePath(Stream* stream, JsonbPath* path) {
+    // $[0]
     if (stream->peek() == BEGIN_ARRAY) {
         return parse_array(stream, path);
-    } else if (stream->peek() == BEGIN_MEMBER) {
-        return parse_member(stream, path);
+    }
+    // $.a or $.[0]
+    else if (stream->peek() == BEGIN_MEMBER) {
+        // advance past the .
+        stream->skip(1);
+
+        if (stream->exhausted()) {
+            return false;
+        }
+
+        // $.[0]
+        if (stream->peek() == BEGIN_ARRAY) {
+            return parse_array(stream, path);
+        }
+        // $.a
+        else {
+            return parse_member(stream, path);
+        }
     } else {
         return false; //invalid json path
     }
@@ -1481,6 +1527,10 @@ inline bool JsonbPath::parse_array(Stream* stream, JsonbPath* path) {
         stream->set_leg_ptr(const_cast<char*>(stream->position()));
         stream->add_leg_len();
         stream->skip(1);
+        if (stream->exhausted()) {
+            return false;
+        }
+
         if (stream->peek() == END_ARRAY) {
             std::unique_ptr<leg_info> leg(
                     new leg_info(stream->get_leg_ptr(), stream->get_leg_len(), 0, ARRAY_CODE));
@@ -1546,9 +1596,6 @@ inline bool JsonbPath::parse_array(Stream* stream, JsonbPath* path) {
 }
 
 inline bool JsonbPath::parse_member(Stream* stream, JsonbPath* path) {
-    // advance past the .
-    assert(stream->peek() == BEGIN_MEMBER);
-    stream->skip(1);
     if (stream->exhausted()) {
         return false;
     }

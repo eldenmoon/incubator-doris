@@ -509,6 +509,7 @@ Status OlapScanLocalState::hold_tablets() {
             COUNTER_UPDATE(_sync_rowset_get_remote_delete_bitmap_rpc_timer,
                            sync_stats.get_remote_delete_bitmap_rpc_ns);
         }
+<<<<<<< HEAD
         if (duration_ns / 1000'000 >= config::sync_rowsets_slow_threshold_ms) {
             // clang-format off
             LOG(INFO) << "sync_rowset takes too long, elapsed(ns)=" << duration_ns
@@ -517,6 +518,8 @@ Status OlapScanLocalState::hold_tablets() {
                       << "...]";
             // clang-format on
         }
+=======
+>>>>>>> 3.0.6.2
     } else {
         for (size_t i = 0; i < _scan_ranges.size(); i++) {
             int64_t version = 0;
@@ -536,6 +539,12 @@ Status OlapScanLocalState::hold_tablets() {
                          config::enable_fetch_rowsets_from_peer_replicas}));
         if (!PipelineXLocalState<>::_state->skip_delete_predicate()) {
             _read_sources[i].fill_delete_predicates();
+        }
+        if (config::enable_mow_verbose_log &&
+            _tablets[i].tablet->enable_unique_key_merge_on_write()) {
+            LOG_INFO("finish capture_rs_readers for tablet={}, query_id={}",
+                     _tablets[i].tablet->tablet_id(),
+                     print_id(PipelineXLocalState<>::_state->query_id()));
         }
     }
     timer.stop();

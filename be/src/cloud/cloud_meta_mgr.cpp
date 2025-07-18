@@ -407,10 +407,13 @@ Status retry_rpc(std::string_view op_name, const Request& req, Response* res,
             error_msg = res->status().msg();
         }
 
+<<<<<<< ours
         if (cntl.ErrorCode() == brpc::ERPCTIMEDOUT) {
             g_cloud_meta_mgr_rpc_timeout_count << 1;
         }
 
+=======
+>>>>>>> theirs
         ++retry_times;
         if (retry_times > config::meta_service_rpc_retry_times ||
             (retry_times > config::meta_service_rpc_timeout_retry_times &&
@@ -456,6 +459,15 @@ Status CloudMetaMgr::get_tablet_meta(int64_t tablet_id, TabletMetaSharedPtr* tab
 Status CloudMetaMgr::sync_tablet_rowsets(CloudTablet* tablet, bool warmup_delta_data,
                                          bool sync_delete_bitmap, bool full_sync,
                                          SyncRowsetStats* sync_stats) {
+    std::unique_lock lock {tablet->get_sync_meta_lock()};
+    return sync_tablet_rowsets_unlocked(tablet, lock, warmup_delta_data, sync_delete_bitmap,
+                                        full_sync, sync_stats);
+}
+
+Status CloudMetaMgr::sync_tablet_rowsets_unlocked(CloudTablet* tablet,
+                                                  std::unique_lock<bthread::Mutex>& lock,
+                                                  bool warmup_delta_data, bool sync_delete_bitmap,
+                                                  bool full_sync, SyncRowsetStats* sync_stats) {
     using namespace std::chrono;
 
     TEST_SYNC_POINT_RETURN_WITH_VALUE("CloudMetaMgr::sync_tablet_rowsets", Status::OK(), tablet);
@@ -571,6 +583,12 @@ Status CloudMetaMgr::sync_tablet_rowsets(CloudTablet* tablet, bool warmup_delta_
             }
             tablet->tablet_meta()->delete_bitmap()->merge(delete_bitmap);
         }
+        DBUG_EXECUTE_IF("CloudMetaMgr::sync_tablet_rowsets.before.modify_tablet_meta", {
+            auto target_tablet_id = dp->param<int64_t>("tablet_id", -1);
+            if (target_tablet_id == tablet->tablet_id()) {
+                DBUG_BLOCK
+            }
+        });
         {
             const auto& stats = resp.stats();
             std::unique_lock wlock(tablet->get_header_lock());

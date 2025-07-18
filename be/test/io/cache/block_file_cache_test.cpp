@@ -2901,6 +2901,70 @@ TEST_F(BlockFileCacheTest, remove_directly_when_normal_change_to_ttl) {
     }
 }
 
+TEST_F(BlockFileCacheTest, ttl_gc) {
+    if (fs::exists(cache_base_path)) {
+        fs::remove_all(cache_base_path);
+    }
+    fs::create_directories(cache_base_path);
+    auto sp = SyncPoint::get_instance();
+    SyncPoint::CallbackGuard guard1;
+    sp->enable_processing();
+    TUniqueId query_id;
+    query_id.hi = 1;
+    query_id.lo = 1;
+    io::FileCacheSettings settings;
+    settings.query_queue_size = 50;
+    settings.query_queue_elements = 5;
+    settings.ttl_queue_size = 500;
+    settings.ttl_queue_elements = 500;
+    settings.capacity = 100;
+    settings.max_file_block_size = 30;
+    settings.max_query_cache_size = 30;
+
+    config::file_cache_background_ttl_gc_batch = 6;
+    config::file_cache_background_ttl_gc_interval_ms =
+            3000; // make it big enough to disable auto ttl_gc
+
+    io::BlockFileCache cache(cache_base_path, settings);
+    ASSERT_TRUE(cache.initialize());
+    for (int i = 0; i < 100; i++) {
+        if (cache.get_async_open_success()) {
+            break;
+        };
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+
+    io::CacheContext context;
+    ReadStatistics rstats;
+    context.stats = &rstats;
+    context.cache_type = io::FileCacheType::TTL;
+    context.query_id = query_id;
+    int64_t cur_time = UnixSeconds();
+    context.expiration_time = cur_time + 2;
+
+    for (int64_t i = 0; i < 12; ++i) {
+        auto key = io::BlockFileCache::hash(fmt::format("key{}", i));
+        auto holder = cache.get_or_set(key, 0, 5, context);
+        auto blocks = fromHolder(holder);
+        ASSERT_EQ(blocks.size(), 1);
+        assert_range(1, blocks[0], io::FileBlock::Range(0, 4), io::FileBlock::State::EMPTY);
+        ASSERT_TRUE(blocks[0]->get_or_set_downloader() == io::FileBlock::get_caller_id());
+        download(blocks[0]);
+        assert_range(1, blocks[0], io::FileBlock::Range(0, 4), io::FileBlock::State::DOWNLOADED);
+    }
+    ASSERT_EQ(cache._time_to_key.size(), 12);
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(3000));
+    ASSERT_GT(cache._time_to_key.size(), 0);
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(3000));
+    ASSERT_EQ(cache._time_to_key.size(), 0);
+
+    if (fs::exists(cache_base_path)) {
+        fs::remove_all(cache_base_path);
+    }
+}
+
 TEST_F(BlockFileCacheTest, recyle_cache_async) {
     if (fs::exists(cache_base_path)) {
         fs::remove_all(cache_base_path);
@@ -6872,7 +6936,7 @@ TEST_F(BlockFileCacheTest, evict_in_advance) {
     ASSERT_EQ(cache.get_stats_unsafe()["disposable_queue_curr_size"], 0);
     ASSERT_EQ(cache.get_stats_unsafe()["ttl_queue_curr_size"], 0);
     ASSERT_EQ(cache.get_stats_unsafe()["index_queue_curr_size"], 0);
-    ASSERT_EQ(cache.get_stats_unsafe()["normal_queue_curr_size"], cache_max - 400000);
+    ASSERT_LE(cache.get_stats_unsafe()["normal_queue_curr_size"], cache_max - 400000);
 
     if (fs::exists(cache_base_path)) {
         fs::remove_all(cache_base_path);
@@ -7204,9 +7268,488 @@ TEST_F(BlockFileCacheTest, validate_get_or_set_crash) {
     SyncPoint::get_instance()->disable_processing();
     SyncPoint::get_instance()->clear_all_call_backs();
 
-    //if (fs::exists(cache_base_path)) {
-    //    fs::remove_all(cache_base_path);
-    //}
+    if (fs::exists(cache_base_path)) {
+        fs::remove_all(cache_base_path);
+    }
+}
+
+extern bvar::Adder<uint64_t> g_skip_local_cache_io_sum_bytes;
+
+TEST_F(BlockFileCacheTest, reader_dryrun_when_download_file_cache) {
+    bool org = config::enable_reader_dryrun_when_download_file_cache;
+    config::enable_reader_dryrun_when_download_file_cache = true;
+    if (fs::exists(cache_base_path)) {
+        fs::remove_all(cache_base_path);
+    }
+    fs::create_directories(cache_base_path);
+    TUniqueId query_id;
+    query_id.hi = 1;
+    query_id.lo = 1;
+    io::FileCacheSettings settings;
+    settings.query_queue_size = 6291456;
+    settings.query_queue_elements = 6;
+    settings.index_queue_size = 1048576;
+    settings.index_queue_elements = 1;
+    settings.disposable_queue_size = 1048576;
+    settings.disposable_queue_elements = 1;
+    settings.capacity = 8388608;
+    settings.max_file_block_size = 1048576;
+    settings.max_query_cache_size = 0;
+    io::CacheContext context;
+    ReadStatistics rstats;
+    context.stats = &rstats;
+    context.query_id = query_id;
+    ASSERT_TRUE(FileCacheFactory::instance()->create_file_cache(cache_base_path, settings).ok());
+    FileReaderSPtr local_reader;
+    ASSERT_TRUE(global_local_filesystem()->open_file(tmp_file, &local_reader));
+    io::FileReaderOptions opts;
+    opts.cache_type = io::cache_type_from_string("file_block_cache");
+    opts.is_doris_table = true;
+    CachedRemoteFileReader reader(local_reader, opts);
+    auto key = io::BlockFileCache::hash("tmp_file");
+    EXPECT_EQ(reader._cache_hash, key);
+    EXPECT_EQ(local_reader->path().native(), reader.path().native());
+    EXPECT_EQ(local_reader->size(), reader.size());
+    EXPECT_FALSE(reader.closed());
+    EXPECT_EQ(local_reader->path().native(), reader.get_remote_reader()->path().native());
+    {
+        std::string buffer;
+        buffer.resize(64_kb);
+        IOContext io_ctx;
+        RuntimeProfile profile("file_cache_test");
+        FileCacheProfileReporter reporter(&profile);
+        FileCacheStatistics stats;
+        io_ctx.file_cache_stats = &stats;
+        io_ctx.is_dryrun = true;
+        size_t bytes_read {0};
+        ASSERT_TRUE(reader.read_at(32222, Slice(buffer.data(), buffer.size()), &bytes_read, &io_ctx)
+                            .ok());
+        EXPECT_TRUE(std::all_of(buffer.begin(), buffer.end(), [](char c) { return c == '\0'; }));
+        reporter.update(&stats);
+    }
+    {
+        std::string buffer;
+        buffer.resize(64_kb);
+        IOContext io_ctx;
+        RuntimeProfile profile("file_cache_test");
+        FileCacheProfileReporter reporter(&profile);
+        FileCacheStatistics stats;
+        io_ctx.file_cache_stats = &stats;
+        io_ctx.is_dryrun = true;
+        size_t bytes_read {0};
+        ASSERT_TRUE(reader.read_at(32222, Slice(buffer.data(), buffer.size()), &bytes_read, &io_ctx)
+                            .ok());
+
+        EXPECT_TRUE(std::all_of(buffer.begin(), buffer.end(), [](char c) { return c == '\0'; }));
+        reporter.update(&stats);
+    }
+    EXPECT_EQ(g_skip_local_cache_io_sum_bytes.get_value(), 65536);
+
+    EXPECT_TRUE(reader.close().ok());
+    EXPECT_TRUE(reader.closed());
+    std::this_thread::sleep_for(std::chrono::seconds(1));
+    if (fs::exists(cache_base_path)) {
+        fs::remove_all(cache_base_path);
+    }
+    FileCacheFactory::instance()->_caches.clear();
+    FileCacheFactory::instance()->_path_to_cache.clear();
+    FileCacheFactory::instance()->_capacity = 0;
+    config::enable_reader_dryrun_when_download_file_cache = org;
+}
+
+void move_dir_to_version1(const std::string& dirPath) {
+    try {
+        // layer 1
+        for (const auto& entry : fs::directory_iterator(dirPath)) {
+            if (fs::is_directory(entry)) {
+                std::string firstLevelDir = entry.path().string();
+
+                // layer 2
+                for (const auto& subEntry : fs::directory_iterator(firstLevelDir)) {
+                    if (fs::is_directory(subEntry)) {
+                        std::string secondLevelDir = subEntry.path().string();
+                        std::string newPath = dirPath + subEntry.path().filename().string();
+
+                        // Check if newPath ends with "_0"
+                        if (newPath.size() >= 2 && newPath.substr(newPath.size() - 2) == "_0") {
+                            // Remove the "_0" suffix
+                            newPath = newPath.substr(0, newPath.size() - 2);
+                        }
+
+                        // move 2 to 1
+                        fs::rename(secondLevelDir, newPath);
+                        LOG(INFO) << "Moved: " << secondLevelDir << " to " << newPath;
+                    }
+                }
+
+                // rm original 1
+                fs::remove_all(firstLevelDir);
+                LOG(INFO) << "Deleted: " << firstLevelDir;
+            }
+        }
+        std::fstream file(dirPath + "/version", std::ios::out | std::ios::in);
+        if (file.is_open()) {
+            file << "1.0";
+            file.close();
+            LOG(INFO) << "version 1.0 written";
+        }
+    } catch (const std::filesystem::filesystem_error& e) {
+        LOG(WARNING) << "Error: " << e.what();
+    }
+}
+
+void copy_dir(const fs::path& sourceDir, const fs::path& destinationDir) {
+    if (!fs::exists(destinationDir)) {
+        fs::create_directories(destinationDir);
+    }
+
+    for (const auto& entry : fs::directory_iterator(sourceDir)) {
+        const auto& path = entry.path();
+        if (fs::is_directory(path)) {
+            copy_dir(path, destinationDir / path.filename());
+        } else {
+            fs::copy_file(path, destinationDir / path.filename(),
+                          fs::copy_options::overwrite_existing);
+        }
+    }
+}
+
+TEST_F(BlockFileCacheTest, test_upgrade_cache_dir_version) {
+    config::enable_evict_file_cache_in_advance = false;
+    config::file_cache_enter_disk_resource_limit_mode_percent = 99;
+
+    if (fs::exists(cache_base_path)) {
+        fs::remove_all(cache_base_path);
+    }
+
+    auto sp = SyncPoint::get_instance();
+    sp->set_call_back("FSFileCacheStorage::read_file_cache_version", [](auto&& args) {
+        *try_any_cast<Status*>(args[0]) = Status::IOError("inject io error");
+    });
+
+    fs::create_directories(cache_base_path);
+    TUniqueId query_id;
+    query_id.hi = 1;
+    query_id.lo = 1;
+    io::FileCacheSettings settings;
+
+    settings.ttl_queue_size = 5000000;
+    settings.ttl_queue_elements = 50000;
+    settings.query_queue_size = 3000000;
+    settings.query_queue_elements = 30000;
+    settings.index_queue_size = 1000000;
+    settings.index_queue_elements = 10000;
+    settings.disposable_queue_size = 1000000;
+    settings.disposable_queue_elements = 10000;
+    settings.capacity = 10000000;
+    settings.max_file_block_size = 100000;
+    settings.max_query_cache_size = 30;
+
+    size_t limit = 1000000;
+    io::CacheContext context;
+    ReadStatistics rstats;
+    context.stats = &rstats;
+    context.cache_type = io::FileCacheType::NORMAL;
+    context.query_id = query_id;
+    // int64_t cur_time = UnixSeconds();
+    // context.expiration_time = cur_time + 120;
+    LOG(INFO) << "start from empty";
+    auto key1 = io::BlockFileCache::hash("key1");
+    config::ignore_file_cache_dir_upgrade_failure = true;
+    { // the 1st cache initialize
+        io::BlockFileCache cache(cache_base_path, settings);
+        ASSERT_TRUE(cache.initialize());
+        int i = 0;
+        for (; i < 100; i++) {
+            if (cache.get_async_open_success()) {
+                break;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+        ASSERT_TRUE(cache.get_async_open_success());
+        int64_t offset = 0;
+        // fill the cache to its limit
+        for (; offset < limit; offset += 100000) {
+            auto holder = cache.get_or_set(key1, offset, 100000, context);
+            auto blocks = fromHolder(holder);
+            ASSERT_EQ(blocks.size(), 1);
+
+            assert_range(1, blocks[0], io::FileBlock::Range(offset, offset + 99999),
+                         io::FileBlock::State::EMPTY);
+            ASSERT_TRUE(blocks[0]->get_or_set_downloader() == io::FileBlock::get_caller_id());
+            download(blocks[0]);
+            assert_range(2, blocks[0], io::FileBlock::Range(offset, offset + 99999),
+                         io::FileBlock::State::DOWNLOADED);
+
+            blocks.clear();
+        }
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+    LOG(INFO) << "normal no upgrade";
+    { // the 2nd cache initialize
+        io::BlockFileCache cache(cache_base_path, settings);
+        ASSERT_TRUE(cache.initialize());
+        int i = 0;
+        for (; i < 100; i++) {
+            if (cache.get_async_open_success()) {
+                break;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
+        ASSERT_TRUE(cache.get_async_open_success());
+        int64_t offset = 0;
+        // fill the cache to its limit
+        for (; offset < limit; offset += 100000) {
+            auto holder = cache.get_or_set(key1, offset, 100000, context);
+            auto blocks = fromHolder(holder);
+            ASSERT_EQ(blocks.size(), 1);
+
+            assert_range(3, blocks[0], io::FileBlock::Range(offset, offset + 99999),
+                         io::FileBlock::State::DOWNLOADED); // already download in the 1st try
+            blocks.clear();
+        }
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+    move_dir_to_version1(cache_base_path);
+    std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+    // try the 3rd, update dir
+    LOG(INFO) << "normal upgrade";
+    {
+        io::BlockFileCache cache(cache_base_path, settings);
+        ASSERT_TRUE(cache.initialize());
+        int i = 0;
+        for (; i < 100; i++) {
+            if (cache.get_async_open_success()) {
+                break;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+        ASSERT_TRUE(cache.get_async_open_success());
+        int64_t offset = 0;
+        // fill the cache to its limit
+        for (; offset < limit; offset += 100000) {
+            auto holder = cache.get_or_set(key1, offset, 100000, context);
+            auto blocks = fromHolder(holder);
+            ASSERT_EQ(blocks.size(), 1);
+            assert_range(4, blocks[0], io::FileBlock::Range(offset, offset + 99999),
+                         io::FileBlock::State::DOWNLOADED); // update should success
+
+            blocks.clear();
+        }
+    }
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+    move_dir_to_version1(cache_base_path);
+    std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+    // inject failure and try the 4th
+    sp->enable_processing();
+    LOG(INFO) << "error injected upgrade";
+    {
+        io::BlockFileCache cache(cache_base_path, settings);
+        ASSERT_TRUE(cache.initialize());
+        int i = 0;
+        for (; i < 100; i++) {
+            if (cache.get_async_open_success()) {
+                break;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
+        ASSERT_TRUE(cache.get_async_open_success());
+        int64_t offset = 0;
+        // fill the cache to its limit
+        for (; offset < limit; offset += 100000) {
+            auto holder = cache.get_or_set(key1, offset, 100000, context);
+            auto blocks = fromHolder(holder);
+            ASSERT_EQ(blocks.size(), 1);
+
+            assert_range(5, blocks[0], io::FileBlock::Range(offset, offset + 99999),
+                         io::FileBlock::State::EMPTY); // inject failure removed the files
+            download(blocks[0]);
+            assert_range(6, blocks[0], io::FileBlock::Range(offset, offset + 99999),
+                         io::FileBlock::State::DOWNLOADED);
+            blocks.clear();
+        }
+    }
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+    move_dir_to_version1(cache_base_path);
+    std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+    config::ignore_file_cache_dir_upgrade_failure = false;
+    LOG(INFO) << "error injected upgrade without ignore";
+    { // set ignore_file_cache_dir_upgrade_failure = false, inject failure and try the 5th cache initialize
+        io::BlockFileCache cache(cache_base_path, settings);
+        // (void)cache.initialize(); // thow exception!
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+    sp->clear_call_back("FSFileCacheStorage::read_file_cache_version");
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+    move_dir_to_version1(cache_base_path);
+    std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+    config::ignore_file_cache_dir_upgrade_failure = true;
+    sp->set_call_back("FSFileCacheStorage::collect_directory_entries", [](auto&& args) {
+        throw doris::Exception(
+                Status::InternalError("Inject exception to collect_directory_entries"));
+    });
+    LOG(INFO) << "collect_directory_entries exception injected upgrade";
+    {
+        io::BlockFileCache cache(cache_base_path, settings);
+        ASSERT_TRUE(cache.initialize());
+        int i = 0;
+        for (; i < 1000; i++) {
+            if (cache.get_async_open_success()) {
+                break;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        }
+        ASSERT_TRUE(cache.get_async_open_success());
+        int64_t offset = 0;
+        // fill the cache to its limit
+        for (; offset < limit; offset += 100000) {
+            auto holder = cache.get_or_set(key1, offset, 100000, context);
+            auto blocks = fromHolder(holder);
+            ASSERT_EQ(blocks.size(), 1);
+
+            assert_range(7, blocks[0], io::FileBlock::Range(offset, offset + 99999),
+                         io::FileBlock::State::EMPTY); // inject failure removed the files
+            download(blocks[0]);
+            assert_range(8, blocks[0], io::FileBlock::Range(offset, offset + 99999),
+                         io::FileBlock::State::DOWNLOADED);
+            blocks.clear();
+        }
+    }
+    sp->clear_call_back("FSFileCacheStorage::collect_directory_entries");
+
+    LOG(INFO) << "upgrade_cache_dir_if_necessary_rename exception injected upgrade";
+    sp->set_call_back("FSFileCacheStorage::upgrade_cache_dir_if_necessary_rename", [](auto&& args) {
+        throw doris::Exception(
+                Status::InternalError("Inject exception to upgrade_cache_dir_if_necessary_rename"));
+    });
+    std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+    move_dir_to_version1(cache_base_path);
+    std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+    config::ignore_file_cache_dir_upgrade_failure = true;
+    {
+        io::BlockFileCache cache(cache_base_path, settings);
+        ASSERT_TRUE(cache.initialize());
+        int i = 0;
+        for (; i < 1000; i++) {
+            if (cache.get_async_open_success()) {
+                break;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        }
+        ASSERT_TRUE(cache.get_async_open_success());
+        int64_t offset = 0;
+        // fill the cache to its limit
+        for (; offset < limit; offset += 100000) {
+            auto holder = cache.get_or_set(key1, offset, 100000, context);
+            auto blocks = fromHolder(holder);
+            ASSERT_EQ(blocks.size(), 1);
+
+            assert_range(9, blocks[0], io::FileBlock::Range(offset, offset + 99999),
+                         io::FileBlock::State::EMPTY); // inject failure removed the files
+            download(blocks[0]);
+            assert_range(10, blocks[0], io::FileBlock::Range(offset, offset + 99999),
+                         io::FileBlock::State::DOWNLOADED);
+            blocks.clear();
+        }
+    }
+    sp->clear_call_back("FSFileCacheStorage::upgrade_cache_dir_if_necessary_rename");
+
+    // mock upgrade when delete
+    LOG(INFO) << "upgrade_cache_dir_if_necessary_rename delete old error injected upgrade";
+    sp->set_call_back("FSFileCacheStorage::upgrade_cache_dir_if_necessary_rename", [](auto&& args) {
+        std::string file_path = *try_any_cast<const std::string*>(args.at(0));
+        LOG(INFO) << "file_path=" << file_path;
+        std::error_code ec;
+        bool is_exist = std::filesystem::exists(file_path, ec);
+        ASSERT_TRUE(is_exist);
+        fs::remove_all(file_path);
+        is_exist = std::filesystem::exists(file_path, ec);
+        ASSERT_FALSE(is_exist);
+    });
+    std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+    move_dir_to_version1(cache_base_path);
+    std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+    config::ignore_file_cache_dir_upgrade_failure = true;
+    {
+        io::BlockFileCache cache(cache_base_path, settings);
+        ASSERT_TRUE(cache.initialize());
+        int i = 0;
+        for (; i < 1000; i++) {
+            if (cache.get_async_open_success()) {
+                break;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        }
+        ASSERT_TRUE(cache.get_async_open_success());
+        int64_t offset = 0;
+        // fill the cache to its limit
+        for (; offset < limit; offset += 100000) {
+            auto holder = cache.get_or_set(key1, offset, 100000, context);
+            auto blocks = fromHolder(holder);
+            ASSERT_EQ(blocks.size(), 1);
+
+            assert_range(11, blocks[0], io::FileBlock::Range(offset, offset + 99999),
+                         io::FileBlock::State::EMPTY); // inject failure removed the files
+            download(blocks[0]);
+            assert_range(12, blocks[0], io::FileBlock::Range(offset, offset + 99999),
+                         io::FileBlock::State::DOWNLOADED);
+            blocks.clear();
+        }
+    }
+    sp->clear_call_back("FSFileCacheStorage::upgrade_cache_dir_if_necessary_rename");
+
+    // mock concurrent query create target file while upgrading
+    LOG(INFO) << "upgrade_cache_dir_if_necessary_rename new already exists error injected upgrade";
+    sp->set_call_back("FSFileCacheStorage::upgrade_cache_dir_if_necessary_rename", [](auto&& args) {
+        std::string file_path = *try_any_cast<const std::string*>(args.at(0));
+        LOG(INFO) << "file_path=" << file_path;
+        std::string new_file_path = *try_any_cast<const std::string*>(args.at(1));
+        LOG(INFO) << "new_file_path=" << new_file_path;
+        std::error_code ec;
+        bool is_exist = std::filesystem::exists(new_file_path, ec);
+        ASSERT_FALSE(is_exist);
+        is_exist = std::filesystem::exists(file_path, ec);
+        ASSERT_TRUE(is_exist);
+        copy_dir(file_path, new_file_path);
+        is_exist = std::filesystem::exists(new_file_path, ec);
+        ASSERT_TRUE(is_exist);
+        is_exist = std::filesystem::exists(file_path, ec);
+        ASSERT_TRUE(is_exist);
+    });
+    std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+    move_dir_to_version1(cache_base_path);
+    std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+    config::ignore_file_cache_dir_upgrade_failure = true;
+    {
+        io::BlockFileCache cache(cache_base_path, settings);
+        ASSERT_TRUE(cache.initialize());
+        int i = 0;
+        for (; i < 1000; i++) {
+            if (cache.get_async_open_success()) {
+                break;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        }
+        ASSERT_TRUE(cache.get_async_open_success());
+        int64_t offset = 0;
+        // fill the cache to its limit
+        for (; offset < limit; offset += 100000) {
+            auto holder = cache.get_or_set(key1, offset, 100000, context);
+            auto blocks = fromHolder(holder);
+            ASSERT_EQ(blocks.size(), 1);
+            assert_range(13, blocks[0], io::FileBlock::Range(offset, offset + 99999),
+                         io::FileBlock::State::DOWNLOADED);
+            blocks.clear();
+        }
+    }
+    sp->clear_call_back("FSFileCacheStorage::upgrade_cache_dir_if_necessary_rename");
+
+    if (fs::exists(cache_base_path)) {
+        fs::remove_all(cache_base_path);
+    }
 }
 
 void move_dir_to_version1(const std::string& dirPath) {

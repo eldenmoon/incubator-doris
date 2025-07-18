@@ -114,6 +114,9 @@ public abstract class ExternalCatalog
     public static final String FOUND_CONFLICTING = "Found conflicting";
     public static final String ONLY_TEST_LOWER_CASE_TABLE_NAMES = "only_test_lower_case_table_names";
 
+    // https://help.aliyun.com/zh/emr/emr-on-ecs/user-guide/use-rootpolicy-to-access-oss-hdfs?spm=a2c4g.11186623.help-menu-search-28066.d_0
+    public static final String OOS_ROOT_POLICY = "oss.root_policy";
+
     // Properties that should not be shown in the `show create catalog` result
     public static final Set<String> HIDDEN_PROPERTIES = Sets.newHashSet(
             CREATE_TIME,
@@ -173,6 +176,17 @@ public abstract class ExternalCatalog
         this.comment = Strings.nullToEmpty(comment);
     }
 
+    /**
+     * Initializes the PreExecutionAuthenticator instance.
+     * This method ensures that the authenticator is created only once in a thread-safe manner.
+     * If additional authentication logic is required, it should be extended and implemented in subclasses.
+     */
+    protected synchronized void initPreExecutionAuthenticator() {
+        if (preExecutionAuthenticator == null) {
+            preExecutionAuthenticator = new PreExecutionAuthenticator();
+        }
+    }
+
     public Configuration getConfiguration() {
         // build configuration is costly, so we cache it.
         if (cachedConf != null) {
@@ -208,6 +222,11 @@ public abstract class ExternalCatalog
         } else {
             return metadataOps.listDatabaseNames();
         }
+    }
+
+    public ExternalMetadataOps getMetadataOps() {
+        makeSureInitialized();
+        return metadataOps;
     }
 
     // Will be called when creating catalog(so when as replaying)
@@ -494,7 +513,23 @@ public abstract class ExternalCatalog
         return remoteToLocalPairs;
     }
 
-    public void onRefresh(boolean invalidCache) {
+    /**
+     * Resets the Catalog state to uninitialized, releases resources held by {@code initLocalObjectsImpl()}
+     * <p>
+     * This method is typically invoked during operations such as {@code CREATE CATALOG}
+     * and {@code MODIFY CATALOG}. It marks the object as uninitialized, clears cached
+     * configurations, and ensures that resources allocated during {@link #initLocalObjectsImpl()}
+     * are properly released via {@link #onClose()}
+     * </p>
+     * <p>
+     * The {@code onClose()} method is responsible for cleaning up resources that were initialized
+     * in {@code initLocalObjectsImpl()}, preventing potential resource leaks.
+     * </p>
+     *
+     * @param invalidCache if {@code true}, the catalog cache will be invalidated
+     *                     and reloaded during the refresh process.
+     */
+    public void resetToUninitialized(boolean invalidCache) {
         this.objectCreated = false;
         this.initialized = false;
         synchronized (this.propLock) {
@@ -504,6 +539,7 @@ public abstract class ExternalCatalog
         synchronized (this.confLock) {
             this.cachedConf = null;
         }
+        onClose();
 
         refreshOnlyCatalogCache(invalidCache);
     }
@@ -717,6 +753,12 @@ public abstract class ExternalCatalog
     @Override
     public void onClose() {
         removeAccessController();
+        if (null != preExecutionAuthenticator) {
+            preExecutionAuthenticator = null;
+        }
+        if (null != transactionManager) {
+            transactionManager = null;
+        }
         CatalogIf.super.onClose();
     }
 
@@ -1111,6 +1153,9 @@ public abstract class ExternalCatalog
     }
 
     public PreExecutionAuthenticator getPreExecutionAuthenticator() {
+        if (null == preExecutionAuthenticator) {
+            throw new RuntimeException("PreExecutionAuthenticator is null, please confirm it is initialized.");
+        }
         return preExecutionAuthenticator;
     }
 

@@ -326,7 +326,7 @@ class Suite implements GroovyInterceptable {
             def user = context.config.jdbcUser
             def password = context.config.jdbcPassword
             Frontend fe = null
-            for (def i=0; fe == null && i<30; i++) {
+            for (def i=0; (fe == null || !fe.alive) && i<30; i++) {
                 if (options.connectToFollower) {
                     fe = cluster.getOneFollowerFe()
                 } else {
@@ -335,7 +335,7 @@ class Suite implements GroovyInterceptable {
                 Thread.sleep(1000)
             }
 
-            logger.info("get fe {}", fe)
+            logger.info("get fe host {} , queryPort {}", fe.host, fe.queryPort)
             assertNotNull(fe)
             if (!isCloud) {
                 for (def be : cluster.getAllBackends()) {
@@ -1568,6 +1568,13 @@ class Suite implements GroovyInterceptable {
     }
 
     DebugPoint GetDebugPoint() {
+        def execType = RegressionTest.getGroupExecType(group);
+        if (execType != RegressionTest.GroupExecType.SINGLE
+            && execType != RegressionTest.GroupExecType.DOCKER) {
+            throw new Exception("Debug point must use in nonConcurrent suite or docker suite, "
+                    + "need add 'nonConcurrent' or 'docker' to suite's belong groups, "
+                    + "see example demo_p0/debugpoint_action.groovy.")
+        }
         return debugPoint
     }
 
@@ -1776,10 +1783,18 @@ class Suite implements GroovyInterceptable {
         List<List<Object>> resultExpected = sql(foldSql)
         logger.info("result expected: " + resultExpected.toString())
 
-        String errorMsg = OutputUtils.checkOutput(resultExpected.iterator(), resultByFoldConstant.iterator(),
+        String errorMsg = null
+        try {
+            errorMsg = OutputUtils.checkOutput(resultExpected.iterator(), resultByFoldConstant.iterator(),
                     { row -> OutputUtils.toCsvString(row as List<Object>) },
                     { row ->  OutputUtils.toCsvString(row) },
                     "check output failed", meta)
+        } catch (Throwable t) {
+            throw new IllegalStateException("Check output failed, sql:\n${foldSql}. error message: \n${errorMsg}", t)
+        }
+        if (errorMsg != null) {
+            throw new IllegalStateException(errorMsg);
+        }
     }
 
     String getJobName(String dbName, String mtmvName) {

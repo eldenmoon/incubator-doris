@@ -25,8 +25,6 @@ import org.apache.doris.common.Config;
 import org.apache.doris.common.DdlException;
 import org.apache.doris.common.Pair;
 import org.apache.doris.common.ThreadPoolManager;
-import org.apache.doris.common.security.authentication.AuthenticationConfig;
-import org.apache.doris.common.security.authentication.HadoopAuthenticator;
 import org.apache.doris.common.security.authentication.PreExecutionAuthenticator;
 import org.apache.doris.common.util.Util;
 import org.apache.doris.datasource.CatalogProperty;
@@ -53,7 +51,6 @@ import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Strings;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
-import lombok.Getter;
 import org.apache.commons.lang3.math.NumberUtils;
 import org.apache.hadoop.hive.conf.HiveConf;
 import org.apache.iceberg.hive.HiveCatalog;
@@ -73,18 +70,24 @@ public class HMSExternalCatalog extends ExternalCatalog {
     private static final Logger LOG = LogManager.getLogger(HMSExternalCatalog.class);
 
     public static final String FILE_META_CACHE_TTL_SECOND = "file.meta.cache.ttl-second";
+    public static final String PARTITION_CACHE_TTL_SECOND = "partition.cache.ttl-second";
     // broker name for file split and query scan.
     public static final String BIND_BROKER_NAME = "broker.name";
+    // Default is false, if set to true, will get table schema from "remoteTable" instead of from hive metastore.
+    // This is because for some forward compatibility issue of hive metastore, there maybe
+    // "storage schema reading not support" error being thrown.
+    // set this to true can avoid this error.
+    // But notice that if set to true, the default value of column will be ignored because we cannot get default value
+    // from remoteTable object.
+    public static final String GET_SCHEMA_FROM_TABLE = "get_schema_from_table";
 
-    // -1 means file cache no ttl set
-    public static final int FILE_META_CACHE_NO_TTL = -1;
-    // 0 means file cache is disabled; >0 means file cache with ttl;
-    public static final int FILE_META_CACHE_TTL_DISABLE_CACHE = 0;
+    // -1 means cache with no ttl
+    public static final int CACHE_NO_TTL = -1;
+    // 0 means cache is disabled; >0 means cache with ttl;
+    public static final int CACHE_TTL_DISABLE_CACHE = 0;
 
     private static final int FILE_SYSTEM_EXECUTOR_THREAD_NUM = 16;
     private ThreadPoolExecutor fileSystemExecutor;
-    @Getter
-    private HadoopAuthenticator authenticator;
 
     private int hmsEventsBatchSizePerRpc = -1;
     private boolean enableHmsEventsIncrementalSync = false;
@@ -112,11 +115,20 @@ public class HMSExternalCatalog extends ExternalCatalog {
         super.checkProperties();
         // check file.meta.cache.ttl-second parameter
         String fileMetaCacheTtlSecond = catalogProperty.getOrDefault(FILE_META_CACHE_TTL_SECOND, null);
-        if (Objects.nonNull(fileMetaCacheTtlSecond) && NumberUtils.toInt(fileMetaCacheTtlSecond, FILE_META_CACHE_NO_TTL)
-                < FILE_META_CACHE_TTL_DISABLE_CACHE) {
+        if (Objects.nonNull(fileMetaCacheTtlSecond) && NumberUtils.toInt(fileMetaCacheTtlSecond, CACHE_NO_TTL)
+                < CACHE_TTL_DISABLE_CACHE) {
             throw new DdlException(
                     "The parameter " + FILE_META_CACHE_TTL_SECOND + " is wrong, value is " + fileMetaCacheTtlSecond);
         }
+
+        // check partition.cache.ttl-second parameter
+        String partitionCacheTtlSecond = catalogProperty.getOrDefault(PARTITION_CACHE_TTL_SECOND, null);
+        if (Objects.nonNull(partitionCacheTtlSecond) && NumberUtils.toInt(partitionCacheTtlSecond, CACHE_NO_TTL)
+                < CACHE_TTL_DISABLE_CACHE) {
+            throw new DdlException(
+                    "The parameter " + PARTITION_CACHE_TTL_SECOND + " is wrong, value is " + partitionCacheTtlSecond);
+        }
+
         // check the dfs.ha properties
         // 'dfs.nameservices'='your-nameservice',
         // 'dfs.ha.namenodes.your-nameservice'='nn1,nn2',
@@ -153,14 +165,15 @@ public class HMSExternalCatalog extends ExternalCatalog {
     }
 
     @Override
-    protected void initLocalObjectsImpl() {
-        this.preExecutionAuthenticator = new PreExecutionAuthenticator();
-        if (this.authenticator == null) {
-            AuthenticationConfig config = AuthenticationConfig.getKerberosConfig(getConfiguration());
-            this.authenticator = HadoopAuthenticator.getHadoopAuthenticator(config);
-            this.preExecutionAuthenticator.setHadoopAuthenticator(authenticator);
+    protected synchronized void initPreExecutionAuthenticator() {
+        if (preExecutionAuthenticator == null) {
+            preExecutionAuthenticator = new PreExecutionAuthenticator(getConfiguration());
         }
+    }
 
+    @Override
+    protected void initLocalObjectsImpl() {
+        initPreExecutionAuthenticator();
         HiveConf hiveConf = null;
         JdbcClientConfig jdbcClientConfig = null;
         String hiveMetastoreType = catalogProperty.getOrDefault(HMSProperties.HIVE_METASTORE_TYPE, "");
@@ -176,7 +189,7 @@ public class HMSExternalCatalog extends ExternalCatalog {
             for (Map.Entry<String, String> kv : catalogProperty.getHadoopProperties().entrySet()) {
                 hiveConf.set(kv.getKey(), kv.getValue());
             }
-            hiveConf.set(HiveConf.ConfVars.METASTORE_CLIENT_SOCKET_TIMEOUT.name(),
+            HiveConf.setVar(hiveConf, HiveConf.ConfVars.METASTORE_CLIENT_SOCKET_TIMEOUT,
                     String.valueOf(Config.hive_metastore_client_timeout_second));
         }
         HiveMetadataOps hiveOps = ExternalMetadataOperations.newHiveMetadataOps(hiveConf, jdbcClientConfig, this);
@@ -190,10 +203,21 @@ public class HMSExternalCatalog extends ExternalCatalog {
     }
 
     @Override
-    public void onRefresh(boolean invalidCache) {
-        super.onRefresh(invalidCache);
+    public void resetToUninitialized(boolean invalidCache) {
+        super.resetToUninitialized(invalidCache);
         if (metadataOps != null) {
             metadataOps.close();
+        }
+    }
+
+    @Override
+    public void onClose() {
+        super.onClose();
+        if (null != fileSystemExecutor) {
+            fileSystemExecutor.shutdown();
+        }
+        if (null != icebergMetadataOps) {
+            icebergMetadataOps.close();
         }
     }
 
@@ -264,8 +288,9 @@ public class HMSExternalCatalog extends ExternalCatalog {
     public void notifyPropertiesUpdated(Map<String, String> updatedProps) {
         super.notifyPropertiesUpdated(updatedProps);
         String fileMetaCacheTtl = updatedProps.getOrDefault(FILE_META_CACHE_TTL_SECOND, null);
-        if (Objects.nonNull(fileMetaCacheTtl)) {
-            Env.getCurrentEnv().getExtMetaCacheMgr().getMetaStoreCache(this).setNewFileCache();
+        String partitionCacheTtl = updatedProps.getOrDefault(PARTITION_CACHE_TTL_SECOND, null);
+        if (Objects.nonNull(fileMetaCacheTtl) || Objects.nonNull(partitionCacheTtl)) {
+            Env.getCurrentEnv().getExtMetaCacheMgr().getMetaStoreCache(this).init();
         }
     }
 

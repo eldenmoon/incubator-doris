@@ -20,6 +20,8 @@
 #include <ctype.h>
 #include <math.h>
 #include <re2/stringpiece.h>
+#include <unicode/schriter.h>
+#include <unicode/uchar.h>
 #include <unicode/unistr.h>
 #include <unicode/ustream.h>
 
@@ -512,8 +514,22 @@ struct NameToInitcap {
 struct InitcapImpl {
     static Status vector(const ColumnString::Chars& data, const ColumnString::Offsets& offsets,
                          ColumnString::Chars& res_data, ColumnString::Offsets& res_offsets) {
-        size_t offset_size = offsets.size();
         res_offsets.resize(offsets.size());
+
+        const bool is_ascii = simd::VStringFunctions::is_ascii({data.data(), data.size()});
+        if (is_ascii) {
+            impl_vectors_ascii(data, offsets, res_data, res_offsets);
+        } else {
+            impl_vectors_utf8(data, offsets, res_data, res_offsets);
+        }
+        return Status::OK();
+    }
+
+    static void impl_vectors_ascii(const ColumnString::Chars& data,
+                                   const ColumnString::Offsets& offsets,
+                                   ColumnString::Chars& res_data,
+                                   ColumnString::Offsets& res_offsets) {
+        size_t offset_size = offsets.size();
         memcpy_small_allow_read_write_overflow15(
                 res_offsets.data(), offsets.data(),
                 offset_size * sizeof(ColumnString::Offsets::value_type));
@@ -538,7 +554,40 @@ struct InitcapImpl {
 
             start_index = end_index;
         }
-        return Status::OK();
+    }
+
+    static void impl_vectors_utf8(const ColumnString::Chars& data,
+                                  const ColumnString::Offsets& offsets,
+                                  ColumnString::Chars& res_data,
+                                  ColumnString::Offsets& res_offsets) {
+        std::string result;
+        for (int64_t i = 0; i < offsets.size(); ++i) {
+            const char* begin = reinterpret_cast<const char*>(&data[offsets[i - 1]]);
+            uint32_t size = offsets[i] - offsets[i - 1];
+            result.clear();
+            to_initcap_utf8(begin, size, result);
+            StringOP::push_value_string(result, i, res_data, res_offsets);
+        }
+    }
+
+    static void to_initcap_utf8(const char* data, uint32_t size, std::string& result) {
+        icu::StringPiece sp;
+        sp.set(data, size);
+        icu::UnicodeString unicode_str = icu::UnicodeString::fromUTF8(sp);
+        unicode_str.toLower();
+        icu::UnicodeString output_str;
+        bool need_capitalize = true;
+        icu::StringCharacterIterator iter(unicode_str);
+        for (UChar32 ch = iter.first32(); ch != icu::CharacterIterator::DONE; ch = iter.next32()) {
+            if (!u_isalnum(ch)) {
+                need_capitalize = true;
+            } else if (need_capitalize) {
+                ch = u_toupper(ch);
+                need_capitalize = false;
+            }
+            output_str.append(ch);
+        }
+        output_str.toUTF8String(result);
     }
 };
 
@@ -830,9 +879,19 @@ public:
     }
 };
 
-static constexpr int MAX_STACK_CIPHER_LEN = 1024 * 64;
-struct UnHexImpl {
+struct UnHexImplEmpty {
     static constexpr auto name = "unhex";
+};
+
+struct UnHexImplNull {
+    static constexpr auto name = "unhex_null";
+};
+
+static constexpr int MAX_STACK_CIPHER_LEN = 1024 * 64;
+
+template <typename Name>
+struct UnHexImpl {
+    static constexpr auto name = Name::name;
     using ReturnType = DataTypeString;
     using ColumnType = ColumnString;
 
@@ -908,6 +967,42 @@ struct UnHexImpl {
             }
 
             int outlen = hex_decode(source, srclen, dst);
+            StringOP::push_value_string(std::string_view(dst, outlen), i, dst_data, dst_offsets);
+        }
+
+        return Status::OK();
+    }
+
+    static Status vector(const ColumnString::Chars& data, const ColumnString::Offsets& offsets,
+                         ColumnString::Chars& dst_data, ColumnString::Offsets& dst_offsets,
+                         ColumnUInt8::Container* null_map_data) {
+        auto rows_count = offsets.size();
+        dst_offsets.resize(rows_count);
+
+        for (int i = 0; i < rows_count; ++i) {
+            const auto* source = reinterpret_cast<const char*>(&data[offsets[i - 1]]);
+            ColumnString::Offset srclen = offsets[i] - offsets[i - 1];
+
+            if (srclen == 0) {
+                StringOP::push_null_string(i, dst_data, dst_offsets, *null_map_data);
+                continue;
+            }
+
+            char dst_array[MAX_STACK_CIPHER_LEN];
+            char* dst = dst_array;
+
+            int cipher_len = srclen / 2;
+            std::unique_ptr<char[]> dst_uptr;
+            if (cipher_len > MAX_STACK_CIPHER_LEN) {
+                dst_uptr.reset(new char[cipher_len]);
+                dst = dst_uptr.get();
+            }
+
+            int outlen = hex_decode(source, srclen, dst);
+            if (outlen == 0) {
+                StringOP::push_null_string(i, dst_data, dst_offsets, *null_map_data);
+                continue;
+            }
 
             StringOP::push_value_string(std::string_view(dst, outlen), i, dst_data, dst_offsets);
         }
@@ -1042,6 +1137,15 @@ struct StringAppendTrailingCharIfAbsent {
     using Offsets = ColumnString::Offsets;
     using ReturnType = DataTypeString;
     using ColumnType = ColumnString;
+
+    static bool str_end_with(const StringRef& str, const StringRef& end) {
+        if (str.size < end.size) {
+            return false;
+        }
+        // The end_with method of StringRef needs to ensure that the size of end is less than or equal to the size of str.
+        return str.end_with(end);
+    }
+
     static void vector_vector(FunctionContext* context, const Chars& ldata, const Offsets& loffsets,
                               const Chars& rdata, const Offsets& roffsets, Chars& res_data,
                               Offsets& res_offsets, NullMap& null_map_data) {
@@ -1053,36 +1157,39 @@ struct StringAppendTrailingCharIfAbsent {
         for (size_t i = 0; i < input_rows_count; ++i) {
             buffer.clear();
 
-            int l_size = loffsets[i] - loffsets[i - 1];
-            const auto l_raw = reinterpret_cast<const char*>(&ldata[loffsets[i - 1]]);
+            StringRef lstr = StringRef(reinterpret_cast<const char*>(&ldata[loffsets[i - 1]]),
+                                       loffsets[i] - loffsets[i - 1]);
+            StringRef rstr = StringRef(reinterpret_cast<const char*>(&rdata[roffsets[i - 1]]),
+                                       roffsets[i] - roffsets[i - 1]);
+            // The iterate_utf8_with_limit_length function iterates over a maximum of two UTF-8 characters.
+            auto [byte_len, char_len] = simd::VStringFunctions::iterate_utf8_with_limit_length(
+                    rstr.begin(), rstr.end(), 2);
 
-            int r_size = roffsets[i] - roffsets[i - 1];
-            const auto r_raw = reinterpret_cast<const char*>(&rdata[roffsets[i - 1]]);
-
-            if (r_size != 1) {
+            if (char_len != 1) {
                 StringOP::push_null_string(i, res_data, res_offsets, null_map_data);
                 continue;
             }
-            if (l_raw[l_size - 1] == r_raw[0]) {
-                StringOP::push_value_string(std::string_view(l_raw, l_size), i, res_data,
-                                            res_offsets);
+            if (str_end_with(lstr, rstr)) {
+                StringOP::push_value_string(lstr, i, res_data, res_offsets);
                 continue;
             }
 
-            buffer.append(l_raw, l_raw + l_size);
-            buffer.append(r_raw, r_raw + 1);
+            buffer.append(lstr.begin(), lstr.end());
+            buffer.append(rstr.begin(), rstr.end());
             StringOP::push_value_string(std::string_view(buffer.data(), buffer.size()), i, res_data,
                                         res_offsets);
         }
     }
     static void vector_scalar(FunctionContext* context, const Chars& ldata, const Offsets& loffsets,
-                              const StringRef& rdata, Chars& res_data, Offsets& res_offsets,
+                              const StringRef& rstr, Chars& res_data, Offsets& res_offsets,
                               NullMap& null_map_data) {
         size_t input_rows_count = loffsets.size();
         res_offsets.resize(input_rows_count);
         fmt::memory_buffer buffer;
-
-        if (rdata.size != 1) {
+        // The iterate_utf8_with_limit_length function iterates over a maximum of two UTF-8 characters.
+        auto [byte_len, char_len] =
+                simd::VStringFunctions::iterate_utf8_with_limit_length(rstr.begin(), rstr.end(), 2);
+        if (char_len != 1) {
             for (size_t i = 0; i < input_rows_count; ++i) {
                 StringOP::push_null_string(i, res_data, res_offsets, null_map_data);
             }
@@ -1091,23 +1198,21 @@ struct StringAppendTrailingCharIfAbsent {
 
         for (size_t i = 0; i < input_rows_count; ++i) {
             buffer.clear();
+            StringRef lstr = StringRef(reinterpret_cast<const char*>(&ldata[loffsets[i - 1]]),
+                                       loffsets[i] - loffsets[i - 1]);
 
-            int l_size = loffsets[i] - loffsets[i - 1];
-            const auto l_raw = reinterpret_cast<const char*>(&ldata[loffsets[i - 1]]);
-
-            if (l_raw[l_size - 1] == rdata.data[0]) {
-                StringOP::push_value_string(std::string_view(l_raw, l_size), i, res_data,
-                                            res_offsets);
+            if (str_end_with(lstr, rstr)) {
+                StringOP::push_value_string(lstr, i, res_data, res_offsets);
                 continue;
             }
 
-            buffer.append(l_raw, l_raw + l_size);
-            buffer.append(rdata.begin(), rdata.end());
+            buffer.append(lstr.begin(), lstr.end());
+            buffer.append(rstr.begin(), rstr.end());
             StringOP::push_value_string(std::string_view(buffer.data(), buffer.size()), i, res_data,
                                         res_offsets);
         }
     }
-    static void scalar_vector(FunctionContext* context, const StringRef& ldata, const Chars& rdata,
+    static void scalar_vector(FunctionContext* context, const StringRef& lstr, const Chars& rdata,
                               const Offsets& roffsets, Chars& res_data, Offsets& res_offsets,
                               NullMap& null_map_data) {
         size_t input_rows_count = roffsets.size();
@@ -1117,20 +1222,23 @@ struct StringAppendTrailingCharIfAbsent {
         for (size_t i = 0; i < input_rows_count; ++i) {
             buffer.clear();
 
-            int r_size = roffsets[i] - roffsets[i - 1];
-            const auto r_raw = reinterpret_cast<const char*>(&rdata[roffsets[i - 1]]);
+            StringRef rstr = StringRef(reinterpret_cast<const char*>(&rdata[roffsets[i - 1]]),
+                                       roffsets[i] - roffsets[i - 1]);
+            // The iterate_utf8_with_limit_length function iterates over a maximum of two UTF-8 characters.
+            auto [byte_len, char_len] = simd::VStringFunctions::iterate_utf8_with_limit_length(
+                    rstr.begin(), rstr.end(), 2);
 
-            if (r_size != 1) {
+            if (char_len != 1) {
                 StringOP::push_null_string(i, res_data, res_offsets, null_map_data);
                 continue;
             }
-            if (ldata.size == 0 || ldata.back() == r_raw[0]) {
-                StringOP::push_value_string(ldata.to_string_view(), i, res_data, res_offsets);
+            if (str_end_with(lstr, rstr)) {
+                StringOP::push_value_string(lstr, i, res_data, res_offsets);
                 continue;
             }
 
-            buffer.append(ldata.begin(), ldata.end());
-            buffer.append(r_raw, r_raw + 1);
+            buffer.append(lstr.begin(), lstr.end());
+            buffer.append(rstr.begin(), rstr.end());
             StringOP::push_value_string(std::string_view(buffer.data(), buffer.size()), i, res_data,
                                         res_offsets);
         }
@@ -1181,8 +1289,9 @@ using FunctionToUpper = FunctionStringToString<TransferImpl<NameToUpper>, NameTo
 
 using FunctionToInitcap = FunctionStringToString<InitcapImpl, NameToInitcap>;
 
-using FunctionUnHex = FunctionStringEncode<UnHexImpl>;
-using FunctionToBase64 = FunctionStringEncode<ToBase64Impl>;
+using FunctionUnHex = FunctionStringEncode<UnHexImpl<UnHexImplEmpty>, false>;
+using FunctionUnHexNullable = FunctionStringEncode<UnHexImpl<UnHexImplNull>, true>;
+using FunctionToBase64 = FunctionStringEncode<ToBase64Impl, false>;
 using FunctionFromBase64 = FunctionStringOperateToNullType<FromBase64Impl>;
 
 using FunctionStringAppendTrailingCharIfAbsent =
@@ -1207,6 +1316,7 @@ void register_function_string(SimpleFunctionFactory& factory) {
     factory.register_function<FunctionAutoPartitionName>();
     factory.register_function<FunctionReverseCommon>();
     factory.register_function<FunctionUnHex>();
+    factory.register_function<FunctionUnHexNullable>();
     factory.register_function<FunctionToLower>();
     factory.register_function<FunctionToUpper>();
     factory.register_function<FunctionToInitcap>();
@@ -1251,6 +1361,10 @@ void register_function_string(SimpleFunctionFactory& factory) {
     factory.register_function<FunctionMoneyFormat<MoneyFormatInt64Impl>>();
     factory.register_function<FunctionMoneyFormat<MoneyFormatInt128Impl>>();
     factory.register_function<FunctionMoneyFormat<MoneyFormatDecimalImpl>>();
+    factory.register_function<FunctionStringFormatRound<FormatRoundDoubleImpl>>();
+    factory.register_function<FunctionStringFormatRound<FormatRoundInt64Impl>>();
+    factory.register_function<FunctionStringFormatRound<FormatRoundInt128Impl>>();
+    factory.register_function<FunctionStringFormatRound<FormatRoundDecimalImpl>>();
     factory.register_function<FunctionStringDigestOneArg<SM3Sum>>();
     factory.register_function<FunctionStringDigestOneArg<MD5Sum>>();
     factory.register_function<FunctionStringDigestSHA1>();
@@ -1266,6 +1380,7 @@ void register_function_string(SimpleFunctionFactory& factory) {
     factory.register_function<FunctionOverlay>();
     factory.register_function<FunctionStrcmp>();
     factory.register_function<FunctionNgramSearch>();
+    factory.register_function<FunctionXPathString>();
 
     factory.register_alias(FunctionLeft::name, "strleft");
     factory.register_alias(FunctionRight::name, "strright");

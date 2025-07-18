@@ -260,6 +260,12 @@ Status DataTypeStructSerDe::deserialize_one_cell_from_hive_text(
         }
     }
     auto& struct_column = static_cast<ColumnStruct&>(column);
+
+    for (auto i = slices.size(); i < struct_column.get_columns().size(); ++i) {
+        // Hive schema change will cause the number of sub-columns in the file to
+        // be inconsistent with the number of sub-columns of the column in the table.
+        slices.emplace_back(options.null_format, options.null_len);
+    }
     for (size_t loc = 0; loc < struct_column.get_columns().size(); loc++) {
         Status st = elem_serdes_ptrs[loc]->deserialize_one_cell_from_hive_text(
                 struct_column.get_column(loc), slices[loc], options,
@@ -352,7 +358,8 @@ Status DataTypeStructSerDe::_write_column_to_mysql(const IColumn& column,
     bool begin = true;
     for (size_t j = 0; j < elem_serdes_ptrs.size(); ++j) {
         if (!begin) {
-            if (0 != result.push_string(", ", 2)) {
+            if (0 != result.push_string(options.mysql_collection_delim.c_str(),
+                                        options.mysql_collection_delim.size())) {
                 return Status::InternalError("pack mysql buffer failed.");
             }
         }
@@ -376,6 +383,7 @@ Status DataTypeStructSerDe::_write_column_to_mysql(const IColumn& column,
                 return Status::InternalError("pack mysql buffer failed.");
             }
         } else {
+            ++options.level;
             if (remove_nullable(col.get_column_ptr(j))->is_column_string() &&
                 options.wrapper_len > 0) {
                 if (0 != result.push_string(options.nested_string_wrapper, options.wrapper_len)) {
@@ -390,6 +398,7 @@ Status DataTypeStructSerDe::_write_column_to_mysql(const IColumn& column,
                 RETURN_IF_ERROR(elem_serdes_ptrs[j]->write_column_to_mysql(
                         col.get_column(j), result, col_index, false, options));
             }
+            --options.level;
         }
         begin = false;
     }

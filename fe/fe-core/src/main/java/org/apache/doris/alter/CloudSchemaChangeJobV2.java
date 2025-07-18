@@ -141,7 +141,11 @@ public class CloudSchemaChangeJobV2 extends SchemaChangeJobV2 {
                         Long originTabletId = entry.getValue();
                         ((CloudInternalCatalog) Env.getCurrentInternalCatalog())
                                 .removeSchemaChangeJob(jobId, dbId, tableId, originIndexId, shadowIndexId,
+<<<<<<< HEAD
                                     partitionId, originTabletId, shadowTabletId);
+=======
+                                        partitionId, originTabletId, shadowTabletId);
+>>>>>>> 3.0.6.2
                     }
                     LOG.info("Cancel SchemaChange. Remove SchemaChangeJob in ms."
                             + "dbId:{}, tableId:{}, originIndexId:{}, partitionId:{}. tabletSize:{}",

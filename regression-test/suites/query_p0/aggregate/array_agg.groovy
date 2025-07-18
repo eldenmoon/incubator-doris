@@ -276,6 +276,22 @@ suite("array_agg") {
     order_qt_sql_array_agg_array """ SELECT id, array_agg(kastr) FROM test_array_agg_complex GROUP BY id ORDER BY id """
     order_qt_sql_array_agg_map """ SELECT id, array_agg(km) FROM test_array_agg_complex GROUP BY id ORDER BY id """
     order_qt_sql_array_agg_struct """ SELECT id, array_agg(ks) FROM test_array_agg_complex GROUP BY id ORDER BY id """
+    order_qt_sql_collect_list_array """ SELECT id, collect_list(kastr) FROM test_array_agg_complex GROUP BY id ORDER BY id """
+    order_qt_sql_collect_list_map """ SELECT id, collect_list(km) FROM test_array_agg_complex GROUP BY id ORDER BY id """
+    order_qt_sql_collect_list_struct """ SELECT id, collect_list(ks) FROM test_array_agg_complex GROUP BY id ORDER BY id """
+    order_qt_sql_group_array_array """ SELECT group_array(kastr) FROM test_array_agg_complex GROUP BY id ORDER BY id """
+    order_qt_sql_group_array_map """ SELECT group_array(km) FROM test_array_agg_complex GROUP BY id ORDER BY id """
+    order_qt_sql_group_array_struct """ SELECT group_array(ks) FROM test_array_agg_complex GROUP BY id ORDER BY id """
+    // add limit for param
+    order_qt_sql_array_agg_array_limit """ SELECT id, array_agg(kastr) FROM test_array_agg_complex GROUP BY id ORDER BY id """
+    order_qt_sql_array_agg_map_limit """ SELECT id, array_agg(km) FROM test_array_agg_complex GROUP BY id ORDER BY id """
+    order_qt_sql_array_agg_struct_limit """ SELECT id, array_agg(ks) FROM test_array_agg_complex GROUP BY id ORDER BY id"""
+    order_qt_sql_collect_list_array_limit """ SELECT id, collect_list(kastr, 2) FROM test_array_agg_complex GROUP BY id ORDER BY id"""
+    order_qt_sql_collect_list_map_limit """ SELECT id, collect_list(km, 2) FROM test_array_agg_complex GROUP BY id ORDER BY id"""
+    order_qt_sql_collect_list_struct_limit """ SELECT id, collect_list(ks, 3) FROM test_array_agg_complex GROUP BY id ORDER BY id"""
+    order_qt_sql_group_array_array_limit """ SELECT group_array(kastr, 3) FROM test_array_agg_complex GROUP BY id ORDER BY id"""
+    order_qt_sql_group_array_map_limit """ SELECT group_array(km, 7) FROM test_array_agg_complex GROUP BY id ORDER BY id"""
+    order_qt_sql_group_array_struct_limit """ SELECT group_array(ks, 7) FROM test_array_agg_complex GROUP BY id ORDER BY id"""
 
 
  sql """ DROP TABLE IF EXISTS test_array_agg_ip;"""
@@ -291,4 +307,35 @@ suite("array_agg") {
 
 
      qt_select """select array_sort(array_agg(k4)),array_sort(array_agg(k6)) from test_array_agg_ip """
+
+
+
+    sql """ drop table if exists test_user_tags;"""
+
+    sql """
+    CREATE TABLE test_user_tags (
+        k1 varchar(150) NULL,
+        k2 varchar(150) NULL,
+        k3 varchar(150) NULL,
+        k4 array<varchar(150)> NULL,
+        k5 array<varchar(150)> NULL,
+        k6 datetime NULL
+    ) ENGINE=OLAP
+    UNIQUE KEY(k1, k2, k3)
+    DISTRIBUTED BY HASH(k2) BUCKETS 3
+    PROPERTIES ("replication_allocation" = "tag.location.default: 1");
+    """
+    
+    sql """
+    INSERT INTO test_user_tags VALUES
+          ('corp001', 'wx001', 'vip', ['id1', 'id2'], ['tag1', 'tag2'], '2023-01-01 10:00:00'),
+          ('corp001', 'wx001', 'level', ['id3'], ['tag3'], '2023-01-01 10:00:00'),
+          ('corp002', 'wx002', 'vip', ['id4', 'id5'], ['tag4', 'tag5'], '2023-01-02 10:00:00');
+    """
+    sql "SET spill_streaming_agg_mem_limit = 1024;"
+    sql "SET enable_agg_spill = true;"
+    
+    qt_select """ SELECT k1,array_agg(k5) FROM test_user_tags group by k1 order by k1; """
+
+    sql "UNSET VARIABLE ALL;"
 }

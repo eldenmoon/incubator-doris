@@ -48,6 +48,7 @@ import org.apache.doris.common.SchemaVersionAndHash;
 import org.apache.doris.common.UserException;
 import org.apache.doris.common.io.Text;
 import org.apache.doris.common.util.DbUtil;
+import org.apache.doris.common.util.DebugPointUtil;
 import org.apache.doris.common.util.TimeUtils;
 import org.apache.doris.persist.gson.GsonUtils;
 import org.apache.doris.task.AgentBatchTask;
@@ -377,6 +378,14 @@ public class SchemaChangeJobV2 extends AlterJobV2 {
 
         // create all replicas success.
         // add all shadow indexes to catalog
+        while (DebugPointUtil.isEnable("FE.SchemaChangeJobV2.createShadowIndexReplica.addShadowIndexToCatalog.block")) {
+            try {
+                Thread.sleep(1000);
+                LOG.info("block addShadowIndexToCatalog for job: {}", jobId);
+            } catch (InterruptedException e) {
+                LOG.warn("InterruptedException: ", e);
+            }
+        }
         tbl.writeLockOrAlterCancelException();
         try {
             Preconditions.checkState(tbl.getState() == OlapTableState.SCHEMA_CHANGE);
@@ -583,30 +592,39 @@ public class SchemaChangeJobV2 extends AlterJobV2 {
                     if (task.getErrorCode() != null && task.getErrorCode()
                             .equals(TStatusCode.DELETE_BITMAP_LOCK_ERROR)) {
                         maxFailedTimes = Config.schema_change_max_retry_time;
-                        LOG.warn("schema change task failed: {}, set maxFailedTimes {}", task.getErrorMsg(),
-                                maxFailedTimes);
                     }
                 }
                 if (task.getFailedTimes() > maxFailedTimes) {
                     task.setFinished(true);
-                    AgentTaskQueue.removeTask(task.getBackendId(), TTaskType.ALTER, task.getSignature());
-                    LOG.warn("schema change task failed: {}", task.getErrorMsg());
-                    List<Long> failedBackends = failedTabletBackends.get(task.getTabletId());
-                    if (failedBackends == null) {
-                        failedBackends = Lists.newArrayList();
-                        failedTabletBackends.put(task.getTabletId(), failedBackends);
-                    }
-                    failedBackends.add(task.getBackendId());
-                    int expectSucceedTaskNum = tbl.getPartitionInfo()
-                            .getReplicaAllocation(task.getPartitionId()).getTotalReplicaNum();
-                    int failedTaskCount = failedBackends.size();
-                    if (expectSucceedTaskNum - failedTaskCount < expectSucceedTaskNum / 2 + 1) {
-                        throw new AlterCancelException(
+                    if (!FeConstants.runningUnitTest) {
+                        AgentTaskQueue.removeTask(task.getBackendId(), TTaskType.ALTER, task.getSignature());
+                        LOG.warn("schema change task failed, failedTimes: {}, maxFailedTimes: {}, err: {}",
+                                task.getFailedTimes(), maxFailedTimes, task.getErrorMsg());
+                        List<Long> failedBackends = failedTabletBackends.get(task.getTabletId());
+                        if (failedBackends == null) {
+                            failedBackends = Lists.newArrayList();
+                            failedTabletBackends.put(task.getTabletId(), failedBackends);
+                        }
+                        failedBackends.add(task.getBackendId());
+                        int expectSucceedTaskNum = tbl.getPartitionInfo()
+                                .getReplicaAllocation(task.getPartitionId()).getTotalReplicaNum();
+                        int failedTaskCount = failedBackends.size();
+                        if (expectSucceedTaskNum - failedTaskCount < expectSucceedTaskNum / 2 + 1) {
+                            throw new AlterCancelException(
                                 String.format("schema change tasks failed, error reason: %s", task.getErrorMsg()));
+                        }
                     }
                 }
             }
             return;
+        }
+        while (DebugPointUtil.isEnable("FE.SchemaChangeJobV2.runRunning.block")) {
+            try {
+                Thread.sleep(1000);
+                LOG.info("block schema change for job: {}", jobId);
+            } catch (InterruptedException e) {
+                LOG.warn("InterruptedException: ", e);
+            }
         }
         Env.getCurrentEnv().getGroupCommitManager().blockTable(tableId);
         Env.getCurrentEnv().getGroupCommitManager().waitWalFinished(tableId);
@@ -649,13 +667,14 @@ public class SchemaChangeJobV2 extends AlterJobV2 {
                                 healthyReplicaNum++;
                             }
                         }
-
-                        if (healthyReplicaNum < expectReplicationNum / 2 + 1) {
-                            LOG.warn("shadow tablet {} has few healthy replicas: {}, schema change job: {}"
-                                    + " healthyReplicaNum {} expectReplicationNum {}",
-                                    shadowTablet.getId(), replicas, jobId, healthyReplicaNum, expectReplicationNum);
-                            throw new AlterCancelException(
+                        if (!FeConstants.runningUnitTest) {
+                            if (healthyReplicaNum < expectReplicationNum / 2 + 1) {
+                                LOG.warn("shadow tablet {} has few healthy replicas: {}, schema change job: {}"
+                                        + " healthyReplicaNum {} expectReplicationNum {}",
+                                        shadowTablet.getId(), replicas, jobId, healthyReplicaNum, expectReplicationNum);
+                                throw new AlterCancelException(
                                     "shadow tablet " + shadowTablet.getId() + " has few healthy replicas");
+                            }
                         }
                     } // end for tablets
                 }
@@ -790,7 +809,6 @@ public class SchemaChangeJobV2 extends AlterJobV2 {
 
         cancelInternal();
 
-        pruneMeta();
         this.errMsg = errMsg;
         this.finishedTimeMs = System.currentTimeMillis();
         changeTableState(dbId, tableId, OlapTableState.NORMAL);

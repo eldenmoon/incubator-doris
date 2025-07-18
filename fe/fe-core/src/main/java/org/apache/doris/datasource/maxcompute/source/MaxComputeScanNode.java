@@ -193,6 +193,7 @@ public class MaxComputeScanNode extends FileQueryScanNode {
 
         TableReadSessionBuilder scanBuilder = new TableReadSessionBuilder();
         return scanBuilder.identifier(TableIdentifier.of(table.getDbName(), table.getName()))
+<<<<<<< HEAD
                 .withSettings(mcCatalog.getSettings())
                 .withSplitOptions(mcCatalog.getSplitOption())
                 .requiredPartitionColumns(requiredPartitionColumns)
@@ -205,6 +206,20 @@ public class MaxComputeScanNode extends FileQueryScanNode {
                                 .withTimestampUnit(TimestampUnit.NANO)
                                 .build()
                 ).buildBatchReadSession();
+=======
+                        .withSettings(mcCatalog.getSettings())
+                        .withSplitOptions(mcCatalog.getSplitOption())
+                        .requiredPartitionColumns(requiredPartitionColumns)
+                        .requiredDataColumns(orderedRequiredDataColumns)
+                        .withFilterPredicate(filterPredicate)
+                        .requiredPartitions(requiredPartitionSpecs)
+                        .withArrowOptions(
+                                ArrowOptions.newBuilder()
+                                        .withDatetimeUnit(TimestampUnit.MILLI)
+                                        .withTimestampUnit(TimestampUnit.MICRO)
+                                        .build()
+                        ).buildBatchReadSession();
+>>>>>>> 3.0.6.2
     }
 
     @Override

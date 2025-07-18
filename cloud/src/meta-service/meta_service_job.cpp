@@ -46,9 +46,6 @@ static inline constexpr size_t get_file_name_offset(const T (&s)[S], size_t i = 
 
 namespace doris::cloud {
 
-static constexpr int COMPACTION_DELETE_BITMAP_LOCK_ID = -1;
-static constexpr int SCHEMA_CHANGE_DELETE_BITMAP_LOCK_ID = -2;
-
 // check compaction input_versions are valid during schema change.
 // If the schema change job doesnt have alter version, it dont need to check
 // because the schema change job is come from old version BE.
@@ -549,7 +546,7 @@ static void remove_delete_bitmap_update_lock(std::unique_ptr<Transaction>& txn,
     std::string lock_val;
     TxnErrorCode err = txn->get(lock_key, &lock_val);
     LOG(INFO) << "get remove delete bitmap update lock info, table_id=" << table_id
-              << " key=" << hex(lock_key) << " err=" << err;
+              << " key=" << hex(lock_key) << " err=" << err << " initiator=" << lock_initiator;
     if (err != TxnErrorCode::TXN_OK) {
         LOG(WARNING) << "failed to get delete bitmap update lock key, instance_id=" << instance_id
                      << " table_id=" << table_id << " key=" << hex(lock_key) << " err=" << err;
@@ -1088,6 +1085,10 @@ void process_schema_change_job(MetaServiceCode& code, std::string& msg, std::str
     if (schema_change.id() != recorded_schema_change.id() ||
         (schema_change.initiator() != recorded_schema_change.initiator() &&
          request->action() != FinishTabletJobRequest::ABORT)) {
+<<<<<<< HEAD
+=======
+        // abort is from FE, so initiator differ from the original one, just skip this check
+>>>>>>> 3.0.6.2
         SS << "unmatched job id or initiator, recorded_id=" << recorded_schema_change.id()
            << " given_id=" << schema_change.id()
            << " recorded_job=" << proto_to_json(recorded_schema_change)

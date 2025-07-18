@@ -385,6 +385,10 @@ suite("test_date_function") {
     qt_sql_ustamp5 """ select unix_timestamp('2007-11-30 10:30:19.123456') """
     qt_sql_ustamp6 """ select unix_timestamp(cast('2007-11-30 10:30:19.123456' as datetimev2(3))) """
     qt_sql_ustamp7 """ select unix_timestamp(cast('2007-11-30 10:30:19.123456' as datetimev2(4))) """
+    qt_sql_ustamp8 """ SELECT UNIX_TIMESTAMP('9999-12-30 23:59:59.999'); """
+    qt_sql_ustamp9 """ SELECT UNIX_TIMESTAMP('9999-12-30 23:59:59'); """
+    testFoldConst("SELECT UNIX_TIMESTAMP('9999-12-30 23:59:59.999');")
+    testFoldConst("SELECT UNIX_TIMESTAMP('9999-12-30 23:59:59');")
 
     // UTC_TIMESTAMP
     def utc_timestamp_str = sql """ select utc_timestamp(),utc_timestamp() + 1 """
@@ -713,4 +717,22 @@ suite("test_date_function") {
             result([[true]])
         }
     }()
+
+    sql """ DROP TABLE IF EXISTS dt_timenull; """
+
+    sql """
+     CREATE TABLE IF NOT EXISTS dt_timenull(
+            `k1` INT NOT NULL,
+            `k2` BIGINT NOT NULL
+            )
+            DISTRIBUTED BY HASH(`k1`) BUCKETS 5
+            properties("replication_num" = "1");
+    """
+    
+    sql """ insert into dt_timenull values (1, 0),(2, 100),(3, 123),(4, 219837),(5, -8923),(6, -29313),(7, 2131321231),(8, -21312313),(9,1112345);"""
+
+    qt_sql_time_value """ select k1 , cast(k2 as time) , hour(cast(k2 as time)) , minute(cast(k2 as time)), second(cast(k2 as time)) from dt_timenull order by k1;"""
+
+
+    qt_sql_time_value """ select  cast(4562632 as time),  hour(cast(4562632 as time)) ,  minute(cast(4562632 as time)) , second(cast(4562632 as time)); """
 }
