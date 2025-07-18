@@ -509,7 +509,6 @@ Status OlapScanLocalState::hold_tablets() {
             COUNTER_UPDATE(_sync_rowset_get_remote_delete_bitmap_rpc_timer,
                            sync_stats.get_remote_delete_bitmap_rpc_ns);
         }
-<<<<<<< HEAD
         if (duration_ns / 1000'000 >= config::sync_rowsets_slow_threshold_ms) {
             // clang-format off
             LOG(INFO) << "sync_rowset takes too long, elapsed(ns)=" << duration_ns
@@ -518,8 +517,6 @@ Status OlapScanLocalState::hold_tablets() {
                       << "...]";
             // clang-format on
         }
-=======
->>>>>>> 3.0.6.2
     } else {
         for (size_t i = 0; i < _scan_ranges.size(); i++) {
             int64_t version = 0;

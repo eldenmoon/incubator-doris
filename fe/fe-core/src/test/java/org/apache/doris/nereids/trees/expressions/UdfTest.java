@@ -198,17 +198,11 @@ public class UdfTest extends TestWithFeService implements PlanPatternMatchSuppor
         ByteArrayInputStream inputStream = new ByteArrayInputStream(buffer);
         GlobalFunctionMgr newMgr = GlobalFunctionMgr.read(new DataInputStream(inputStream));
 
-<<<<<<< HEAD
-        List<Function> funs = newMgr.getFunctions();
-        Assertions.assertTrue(funs.size() > 0);
-        Assertions.assertEquals(1, funs.stream().filter(i -> i.getFunctionName().getFunction().equals("f8")).count());
-=======
         List<Function> functions = newMgr.getFunctions();
         Assertions.assertEquals(1, functions.stream()
                 .map(f -> f.getFunctionName().getFunction())
                 .filter(name -> name.equals("f8"))
                 .count());
->>>>>>> 3.0.6.2
         Assertions.assertEquals(1, Env.getCurrentEnv().getFunctionRegistry()
                 .findUdfBuilder(connectContext.getDatabase(), "f8").size());
     }

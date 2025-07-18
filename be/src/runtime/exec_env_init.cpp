@@ -769,10 +769,7 @@ void ExecEnv::destroy() {
     // https://github.com/apache/doris/issues/24082#issuecomment-1712544039
     SAFE_DELETE(_cache_manager);
     _file_cache_open_fd_cache.reset(nullptr);
-<<<<<<< HEAD
-=======
 
->>>>>>> 3.0.6.2
     // _heartbeat_flags must be destoried after staroge engine
     SAFE_DELETE(_heartbeat_flags);
 

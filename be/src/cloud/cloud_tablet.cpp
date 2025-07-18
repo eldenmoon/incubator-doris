@@ -429,13 +429,10 @@ uint64_t CloudTablet::delete_expired_stale_rowsets() {
     }
     _tablet_meta->delete_bitmap()->remove_stale_delete_bitmap_from_queue(version_to_delete);
     recycle_cached_data(expired_rowsets);
-<<<<<<< ours
     add_unused_rowsets(expired_rowsets);
-=======
     if (config::enable_mow_verbose_log) {
         LOG_INFO("finish delete_expired_stale_rowset for tablet={}", tablet_id());
     }
->>>>>>> theirs
     return expired_rowsets.size();
 }
 

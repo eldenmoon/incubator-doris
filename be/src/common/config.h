@@ -1149,15 +1149,10 @@ DECLARE_mInt64(cache_lock_held_long_tail_threshold_us);
 DECLARE_mBool(enable_file_cache_keep_base_compaction_output);
 DECLARE_mInt64(file_cache_remove_block_qps_limit);
 DECLARE_mInt64(file_cache_background_gc_interval_ms);
-<<<<<<< HEAD
-DECLARE_mInt64(file_cache_background_monitor_interval_ms);
-DECLARE_mInt64(file_cache_background_ttl_gc_interval_ms);
-=======
 DECLARE_mBool(enable_reader_dryrun_when_download_file_cache);
 DECLARE_mInt64(file_cache_background_monitor_interval_ms);
 DECLARE_mInt64(file_cache_background_ttl_gc_interval_ms);
 DECLARE_mInt64(file_cache_background_ttl_gc_batch);
->>>>>>> 3.0.6.2
 
 // inverted index searcher cache
 // cache entry stay time after lookup

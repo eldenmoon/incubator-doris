@@ -238,12 +238,8 @@ public class IndexDef {
                 || indexType == IndexType.NGRAM_BF) {
             String indexColName = column.getName();
             caseSensitivityColumns.add(indexColName);
-            Type columnType = column.getType();
             PrimitiveType colType = column.getDataType();
-<<<<<<< HEAD
-=======
             Type columnType = column.getType();
->>>>>>> 3.0.6.2
             if (!isSupportIdxType(columnType)) {
                 throw new AnalysisException(colType + " is not supported in " + indexType.toString() + " index. "
                         + "invalid index: " + indexName);

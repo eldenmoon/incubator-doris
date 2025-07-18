@@ -8692,8 +8692,6 @@ TEST(MetaServiceTest, UpdateTmpRowsetTest) {
     }
 }
 
-<<<<<<< HEAD
-=======
 TEST(MetaServiceTest, CreateS3VaultWithIamRole) {
     auto sp = SyncPoint::get_instance();
     sp->enable_processing();
@@ -8959,7 +8957,6 @@ TEST(MetaServiceTest, AddObjInfoWithRole) {
     SyncPoint::get_instance()->clear_all_call_backs();
 }
 
->>>>>>> 3.0.6.2
 TEST(MetaServiceTest, CheckJobExisted) {
     auto meta_service = get_meta_service();
 

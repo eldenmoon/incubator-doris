@@ -49,17 +49,13 @@ add_executable(fdb_injection_test fdb_injection_test.cpp)
 
 add_executable(s3_accessor_test s3_accessor_test.cpp)
 
-<<<<<<< HEAD
 option(ENABLE_HDFS "enable hdfs" ON)
 message("Meta-service test enable HDFS: ${ENABLE_HDFS}")
 if (ENABLE_HDFS)
     add_executable(hdfs_accessor_test hdfs_accessor_test.cpp)
 endif()
-=======
-add_executable(s3_accessor_mock_test s3_accessor_mock_test.cpp)
 
-add_executable(hdfs_accessor_test hdfs_accessor_test.cpp)
->>>>>>> 3.0.6.2
+add_executable(s3_accessor_mock_test s3_accessor_mock_test.cpp)
 
 add_executable(stopwatch_test stopwatch_test.cpp)
 

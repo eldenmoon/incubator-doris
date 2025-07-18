@@ -407,13 +407,10 @@ Status retry_rpc(std::string_view op_name, const Request& req, Response* res,
             error_msg = res->status().msg();
         }
 
-<<<<<<< ours
         if (cntl.ErrorCode() == brpc::ERPCTIMEDOUT) {
             g_cloud_meta_mgr_rpc_timeout_count << 1;
         }
 
-=======
->>>>>>> theirs
         ++retry_times;
         if (retry_times > config::meta_service_rpc_retry_times ||
             (retry_times > config::meta_service_rpc_timeout_retry_times &&
