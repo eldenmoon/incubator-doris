@@ -159,11 +159,7 @@ void set_tablet_access_time_ms(CloudTablet* tablet) {
 Result<std::shared_ptr<CloudTablet>> CloudTabletMgr::get_tablet(int64_t tablet_id, bool warmup_data,
                                                                 bool sync_delete_bitmap,
                                                                 SyncRowsetStats* sync_stats,
-<<<<<<< ours
                                                                 bool local_only) {
-=======
-                                                                bool force_use_cache) {
->>>>>>> theirs
     // LRU value type. `Value`'s lifetime MUST NOT be longer than `CloudTabletMgr`
     class Value : public LRUCacheValueBase {
     public:
@@ -181,7 +177,6 @@ Result<std::shared_ptr<CloudTablet>> CloudTabletMgr::get_tablet(int64_t tablet_i
     CacheKey key(tablet_id_str);
     auto* handle = _cache->lookup(key);
 
-<<<<<<< ours
     if (handle == nullptr) {
         if (local_only) {
             LOG(INFO) << "tablet=" << tablet_id
@@ -193,14 +188,6 @@ Result<std::shared_ptr<CloudTablet>> CloudTabletMgr::get_tablet(int64_t tablet_i
                     "treat it as an error",
                     tablet_id));
         }
-=======
-    if (handle == nullptr && force_use_cache) {
-        return ResultError(
-                Status::InternalError("failed to get cloud tablet from cache {}", tablet_id));
-    }
-
-    if (handle == nullptr) {
->>>>>>> theirs
         if (sync_stats) {
             ++sync_stats->tablet_meta_cache_miss;
         }
@@ -377,30 +364,19 @@ Status CloudTabletMgr::get_topn_tablets_to_compact(
     auto now = duration_cast<milliseconds>(system_clock::now().time_since_epoch()).count();
     auto skip = [now, compaction_type](CloudTablet* t) {
         if (compaction_type == CompactionType::BASE_COMPACTION) {
-<<<<<<< ours
             bool is_recent_failure = now - t->last_base_compaction_failure_time() < config::min_compaction_failure_interval_ms;
             bool is_frozen = (now - t->last_load_time_ms > config::compaction_load_max_freeze_interval_s * 1000
                    && now - t->last_base_compaction_success_time_ms < config::base_compaction_freeze_interval_s * 1000
                    && t->fetch_add_approximate_num_rowsets(0) < config::max_tablet_version_num / 2);
             g_base_compaction_not_frozen_tablet_num << !is_frozen;
             return is_recent_failure || is_frozen;
-=======
-            return now - t->last_base_compaction_success_time_ms < config::base_compaction_freeze_interval_s * 1000 ||
-                now - t->last_base_compaction_failure_time() < config::min_compaction_failure_interval_ms;
->>>>>>> theirs
         }
         
         // If tablet has too many rowsets but not be compacted for a long time, compaction should be performed
         // regardless of whether there is a load job recently.
-<<<<<<< ours
         bool is_recent_failure = now - t->last_cumu_compaction_failure_time() < config::min_compaction_failure_interval_ms;
         bool is_recent_no_suitable_version = now - t->last_cumu_no_suitable_version_ms < config::min_compaction_failure_interval_ms;
         bool is_frozen = (now - t->last_load_time_ms > config::compaction_load_max_freeze_interval_s * 1000
-=======
-        return now - t->last_cumu_compaction_failure_time() < config::min_compaction_failure_interval_ms ||
-               now - t->last_cumu_no_suitable_version_ms < config::min_compaction_failure_interval_ms ||
-               (now - t->last_load_time_ms > config::cu_compaction_freeze_interval_s * 1000
->>>>>>> theirs
                && now - t->last_cumu_compaction_success_time_ms < config::cumu_compaction_interval_s * 1000
                && t->fetch_add_approximate_num_rowsets(0) < config::max_tablet_version_num / 2);
         g_cumu_compaction_not_frozen_tablet_num << !is_frozen;
