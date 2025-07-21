@@ -1493,11 +1493,8 @@ DEFINE_mInt32(load_trigger_compaction_version_percent, "66");
 DEFINE_mInt64(base_compaction_interval_seconds_since_last_operation, "86400");
 DEFINE_mBool(enable_compaction_pause_on_high_memory, "true");
 
-<<<<<<< HEAD
 DEFINE_mBool(enable_fetch_rowsets_from_peer_replicas, "false");
-=======
 DEFINE_mBool(enable_calc_delete_bitmap_between_segments_concurrently, "false");
->>>>>>> 3.0.6.2
 
 // clang-format off
 #ifdef BE_TEST

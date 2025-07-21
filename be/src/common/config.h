@@ -1571,11 +1571,8 @@ DECLARE_mInt32(load_trigger_compaction_version_percent);
 DECLARE_mInt64(base_compaction_interval_seconds_since_last_operation);
 DECLARE_mBool(enable_compaction_pause_on_high_memory);
 
-<<<<<<< HEAD
 DECLARE_mBool(enable_fetch_rowsets_from_peer_replicas);
-=======
 DECLARE_mBool(enable_calc_delete_bitmap_between_segments_concurrently);
->>>>>>> 3.0.6.2
 
 #ifdef BE_TEST
 // test s3
