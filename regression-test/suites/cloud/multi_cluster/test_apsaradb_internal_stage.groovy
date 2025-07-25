@@ -31,7 +31,7 @@ suite("test_apsarad_internal_stage_copy_into") {
     println("the be unique id is " + beUniqueIdList);
 
     for (unique_id : beUniqueIdList) {
-        resp = get_cluster.call(unique_id);
+        def resp = get_cluster.call(unique_id);
         for (cluster : resp) {
             if (cluster.type == "COMPUTE") {
                 drop_cluster.call(cluster.cluster_name, cluster.cluster_id);
@@ -126,7 +126,7 @@ suite("test_apsarad_internal_stage_copy_into") {
     }
 
     def getCloudConf = {
-        configResult = sql """ ADMIN SHOW FRONTEND CONFIG """
+        def configResult = sql """ ADMIN SHOW FRONTEND CONFIG """
         for (def r : configResult) {
             assertTrue(r.size() > 2)
             if (r[0] == "cloud_delete_loaded_internal_stage_files") {

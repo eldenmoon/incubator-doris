@@ -88,8 +88,11 @@ suite("test_drop_and_add_node_and_cluster", "op, nonConcurrent") {
     //do cluster operate in compacibility test at below code
     // setp1. init nodes and clusters
 
+    def user = 'root'
+    def password = ''
+    def url = context.config.jdbcUrl
     // op case only run in root, get cluster basic info
-    def connRes = connect(user = 'root', password = '', url = context.config.jdbcUrl) {
+    def connRes = connect(user, password, url) {
         // get cluster info, record
         def res = sql_return_maparray "show clusters;"
         // cluster_res = [[cluster:CloudCluster0, is_current:TRUE, users:root], [cluster:CloudCluster1, is_current:FALSE, users:admin]]

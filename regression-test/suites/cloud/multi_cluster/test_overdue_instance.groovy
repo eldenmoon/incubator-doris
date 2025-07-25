@@ -68,7 +68,7 @@ suite('test_overdue') {
     println("the be unique id is " + beUniqueIdList);
 
     for (unique_id : beUniqueIdList) {
-        resp = get_cluster.call(unique_id);
+        def resp = get_cluster.call(unique_id);
         for (cluster : resp) {
             if (cluster.type == "COMPUTE") {
                 drop_cluster.call(cluster.cluster_name, cluster.cluster_id);
@@ -118,9 +118,9 @@ suite('test_overdue') {
     // set wrarehouse to normal
     try {
         try {
-            alter_request = JsonOutput.toJson(new AlterRequest(instance_id: instance_id, op: "SET_NORMAL"))
-            result = http_post(context.config.metaServiceHttpAddress, "/MetaService/http/set_instance_status?token=greedisgood9999", alter_request)
-            obj = new JsonSlurper().parseText(result)
+            def alter_request = JsonOutput.toJson(new AlterRequest(instance_id: instance_id, op: "SET_NORMAL"))
+            def result = http_post(context.config.metaServiceHttpAddress, "/MetaService/http/set_instance_status?token=greedisgood9999", alter_request)
+            def obj = new JsonSlurper().parseText(result)
             logger.info("try to set warehouse normal, the result is {}", obj)
             sleep(40000)
         }
@@ -129,7 +129,7 @@ suite('test_overdue') {
         }
 
         // when warehouse is noraml
-        result = sql """ show databases """
+        def result = sql """ show databases """
         logger.info("when warehouse is normal the result of sql from root is {}", result)
 
         result = connect(user = "${user}", password = '', url = context.config.jdbcUrl) {
@@ -178,7 +178,7 @@ suite('test_overdue') {
             logger.info("when warehouse is overdue the result of http from user is {}", obj)
             assertEquals(obj.code, 1)
         } catch (Exception e) {
-            alter_request = JsonOutput.toJson(new AlterRequest(instance_id: instance_id, op: "SET_NORMAL"))
+            def alter_request = JsonOutput.toJson(new AlterRequest(instance_id: instance_id, op: "SET_NORMAL"))
             result = http_post(context.config.metaServiceHttpAddress, "/MetaService/http/set_instance_status?token=greedisgood9999", alter_request)
             obj = new JsonSlurper().parseText(result)
             logger.info("try to set warehouse normal, the result is {}", obj)
@@ -186,7 +186,7 @@ suite('test_overdue') {
         }
 
         // when warehouse transforms to normal
-        alter_request = JsonOutput.toJson(new AlterRequest(instance_id: instance_id, op: "SET_NORMAL"))
+        def alter_request = JsonOutput.toJson(new AlterRequest(instance_id: instance_id, op: "SET_NORMAL"))
         result = http_post(context.config.metaServiceHttpAddress, "/MetaService/http/set_instance_status?token=greedisgood9999", alter_request)
         obj = new JsonSlurper().parseText(result)
         logger.info("try to set warehouse normal, the result is {}", obj)
