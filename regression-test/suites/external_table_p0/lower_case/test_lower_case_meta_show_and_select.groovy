@@ -27,6 +27,9 @@ suite("test_lower_case_meta_show_and_select", "p0,external,doris,external_docker
     String s3_endpoint = getS3Endpoint()
     String bucket = getS3BucketName()
     String driver_url = "https://${bucket}.${s3_endpoint}/regression/jdbc_driver/mysql-connector-j-8.3.0.jar"
+    if( getS3Provide().toLowerCase() == "azure" ){
+        driver_url = "https://${s3_endpoint}/${bucket}/regression/jdbc_driver/mysql-connector-j-8.3.0.jar"
+    }
 
     def wait_table_sync = { String db ->
         Awaitility.await().atMost(10, TimeUnit.SECONDS).pollInterval(1, TimeUnit.SECONDS).until{
