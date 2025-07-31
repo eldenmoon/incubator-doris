@@ -356,12 +356,6 @@ void CachedRemoteFileReader::_update_stats(const ReadStatistics& read_stats,
     statis->get_timer += read_stats.get_timer;
     statis->set_timer += read_stats.set_timer;
 
-    statis->read_cache_file_directly_timer += read_stats.read_cache_file_directly_timer;
-    statis->cache_get_or_set_timer += read_stats.cache_get_or_set_timer;
-    statis->lock_wait_timer += read_stats.lock_wait_timer;
-    statis->get_timer += read_stats.get_timer;
-    statis->set_timer += read_stats.set_timer;
-
     g_skip_cache_num << read_stats.skip_cache;
     g_skip_cache_sum << read_stats.skip_cache;
 }
