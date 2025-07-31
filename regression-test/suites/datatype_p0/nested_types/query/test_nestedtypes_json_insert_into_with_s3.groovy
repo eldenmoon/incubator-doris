@@ -30,8 +30,10 @@ suite("test_nestedtypes_json_insert_into_with_s3", "p0") {
     String s3_endpoint = getS3Endpoint()
     String bucket = context.config.otherConfigs.get("s3BucketName");
 
-
     def dataFilePath = "https://"+"${bucket}"+"."+"${s3_endpoint}"+"/regression/datalake"
+    if( getS3Provider().toLowerCase() == "azure" ){
+        dataFilePath = "https://${s3_endpoint}/${bucket}/regression/datalake"
+    }
 
     ArrayList<String> json_files = ["${dataFilePath}/as.json", "${dataFilePath}/aa.json",
                                            "${dataFilePath}/ms.json","${dataFilePath}/am.json",

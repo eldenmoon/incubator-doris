@@ -32,6 +32,9 @@ suite("create_view_nereids_fix_null") {
     String bucket = getS3BucketName()
     logger.info("bucket: " + bucket)
     String driver_url = "https://${bucket}.${s3_endpoint}/regression/jdbc_driver/mysql-connector-java-8.0.25.jar"
+    if( getS3Provider().toLowerCase() == "azure" ){
+        driver_url = "https://${s3_endpoint}/${bucket}/regression/jdbc_driver/mysql-connector-j-8.3.0.jar"
+    }
     String dbname = context.config.getDbNameByFile(context.file)
     String jdbcUrl = context.config.jdbcUrl
     String jdbcUser = context.config.jdbcUser

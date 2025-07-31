@@ -23,7 +23,7 @@ suite("test_conflict_name", "p0,external,doris,meta_names_mapping,external_docke
     String s3_endpoint = getS3Endpoint()
     String bucket = getS3BucketName()
     String driver_url = "https://${bucket}.${s3_endpoint}/regression/jdbc_driver/mysql-connector-j-8.3.0.jar"
-    if( getS3Provide().toLowerCase() == "azure" ){
+    if( getS3Provider().toLowerCase() == "azure" ){
         driver_url = "https://${s3_endpoint}/${bucket}/regression/jdbc_driver/mysql-connector-j-8.3.0.jar"
     }
 
