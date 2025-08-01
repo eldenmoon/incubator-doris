@@ -33,6 +33,9 @@ suite('test_manager_interface_3',"p0") {
     String s3_endpoint = getS3Endpoint()
     String bucket = getS3BucketName()
     String driver_url = "https://${bucket}.${s3_endpoint}/regression/jdbc_driver/mysql-connector-java-8.0.25.jar"
+    if( getS3Provider().toLowerCase() == "azure" ){
+        driver_url = "https://${s3_endpoint}/${bucket}/regression/jdbc_driver/mysql-connector-j-8.3.0.jar"
+    }
 //create role $role_name
 //drop role $role_name
 // create user $user_name identified by "$password" default role "$role_name"

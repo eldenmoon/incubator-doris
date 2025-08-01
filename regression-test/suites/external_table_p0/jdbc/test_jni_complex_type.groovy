@@ -24,6 +24,9 @@ suite("test_jni_complex_type", "p0,external,doris,external_docker,external_docke
     String s3_endpoint = getS3Endpoint()
     String bucket = getS3BucketName()
     String driver_url = "https://${bucket}.${s3_endpoint}/regression/jdbc_driver/mysql-connector-java-8.0.25.jar"
+    if( getS3Provider().toLowerCase() == "azure" ){
+        driver_url = "https://${s3_endpoint}/${bucket}/regression/jdbc_driver/mysql-connector-j-8.3.0.jar"
+    }
     String externalEnvIp = context.config.otherConfigs.get("externalEnvIp")
 
 
