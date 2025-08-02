@@ -43,7 +43,7 @@ suite("decommission") {
     println("the be unique id is " + beUniqueIdList);
 
     for (unique_id : beUniqueIdList) {
-        resp = get_cluster.call(unique_id);
+        def resp = get_cluster.call(unique_id);
         for (cluster : resp) {
             if (cluster.type == "COMPUTE") {
                 drop_cluster.call(cluster.cluster_name, cluster.cluster_id);
@@ -122,7 +122,7 @@ suite("decommission") {
                 "regression_cluster_name0", "regression_cluster_id0");
 
     sleep(60000)
-    resp = get_cluster.call(beUniqueIdList[1]);
+    def resp = get_cluster.call(beUniqueIdList[1]);
     for (cluster : resp) {
         for (node : cluster.nodes) {
             if (node.ip == ipList[1] && node.heartbeat_port == hbPortList[1]) {

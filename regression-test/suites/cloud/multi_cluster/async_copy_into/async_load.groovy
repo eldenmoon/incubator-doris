@@ -109,7 +109,7 @@ suite("async_load") {
         assertTrue(result.size() == 1)
         assertTrue(result[0].size() == 8)
         //assertTrue(result[0][1].equals("FINISHED"))
-        id = result[0][0]
+        def id = result[0][0]
         while(true) {
             result = sql "show copy where id = \'${id}\'"
             logger.info("copy result: " + result)
