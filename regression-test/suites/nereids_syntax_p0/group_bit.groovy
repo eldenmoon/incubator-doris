@@ -33,6 +33,7 @@ suite("group_bit") {
         )"""
     
     sql "insert into ${table} values (44), (28)"
+    sql "sync"
 
     qt_select "select group_bit_and(k) from ${table}"
     qt_select "select group_bit_or(k) from ${table}"

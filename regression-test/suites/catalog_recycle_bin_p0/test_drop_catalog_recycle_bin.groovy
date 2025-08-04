@@ -16,6 +16,7 @@
 // under the License.
 
 suite("test_drop_catalog_recycle_bin") {
+    sql "DROP DATABASE IF EXISTS`test_drop_catalog_recycle_bin_db`;"
     sql "CREATE DATABASE IF NOT EXISTS `test_drop_catalog_recycle_bin_db`"
     sql "use `test_drop_catalog_recycle_bin_db`"
 
