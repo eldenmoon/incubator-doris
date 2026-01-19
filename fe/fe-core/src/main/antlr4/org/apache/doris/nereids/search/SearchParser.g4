@@ -24,7 +24,10 @@ clause     : orClause ;
 orClause   : andClause (OR andClause)* ;
 andClause  : notClause (AND notClause)* ;
 notClause  : NOT atomClause | atomClause ;
-atomClause : LPAREN clause RPAREN | fieldQuery ;
+atomClause : LPAREN clause RPAREN | nestedQuery | fieldQuery ;
+
+// ES-style nested query: NESTED(path, inner_query)
+nestedQuery : NESTED_LPAREN NESTED_PATH NESTED_COMMA clause RPAREN ;
 
 // Support for variant subcolumn paths (e.g., field.subcolumn, field.sub1.sub2)
 fieldQuery : fieldPath COLON searchValue ;

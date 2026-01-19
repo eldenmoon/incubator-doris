@@ -340,6 +340,9 @@ TExprNode create_texpr_node_from(const vectorized::Field& field, const Primitive
 namespace doris::vectorized {
 
 bool VExpr::is_acting_on_a_slot(const VExpr& expr) {
+    if (expr.node_type() == TExprNodeType::SEARCH_EXPR) {
+        return true;
+    }
     const auto& children = expr.children();
 
     auto is_a_slot = std::any_of(children.begin(), children.end(),

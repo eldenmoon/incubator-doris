@@ -30,6 +30,7 @@
 #include "common/status.h"
 #include "olap/rowset/segment_v2/ann_index/ann_range_search_runtime.h"
 #include "olap/rowset/segment_v2/ann_index/ann_search_params.h"
+#include "olap/rowset/segment_v2/column_reader.h"
 #include "olap/rowset/segment_v2/inverted_index_reader.h"
 #include "runtime/runtime_state.h"
 #include "runtime/types.h"
@@ -46,6 +47,7 @@ class RuntimeState;
 } // namespace doris
 
 namespace doris::segment_v2 {
+class Segment;
 class ColumnIterator;
 } // namespace doris::segment_v2
 
@@ -62,12 +64,15 @@ public:
             const std::vector<vectorized::IndexFieldNameAndTypePair>& storage_name_and_type_vec,
             std::unordered_map<ColumnId, std::unordered_map<const vectorized::VExpr*, bool>>&
                     common_expr_index_status,
-            ScoreRuntimeSPtr score_runtime)
+            ScoreRuntimeSPtr score_runtime, segment_v2::Segment* segment,
+            const segment_v2::ColumnIteratorOptions& column_iter_opts)
             : _col_ids(col_ids),
               _index_iterators(index_iterators),
               _storage_name_and_type(storage_name_and_type_vec),
               _expr_index_status(common_expr_index_status),
-              _score_runtime(std::move(score_runtime)) {}
+              _score_runtime(std::move(score_runtime)),
+              _segment(segment),
+              _column_iter_opts(column_iter_opts) {}
 
     segment_v2::IndexIterator* get_inverted_index_iterator_by_column_id(int column_index) const {
         if (column_index < 0 || column_index >= _col_ids.size()) {
@@ -94,6 +99,21 @@ public:
         }
         return &_storage_name_and_type[column_id];
     }
+
+    bool get_column_id(int column_index, ColumnId* column_id) const {
+        if (column_id == nullptr) {
+            return false;
+        }
+        if (column_index < 0 || column_index >= _col_ids.size()) {
+            return false;
+        }
+        *column_id = _col_ids[column_index];
+        return true;
+    }
+
+    segment_v2::Segment* segment() const { return _segment; }
+
+    const segment_v2::ColumnIteratorOptions& column_iter_opts() const { return _column_iter_opts; }
 
     bool has_index_result_for_expr(const vectorized::VExpr* expr) const {
         return _index_result_bitmap.contains(expr);
@@ -181,6 +201,9 @@ private:
             _expr_index_status;
 
     ScoreRuntimeSPtr _score_runtime;
+
+    segment_v2::Segment* _segment = nullptr; // Ref
+    segment_v2::ColumnIteratorOptions _column_iter_opts;
 };
 
 class VExprContext {

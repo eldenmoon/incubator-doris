@@ -16,27 +16,23 @@
 // under the License.
 #include "olap/rowset/segment_v2/variant/variant_column_writer_impl.h"
 
-#include <fmt/core.h>
 #include <gen_cpp/segment_v2.pb.h>
 
+#include <algorithm>
 #include <memory>
-#include <set>
 
 #include "common/config.h"
 #include "common/status.h"
-#include "exec/decompressor.h"
 #include "olap/olap_common.h"
 #include "olap/olap_define.h"
-#include "olap/rowset/beta_rowset.h"
-#include "olap/rowset/rowset_fwd.h"
 #include "olap/rowset/rowset_writer_context.h"
 #include "olap/rowset/segment_v2/column_writer.h"
 #include "olap/rowset/segment_v2/indexed_column_writer.h"
-#include "olap/segment_loader.h"
+#include "olap/rowset/segment_v2/variant/nested_group_builder.h"
+#include "olap/rowset/segment_v2/variant/nested_group_path.h"
+#include "olap/rowset/segment_v2/variant/nested_offsets_mapping_index.h"
 #include "olap/tablet_schema.h"
 #include "olap/types.h"
-#include "util/simd/bits.h"
-#include "util/slice.h"
 #include "vec/columns/column.h"
 #include "vec/columns/column_nullable.h"
 #include "vec/columns/column_variant.h"
@@ -49,6 +45,46 @@
 namespace doris::segment_v2 {
 
 #include "common/compile_check_begin.h"
+
+// forward declaration for NestedGroup write helper used by both
+// VariantColumnWriterImpl and VariantSubcolumnWriter.
+static Status write_nested_groups_to_storage(
+        const doris::segment_v2::NestedGroupsMap& nested_groups, const TabletColumn* tablet_column,
+        const ColumnWriterOptions& opts, vectorized::OlapBlockDataConvertor* converter,
+        size_t num_rows, int& column_id,
+        std::unordered_map<std::string, NestedGroupWriter>& writers, VariantStatistics& statistics);
+
+template <typename Func>
+static Status for_each_nested_group_writer(
+        std::unordered_map<std::string, NestedGroupWriter>& writers, Func&& func) {
+    for (auto& [_, ngw] : writers) {
+        if (ngw.offsets_writer) {
+            RETURN_IF_ERROR(func(ngw.offsets_writer.get(), ngw.offsets_opts));
+        }
+        for (auto& [path, cw] : ngw.child_writers) {
+            if (!cw) {
+                continue;
+            }
+            auto it = ngw.child_opts.find(path);
+            if (it != ngw.child_opts.end()) {
+                RETURN_IF_ERROR(func(cw.get(), it->second));
+            }
+        }
+    }
+    return Status::OK();
+}
+
+static Status write_nested_offsets_mapping_index(
+        std::unordered_map<std::string, NestedGroupWriter>& writers) {
+    for (auto& [_, ngw] : writers) {
+        if (ngw.offsets_mapping_index_writer) {
+            RETURN_IF_ERROR(ngw.offsets_mapping_index_writer->write(
+                    ngw.offsets_opts.file_writer, ngw.offsets_opts.meta,
+                    ngw.offsets_opts.compression_type));
+        }
+    }
+    return Status::OK();
+}
 
 void _init_column_meta(ColumnMetaPB* meta, uint32_t column_id, const TabletColumn& column,
                        CompressionTypePB compression_type) {
@@ -74,7 +110,7 @@ void _init_column_meta(ColumnMetaPB* meta, uint32_t column_id, const TabletColum
     if (column.is_variant_type()) {
         meta->set_variant_max_subcolumns_count(column.variant_max_subcolumns_count());
     }
-};
+}
 
 Status _create_column_writer(uint32_t cid, const TabletColumn& column,
                              const TabletSchemaSPtr& tablet_schema,
@@ -181,6 +217,15 @@ Status UnifiedSparseColumnWriter::append_data(const TabletColumn* parent_column,
         RETURN_IF_ERROR(append_bucket_sparse(src, num_rows, converter, *parent_column));
     }
     return Status::OK();
+}
+
+void UnifiedSparseColumnWriter::merge_stats_to(VariantStatistics* stats) const {
+    if (stats == nullptr) {
+        return;
+    }
+    for (const auto& [path, cnt] : _stats.sparse_column_non_null_size) {
+        stats->sparse_column_non_null_size[path] += cnt;
+    }
 }
 
 // UnifiedSparseColumnWriter implementation
@@ -304,9 +349,10 @@ Status UnifiedSparseColumnWriter::append_single_sparse(
     }
     segment_v2::VariantStatistics sparse_stats;
     for (const auto& [k, cnt] : path_counts) {
-        sparse_stats.sparse_column_non_null_size.emplace(k.to_string(), cnt);
+        sparse_stats.sparse_column_non_null_size.emplace(k.to_string(), static_cast<uint32_t>(cnt));
     }
     sparse_stats.to_pb(_single_opts.meta->mutable_variant_statistics());
+    _stats.sparse_column_non_null_size = sparse_stats.sparse_column_non_null_size;
     _single_opts.meta->set_num_rows(num_rows);
     return Status::OK();
 }
@@ -380,10 +426,13 @@ Status UnifiedSparseColumnWriter::append_bucket_sparse(
         }
         segment_v2::VariantStatistics bucket_stats;
         for (const auto& [k, cnt] : bucket_path_counts) {
-            bucket_stats.sparse_column_non_null_size.emplace(k.to_string(),
-                                                             static_cast<int64_t>(cnt));
+            const std::string k_str = k.to_string();
+            const uint32_t cnt_u32 = static_cast<uint32_t>(cnt);
+            bucket_stats.sparse_column_non_null_size.emplace(k_str, cnt_u32);
+            _stats.sparse_column_non_null_size[k_str] += cnt_u32;
         }
         bucket_stats.to_pb(_bucket_opts[b].meta->mutable_variant_statistics());
+        _bucket_opts[b].meta->set_num_rows(num_rows);
     }
     return Status::OK();
 }
@@ -413,6 +462,7 @@ Status VariantDocWriter::init(const TabletColumn* parent_column, int bucket_num,
 Status VariantDocWriter::append_data(const TabletColumn* parent_column,
                                      const vectorized::ColumnVariant& src, size_t num_rows,
                                      vectorized::OlapBlockDataConvertor* converter) {
+    _stats.doc_value_column_non_null_size.clear();
     const auto [paths_col, values_col] = src.get_doc_value_data_paths_and_values();
     const auto& offsets = src.serialized_doc_value_column_offsets();
 
@@ -459,11 +509,23 @@ Status VariantDocWriter::append_data(const TabletColumn* parent_column,
         auto* stats = _doc_value_column_opts[b].meta->mutable_variant_statistics();
         auto* doc_value_column_non_null_size = stats->mutable_doc_value_column_non_null_size();
         for (const auto& [k, cnt] : bucket_path_counts[b]) {
-            (*doc_value_column_non_null_size)[k.to_string()] = cnt;
+            const std::string k_str = k.to_string();
+            (*doc_value_column_non_null_size)[k_str] = cnt;
+            _stats.doc_value_column_non_null_size[k_str] += cnt;
         }
+        _doc_value_column_opts[b].meta->set_num_rows(num_rows);
     }
 
     return Status::OK();
+}
+
+void VariantDocWriter::merge_stats_to(VariantStatistics* stats) const {
+    if (stats == nullptr) {
+        return;
+    }
+    for (const auto& [path, cnt] : _stats.doc_value_column_non_null_size) {
+        stats->doc_value_column_non_null_size[path] += cnt;
+    }
 }
 
 uint64_t VariantDocWriter::estimate_buffer_size() const {
@@ -517,10 +579,9 @@ Status VariantColumnWriterImpl::_process_root_column(vectorized::ColumnVariant* 
                                                      vectorized::OlapBlockDataConvertor* converter,
                                                      size_t num_rows, int& column_id) {
     // root column
-    ColumnWriterOptions root_opts = _opts;
-    _root_writer = std::unique_ptr<ColumnWriter>(new ScalarColumnWriter(
+    _root_writer = std::make_unique<ScalarColumnWriter>(
             _opts, std::unique_ptr<Field>(FieldFactory::create(*_tablet_column)),
-            _opts.file_writer));
+            _opts.file_writer);
     RETURN_IF_ERROR(_root_writer->init());
 
     // make sure the root type
@@ -590,8 +651,6 @@ Status VariantColumnWriterImpl::_process_subcolumns(vectorized::ColumnVariant* p
     _subcolumns_indexes.resize(ptr->get_subcolumns().size());
     // convert sub column data from engine format to storage layer format
     // NOTE: We only keep up to variant_max_subcolumns_count as extracted columns; others are externalized.
-    // uint32_t extracted = 0;
-    // uint32_t extract_limit = _tablet_column->variant_max_subcolumns_count();
     for (const auto& entry :
          vectorized::variant_util::get_sorted_subcolumns(ptr->get_subcolumns())) {
         const auto& least_common_type = entry->data.get_least_common_type();
@@ -710,24 +769,59 @@ Status VariantColumnWriterImpl::finalize() {
     ptr->check_consistency();
 #endif
 
+    // Build NestedGroups from JSONB columns. Both JSONB and NestedGroup are stored
+    // for redundancy: JSONB for Whole reads, NestedGroup for column pruning.
+    doris::segment_v2::NestedGroupsMap nested_groups;
+    doris::segment_v2::NestedGroupBuilder ng_builder;
+    ng_builder.set_max_depth(static_cast<size_t>(config::variant_nested_group_max_depth));
+
+    if (ptr->get_root_type() &&
+        vectorized::remove_nullable(ptr->get_root_type())->get_primitive_type() ==
+                PrimitiveType::TYPE_JSONB &&
+        ptr->get_root()) {
+        RETURN_IF_ERROR(ng_builder.build_from_jsonb(ptr->get_root()->get_ptr(), nested_groups,
+                                                    ptr->rows()));
+    }
+    for (const auto& entry :
+         vectorized::variant_util::get_sorted_subcolumns(ptr->get_subcolumns())) {
+        if (entry->path.empty()) {
+            continue;
+        }
+        const auto& t = entry->data.get_least_common_type();
+        if (!t ||
+            vectorized::remove_nullable(t)->get_primitive_type() != PrimitiveType::TYPE_JSONB) {
+            continue;
+        }
+        RETURN_IF_ERROR(
+                ng_builder.build_from_jsonb(entry->data.get_finalized_column_ptr()->get_ptr(),
+                                            entry->path, nested_groups, entry->data.size()));
+    }
+
     size_t num_rows = _column->size();
     int column_id = 0;
 
     // convert root column data from engine format to storage layer format
     RETURN_IF_ERROR(_process_root_column(ptr, olap_data_convertor.get(), num_rows, column_id));
 
-    auto has_extracted_columns = [this]() {
-        return std::ranges::any_of(
-                _opts.rowset_ctx->tablet_schema->columns(),
-                [](const auto& column) { return column->is_extracted_column(); });
-    };
-    if (!has_extracted_columns()) {
+    const bool has_extracted_columns =
+            std::ranges::any_of(_opts.rowset_ctx->tablet_schema->columns(),
+                                [](const auto& column) { return column->is_extracted_column(); });
+    if (!has_extracted_columns) {
         // process and append each subcolumns to sub columns writers buffer
         RETURN_IF_ERROR(_process_subcolumns(ptr, olap_data_convertor.get(), num_rows, column_id));
 
         // process sparse column and append to sparse writer buffer
         RETURN_IF_ERROR(
                 _process_binary_column(ptr, olap_data_convertor.get(), num_rows, column_id));
+
+        // Write NestedGroups to segment and persist stats to root meta.
+        RETURN_IF_ERROR(write_nested_groups_to_storage(
+                nested_groups, _tablet_column, _opts, olap_data_convertor.get(), num_rows,
+                column_id, _nested_group_writers, _statistics));
+        if (_binary_writer) {
+            _binary_writer->merge_stats_to(&_statistics);
+        }
+        _statistics.to_pb(_opts.meta->mutable_variant_statistics());
     }
 
     _is_finalized = true;
@@ -736,6 +830,18 @@ Status VariantColumnWriterImpl::finalize() {
 
 bool VariantColumnWriterImpl::is_finalized() const {
     return _column->is_finalized() && _is_finalized;
+}
+
+Status VariantColumnWriterImpl::_for_each_column_writer(
+        const std::function<Status(ColumnWriter*)>& func) {
+    RETURN_IF_ERROR(func(_root_writer.get()));
+    for (auto& writer : _subcolumn_writers) {
+        RETURN_IF_ERROR(func(writer.get()));
+    }
+    RETURN_IF_ERROR(for_each_nested_group_writer(
+            _nested_group_writers,
+            [&](ColumnWriter* writer, const ColumnWriterOptions&) { return func(writer); }));
+    return Status::OK();
 }
 
 Status VariantColumnWriterImpl::append_data(const uint8_t** ptr, size_t num_rows) {
@@ -761,6 +867,16 @@ uint64_t VariantColumnWriterImpl::estimate_buffer_size() {
     if (_binary_writer) {
         size += _binary_writer->estimate_buffer_size();
     }
+    for (auto& [_, ngw] : _nested_group_writers) {
+        if (ngw.offsets_writer) {
+            size += ngw.offsets_writer->estimate_buffer_size();
+        }
+        for (auto& [__, cw] : ngw.child_writers) {
+            if (cw) {
+                size += cw->estimate_buffer_size();
+            }
+        }
+    }
     return size;
 }
 
@@ -768,10 +884,7 @@ Status VariantColumnWriterImpl::finish() {
     if (!is_finalized()) {
         RETURN_IF_ERROR(finalize());
     }
-    RETURN_IF_ERROR(_root_writer->finish());
-    for (auto& column_writer : _subcolumn_writers) {
-        RETURN_IF_ERROR(column_writer->finish());
-    }
+    RETURN_IF_ERROR(_for_each_column_writer([](ColumnWriter* writer) { return writer->finish(); }));
     if (_binary_writer) {
         RETURN_IF_ERROR(_binary_writer->finish());
     }
@@ -781,10 +894,8 @@ Status VariantColumnWriterImpl::write_data() {
     if (!is_finalized()) {
         RETURN_IF_ERROR(finalize());
     }
-    RETURN_IF_ERROR(_root_writer->write_data());
-    for (auto& column_writer : _subcolumn_writers) {
-        RETURN_IF_ERROR(column_writer->write_data());
-    }
+    RETURN_IF_ERROR(
+            _for_each_column_writer([](ColumnWriter* writer) { return writer->write_data(); }));
     if (_binary_writer) {
         RETURN_IF_ERROR(_binary_writer->write_data());
     }
@@ -793,10 +904,8 @@ Status VariantColumnWriterImpl::write_data() {
 Status VariantColumnWriterImpl::write_ordinal_index() {
     // write ordinal index after data has been written which should be finalized
     assert(is_finalized());
-    RETURN_IF_ERROR(_root_writer->write_ordinal_index());
-    for (auto& column_writer : _subcolumn_writers) {
-        RETURN_IF_ERROR(column_writer->write_ordinal_index());
-    }
+    RETURN_IF_ERROR(_for_each_column_writer(
+            [](ColumnWriter* writer) { return writer->write_ordinal_index(); }));
     if (_binary_writer) {
         RETURN_IF_ERROR(_binary_writer->write_ordinal_index());
     }
@@ -805,30 +914,52 @@ Status VariantColumnWriterImpl::write_ordinal_index() {
 
 Status VariantColumnWriterImpl::write_zone_map() {
     assert(is_finalized());
-    for (int i = 0; i < _subcolumn_writers.size(); ++i) {
+    for (size_t i = 0; i < _subcolumn_writers.size(); ++i) {
         if (_subcolumn_opts[i].need_zone_map) {
             RETURN_IF_ERROR(_subcolumn_writers[i]->write_zone_map());
         }
     }
+    RETURN_IF_ERROR(for_each_nested_group_writer(
+            _nested_group_writers, [](ColumnWriter* writer, const ColumnWriterOptions& opts) {
+                if (opts.need_zone_map) {
+                    return writer->write_zone_map();
+                }
+                return Status::OK();
+            }));
+    RETURN_IF_ERROR(write_nested_offsets_mapping_index(_nested_group_writers));
     return Status::OK();
 }
 
 Status VariantColumnWriterImpl::write_inverted_index() {
     assert(is_finalized());
-    for (int i = 0; i < _subcolumn_writers.size(); ++i) {
+    for (size_t i = 0; i < _subcolumn_writers.size(); ++i) {
         if (_subcolumn_opts[i].need_inverted_index) {
             RETURN_IF_ERROR(_subcolumn_writers[i]->write_inverted_index());
         }
     }
+    RETURN_IF_ERROR(for_each_nested_group_writer(
+            _nested_group_writers, [](ColumnWriter* writer, const ColumnWriterOptions& opts) {
+                if (opts.need_inverted_index) {
+                    return writer->write_inverted_index();
+                }
+                return Status::OK();
+            }));
     return Status::OK();
 }
 Status VariantColumnWriterImpl::write_bloom_filter_index() {
     assert(is_finalized());
-    for (int i = 0; i < _subcolumn_writers.size(); ++i) {
+    for (size_t i = 0; i < _subcolumn_writers.size(); ++i) {
         if (_subcolumn_opts[i].need_bloom_filter) {
             RETURN_IF_ERROR(_subcolumn_writers[i]->write_bloom_filter_index());
         }
     }
+    RETURN_IF_ERROR(for_each_nested_group_writer(
+            _nested_group_writers, [](ColumnWriter* writer, const ColumnWriterOptions& opts) {
+                if (opts.need_bloom_filter) {
+                    return writer->write_bloom_filter_index();
+                }
+                return Status::OK();
+            }));
     return Status::OK();
 }
 
@@ -845,7 +976,6 @@ VariantSubcolumnWriter::VariantSubcolumnWriter(const ColumnWriterOptions& opts,
                                                const TabletColumn* column,
                                                std::unique_ptr<Field> field)
         : ColumnWriter(std::move(field), opts.meta->is_nullable(), opts.meta) {
-    //
     _tablet_column = column;
     _opts = opts;
     _column = vectorized::ColumnVariant::create(0);
@@ -864,7 +994,24 @@ Status VariantSubcolumnWriter::append_data(const uint8_t** ptr, size_t num_rows)
 }
 
 uint64_t VariantSubcolumnWriter::estimate_buffer_size() {
-    return _column->byte_size();
+    if (!is_finalized()) {
+        return _column->byte_size();
+    }
+    uint64_t size = 0;
+    if (_writer) {
+        size += _writer->estimate_buffer_size();
+    }
+    for (auto& [_, ngw] : _nested_group_writers) {
+        if (ngw.offsets_writer) {
+            size += ngw.offsets_writer->estimate_buffer_size();
+        }
+        for (auto& [__, cw] : ngw.child_writers) {
+            if (cw) {
+                size += cw->estimate_buffer_size();
+            }
+        }
+    }
+    return size;
 }
 
 bool VariantSubcolumnWriter::is_finalized() const {
@@ -880,10 +1027,6 @@ Status VariantSubcolumnWriter::finalize() {
             _opts.rowset_ctx->tablet_schema->column_by_uid(_tablet_column->parent_unique_id());
 
     TabletColumn flush_column;
-
-    auto path = _tablet_column->path_info_ptr()->copy_pop_front().get_path();
-
-    TabletSchema::SubColumnInfo sub_column_info;
     if (ptr->get_subcolumns().get_root()->data.get_least_common_base_type_id() ==
         PrimitiveType::INVALID_TYPE) {
         auto flush_type = vectorized::DataTypeFactory::instance().create_data_type(
@@ -914,6 +1057,25 @@ Status VariantSubcolumnWriter::finalize() {
     RETURN_IF_ERROR(convert_and_write_column(olap_data_convertor.get(), flush_column,
                                              ptr->get_root_type(), _writer.get(),
                                              ptr->get_root()->get_ptr(), ptr->rows(), column_id));
+    _opts.meta->set_num_rows(ptr->rows());
+    ++column_id;
+
+    // also expand array<object> JSONB into NestedGroup for compaction sub-variant writer.
+    doris::segment_v2::NestedGroupsMap nested_groups;
+    doris::segment_v2::NestedGroupBuilder ng_builder;
+    ng_builder.set_max_depth(static_cast<size_t>(config::variant_nested_group_max_depth));
+    if (ptr->get_root_type() &&
+        vectorized::remove_nullable(ptr->get_root_type())->get_primitive_type() ==
+                PrimitiveType::TYPE_JSONB &&
+        ptr->get_root()) {
+        RETURN_IF_ERROR(ng_builder.build_from_jsonb(ptr->get_root()->get_ptr(), nested_groups,
+                                                    ptr->rows()));
+    }
+    RETURN_IF_ERROR(write_nested_groups_to_storage(
+            nested_groups, &flush_column, _opts, olap_data_convertor.get(), ptr->rows(), column_id,
+            /*writers=*/_nested_group_writers, /*statistics=*/_statistics));
+    _statistics.to_pb(_opts.meta->mutable_variant_statistics());
+
     _is_finalized = true;
     return Status::OK();
 }
@@ -923,6 +1085,9 @@ Status VariantSubcolumnWriter::finish() {
         RETURN_IF_ERROR(finalize());
     }
     RETURN_IF_ERROR(_writer->finish());
+    RETURN_IF_ERROR(for_each_nested_group_writer(
+            _nested_group_writers,
+            [](ColumnWriter* writer, const ColumnWriterOptions&) { return writer->finish(); }));
     return Status::OK();
 }
 Status VariantSubcolumnWriter::write_data() {
@@ -930,11 +1095,18 @@ Status VariantSubcolumnWriter::write_data() {
         RETURN_IF_ERROR(finalize());
     }
     RETURN_IF_ERROR(_writer->write_data());
+    RETURN_IF_ERROR(for_each_nested_group_writer(
+            _nested_group_writers,
+            [](ColumnWriter* writer, const ColumnWriterOptions&) { return writer->write_data(); }));
     return Status::OK();
 }
 Status VariantSubcolumnWriter::write_ordinal_index() {
     assert(is_finalized());
     RETURN_IF_ERROR(_writer->write_ordinal_index());
+    RETURN_IF_ERROR(for_each_nested_group_writer(
+            _nested_group_writers, [](ColumnWriter* writer, const ColumnWriterOptions&) {
+                return writer->write_ordinal_index();
+            }));
     return Status::OK();
 }
 
@@ -943,6 +1115,14 @@ Status VariantSubcolumnWriter::write_zone_map() {
     if (_opts.need_zone_map) {
         RETURN_IF_ERROR(_writer->write_zone_map());
     }
+    RETURN_IF_ERROR(for_each_nested_group_writer(
+            _nested_group_writers, [](ColumnWriter* writer, const ColumnWriterOptions& opts) {
+                if (opts.need_zone_map) {
+                    return writer->write_zone_map();
+                }
+                return Status::OK();
+            }));
+    RETURN_IF_ERROR(write_nested_offsets_mapping_index(_nested_group_writers));
     return Status::OK();
 }
 
@@ -951,6 +1131,13 @@ Status VariantSubcolumnWriter::write_inverted_index() {
     if (_opts.need_inverted_index) {
         RETURN_IF_ERROR(_writer->write_inverted_index());
     }
+    RETURN_IF_ERROR(for_each_nested_group_writer(
+            _nested_group_writers, [](ColumnWriter* writer, const ColumnWriterOptions& opts) {
+                if (opts.need_inverted_index) {
+                    return writer->write_inverted_index();
+                }
+                return Status::OK();
+            }));
     return Status::OK();
 }
 Status VariantSubcolumnWriter::write_bloom_filter_index() {
@@ -958,6 +1145,13 @@ Status VariantSubcolumnWriter::write_bloom_filter_index() {
     if (_opts.need_bloom_filter) {
         RETURN_IF_ERROR(_writer->write_bloom_filter_index());
     }
+    RETURN_IF_ERROR(for_each_nested_group_writer(
+            _nested_group_writers, [](ColumnWriter* writer, const ColumnWriterOptions& opts) {
+                if (opts.need_bloom_filter) {
+                    return writer->write_bloom_filter_index();
+                }
+                return Status::OK();
+            }));
     return Status::OK();
 }
 
@@ -1194,6 +1388,236 @@ Status VariantDocCompactWriter::finalize() {
 
 uint64_t VariantDocCompactWriter::estimate_buffer_size() {
     return _column->byte_size();
+}
+
+static void init_nested_group_column_path_info(ColumnPathInfo* pb, int32_t variant_column_unique_id,
+                                               const std::string& parent_path,
+                                               const std::string& physical_path, bool is_offsets,
+                                               size_t depth) {
+    vectorized::PathInData storage_path(physical_path);
+    pb->clear_path_part_infos();
+    storage_path.to_protobuf(pb, variant_column_unique_id);
+    pb->set_nested_group_parent_path(parent_path);
+    pb->set_nested_group_depth(static_cast<uint32_t>(depth));
+    if (is_offsets) {
+        pb->set_is_nested_group_offsets(true);
+    }
+}
+
+static Status write_nested_group_offsets(
+        const doris::segment_v2::NestedGroup* group, const std::string& full_path,
+        int32_t variant_column_unique_id, const TabletColumn* tablet_column,
+        const ColumnWriterOptions& base_opts, vectorized::OlapBlockDataConvertor* converter,
+        int& column_id, std::unordered_map<std::string, NestedGroupWriter>& writers, size_t depth) {
+    std::string offsets_col_name =
+            build_nested_group_offsets_column_name(tablet_column->name_lower_case(), full_path);
+
+    TabletColumn offsets_column;
+    offsets_column.set_name(offsets_col_name);
+    offsets_column.set_type(FieldType::OLAP_FIELD_TYPE_BIGINT);
+    offsets_column.set_is_nullable(false);
+    offsets_column.set_length(sizeof(int64_t));
+    offsets_column.set_index_length(sizeof(int64_t));
+
+    auto& group_writer = writers[full_path];
+    group_writer.offsets_opts = base_opts;
+    group_writer.offsets_opts.need_inverted_index = false;
+    group_writer.offsets_opts.inverted_indexes.clear();
+    group_writer.offsets_opts.index_file_writer = nullptr;
+    group_writer.offsets_opts.need_zone_map = true;
+    group_writer.offsets_opts.need_bloom_filter = false;
+    group_writer.offsets_opts.meta = base_opts.footer->add_columns();
+    _init_column_meta(group_writer.offsets_opts.meta, column_id, offsets_column,
+                      base_opts.compression_type);
+
+    auto* path_info = group_writer.offsets_opts.meta->mutable_column_path_info();
+    init_nested_group_column_path_info(path_info, variant_column_unique_id, full_path,
+                                       offsets_col_name,
+                                       /*is_offsets=*/true, depth);
+
+    RETURN_IF_ERROR(ColumnWriter::create(group_writer.offsets_opts, &offsets_column,
+                                         base_opts.file_writer, &group_writer.offsets_writer));
+    RETURN_IF_ERROR(group_writer.offsets_writer->init());
+
+    vectorized::ColumnPtr offsets_col =
+            static_cast<const vectorized::IColumn&>(*group->offsets).get_ptr();
+    size_t offsets_num_rows = offsets_col->size();
+    {
+        const auto* src = assert_cast<const vectorized::ColumnOffset64*>(offsets_col.get());
+        auto dst = vectorized::ColumnInt64::create();
+        auto& dst_data = dst->get_data();
+        const auto& src_data = src->get_data();
+        dst_data.resize(src_data.size());
+        std::transform(src_data.begin(), src_data.end(), dst_data.begin(),
+                       [](auto v) { return static_cast<int64_t>(v); });
+        offsets_col = std::move(dst);
+        group_writer.offsets_mapping_index_writer =
+                std::make_shared<NestedOffsetsMappingIndexWriter>();
+        RETURN_IF_ERROR(
+                group_writer.offsets_mapping_index_writer->build(src_data.data(), src_data.size()));
+    }
+    converter->add_column_data_convertor(offsets_column);
+    RETURN_IF_ERROR(converter->set_source_content_with_specifid_column(
+            {offsets_col, nullptr, ""}, 0, offsets_num_rows, column_id));
+    auto [status, converted] = converter->convert_column_data(column_id);
+    RETURN_IF_ERROR(status);
+    RETURN_IF_ERROR(group_writer.offsets_writer->append(converted->get_nullmap(),
+                                                        converted->get_data(), offsets_num_rows));
+    converter->clear_source_content(column_id);
+    group_writer.offsets_opts.meta->set_num_rows(offsets_num_rows);
+    ++column_id;
+    return Status::OK();
+}
+
+static Status write_nested_group_children(
+        const doris::segment_v2::NestedGroup* group, const std::string& full_path,
+        const std::string& logical_full_path, int32_t variant_column_unique_id,
+        const TabletColumn* tablet_column, const ColumnWriterOptions& base_opts,
+        vectorized::OlapBlockDataConvertor* converter, int& column_id,
+        std::unordered_map<std::string, NestedGroupWriter>& writers, size_t depth) {
+    auto& group_writer = writers[full_path];
+    const auto& parent_indexes =
+            base_opts.rowset_ctx->tablet_schema->inverted_indexs(variant_column_unique_id);
+    for (const auto& [relative_path, subcolumn] : group->children) {
+        std::string child_col_name = tablet_column->name_lower_case() +
+                                     nested_group_marker_token() + full_path + "." +
+                                     relative_path.get_path();
+
+        const auto& child_type = subcolumn.get_least_common_type();
+        if (vectorized::variant_util::get_base_type_of_array(child_type)->get_primitive_type() ==
+            PrimitiveType::INVALID_TYPE) {
+            continue;
+        }
+        assert(child_type->is_nullable());
+        // use logical path to construct indexes
+        TabletColumn child_column = vectorized::variant_util::get_column_by_type(
+                child_type, child_col_name,
+                vectorized::variant_util::ExtraInfo {
+                        .unique_id = -1,
+                        .parent_unique_id = variant_column_unique_id,
+                        .path_info = vectorized::PathInData(logical_full_path + "." +
+                                                            relative_path.get_path())});
+
+        ColumnWriterOptions child_opts = base_opts;
+        child_opts.need_inverted_index = false;
+        child_opts.inverted_indexes.clear();
+        child_opts.meta = base_opts.footer->add_columns();
+        _init_column_meta(child_opts.meta, column_id, child_column, base_opts.compression_type);
+
+        auto* child_path_info = child_opts.meta->mutable_column_path_info();
+        init_nested_group_column_path_info(child_path_info, variant_column_unique_id, full_path,
+                                           child_col_name,
+                                           /*is_offsets=*/false, depth);
+
+        if (segment_v2::IndexColumnWriter::check_support_inverted_index(child_column) &&
+            !parent_indexes.empty()) {
+            TabletIndexes child_indexes;
+            // use logical path as suffix
+            if (vectorized::variant_util::inherit_index(parent_indexes, child_indexes,
+                                                        child_column)) {
+                group_writer.child_inverted_indexes[relative_path.get_path()] = child_indexes;
+                child_opts.need_inverted_index = true;
+                DCHECK(base_opts.index_file_writer != nullptr);
+                child_opts.index_file_writer = base_opts.index_file_writer;
+                for (const auto& index :
+                     group_writer.child_inverted_indexes[relative_path.get_path()]) {
+                    child_opts.inverted_indexes.push_back(index.get());
+                }
+            }
+        }
+
+        std::unique_ptr<ColumnWriter> child_writer;
+        RETURN_IF_ERROR(ColumnWriter::create(child_opts, &child_column, base_opts.file_writer,
+                                             &child_writer));
+        RETURN_IF_ERROR(child_writer->init());
+
+        if (!subcolumn.is_finalized()) {
+            const_cast<vectorized::ColumnVariant::Subcolumn&>(subcolumn).finalize();
+        }
+        auto child_col = subcolumn.get_finalized_column_ptr();
+        size_t child_num_rows = child_col->size();
+
+        converter->add_column_data_convertor(child_column);
+        RETURN_IF_ERROR(converter->set_source_content_with_specifid_column(
+                {child_col, nullptr, ""}, 0, child_num_rows, column_id));
+        auto [child_status, child_converted] = converter->convert_column_data(column_id);
+        RETURN_IF_ERROR(child_status);
+        RETURN_IF_ERROR(child_writer->append(child_converted->get_nullmap(),
+                                             child_converted->get_data(), child_num_rows));
+        converter->clear_source_content(column_id);
+        child_opts.meta->set_num_rows(child_num_rows);
+
+        group_writer.child_writers[relative_path.get_path()] = std::move(child_writer);
+        group_writer.child_opts[relative_path.get_path()] = child_opts;
+        ++column_id;
+    }
+    return Status::OK();
+}
+
+// recursively write NestedGroup built from JSONB at finalize stage.
+static Status write_nested_group_recursive(
+        const doris::segment_v2::NestedGroup* group, const std::string& path_prefix,
+        const TabletColumn* tablet_column, const ColumnWriterOptions& base_opts,
+        vectorized::OlapBlockDataConvertor* converter, int& column_id,
+        std::unordered_map<std::string, NestedGroupWriter>& writers, VariantStatistics& statistics,
+        size_t depth) {
+    if (!group || group->is_disabled) {
+        return Status::OK();
+    }
+
+    int32_t variant_column_unique_id = tablet_column->parent_unique_id();
+    if (variant_column_unique_id < 0) {
+        variant_column_unique_id = tablet_column->unique_id();
+    }
+
+    std::string full_path = path_prefix.empty() ? group->path.get_path()
+                                                : path_prefix + nested_group_marker_token() +
+                                                          group->path.get_path();
+    const std::string logical_full_path = strip_nested_group_marker(full_path);
+
+    RETURN_IF_ERROR(write_nested_group_offsets(group, full_path, variant_column_unique_id,
+                                               tablet_column, base_opts, converter, column_id,
+                                               writers, depth));
+    RETURN_IF_ERROR(write_nested_group_children(group, full_path, logical_full_path,
+                                                variant_column_unique_id, tablet_column, base_opts,
+                                                converter, column_id, writers, depth));
+
+    // 3. Recursively write nested groups within this group
+    for (const auto& [_, nested_group] : group->nested_groups) {
+        RETURN_IF_ERROR(write_nested_group_recursive(nested_group.get(), full_path, tablet_column,
+                                                     base_opts, converter, column_id, writers,
+                                                     statistics, depth + 1));
+    }
+
+    statistics.nested_group_info[full_path];
+
+    return Status::OK();
+}
+
+static Status write_nested_groups_to_storage(
+        const doris::segment_v2::NestedGroupsMap& nested_groups, const TabletColumn* tablet_column,
+        const ColumnWriterOptions& opts, vectorized::OlapBlockDataConvertor* converter,
+        size_t num_rows, int& column_id,
+        std::unordered_map<std::string, NestedGroupWriter>& writers,
+        VariantStatistics& statistics) {
+    if (nested_groups.empty()) {
+        return Status::OK();
+    }
+
+    std::vector<std::shared_ptr<doris::segment_v2::NestedGroup>> groups;
+    groups.reserve(nested_groups.size());
+    for (const auto& [_, g] : nested_groups) {
+        if (g) {
+            groups.push_back(g);
+        }
+    }
+    std::sort(groups.begin(), groups.end(),
+              [](const auto& a, const auto& b) { return a->path.get_path() < b->path.get_path(); });
+    for (const auto& g : groups) {
+        RETURN_IF_ERROR(write_nested_group_recursive(g.get(), "", tablet_column, opts, converter,
+                                                     column_id, writers, statistics, 1));
+    }
+    return Status::OK();
 }
 
 #include "common/compile_check_end.h"

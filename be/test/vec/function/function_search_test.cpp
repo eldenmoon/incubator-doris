@@ -129,6 +129,8 @@ TEST_F(FunctionSearchTest, TestClauseTypeCategory) {
               function_search->get_clause_type_category("OR"));
     EXPECT_EQ(FunctionSearch::ClauseTypeCategory::COMPOUND,
               function_search->get_clause_type_category("NOT"));
+    EXPECT_EQ(FunctionSearch::ClauseTypeCategory::COMPOUND,
+              function_search->get_clause_type_category("NESTED"));
 
     // Test unknown type - should default to NON_TOKENIZED
     EXPECT_EQ(FunctionSearch::ClauseTypeCategory::NON_TOKENIZED,
@@ -451,6 +453,8 @@ TEST_F(FunctionSearchTest, TestClauseTypeToQueryType) {
               function_search->clause_type_to_query_type("OR"));
     EXPECT_EQ(segment_v2::InvertedIndexQueryType::BOOLEAN_QUERY,
               function_search->clause_type_to_query_type("NOT"));
+    EXPECT_EQ(segment_v2::InvertedIndexQueryType::BOOLEAN_QUERY,
+              function_search->clause_type_to_query_type("NESTED"));
 
     // Test unknown clause type
     EXPECT_EQ(segment_v2::InvertedIndexQueryType::EQUAL_QUERY,
@@ -2199,6 +2203,29 @@ TEST_F(FunctionSearchTest, TestEvaluateInvertedIndexWithOccurBoolean) {
     // Will return OK because root_query is nullptr (all child queries fail)
     //    EXPECT_TRUE(status.ok());
     EXPECT_TRUE(status.is<ErrorCode::INVERTED_INDEX_FILE_NOT_FOUND>());
+}
+
+TEST_F(FunctionSearchTest, TestBuildQueryRecursiveNestedMustBeTopLevel) {
+    TSearchClause nested_clause;
+    nested_clause.clause_type = "NESTED";
+
+    TSearchClause root_clause;
+    root_clause.clause_type = "AND";
+    root_clause.children = {nested_clause};
+    root_clause.__isset.children = true;
+
+    auto context = std::make_shared<IndexQueryContext>();
+    std::unordered_map<std::string, vectorized::IndexFieldNameAndTypePair> data_types;
+    std::unordered_map<std::string, IndexIterator*> iterators;
+    FieldReaderResolver resolver(data_types, iterators, context);
+
+    inverted_index::query_v2::QueryPtr out;
+    std::string binding_key;
+    auto status = function_search->build_query_recursive(root_clause, context, resolver, &out, &binding_key);
+
+    EXPECT_FALSE(status.ok());
+    EXPECT_TRUE(status.is<ErrorCode::INVALID_ARGUMENT>());
+    EXPECT_NE(status.to_string().find("NESTED clause must be evaluated at top level"), std::string::npos);
 }
 
 } // namespace doris::vectorized

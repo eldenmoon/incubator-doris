@@ -727,6 +727,11 @@ Status VariantCompactionUtil::aggregate_variant_extended_info(
             // 4. extract nested paths
             auto& nested_paths = (*uid_to_variant_extended_info)[column->unique_id()].nested_paths;
             variant_column_reader->get_nested_paths(&nested_paths);
+
+            // 5. check if has nested group from stats
+            if (!source_stats->nested_group_info.empty()) {
+                (*uid_to_variant_extended_info)[column->unique_id()].has_nested_group = true;
+            }
         }
     }
     return Status::OK();
@@ -1017,6 +1022,16 @@ Status VariantCompactionUtil::get_extended_compaction_schema(
     // collect path stats from all rowsets and segments
     for (const auto& rs : rowsets) {
         RETURN_IF_ERROR(aggregate_variant_extended_info(rs, &uid_to_variant_extended_info));
+    }
+
+    // If any variant column has nested group, skip extended schema and use normal compaction.
+    // Nested groups require special handling that is not yet supported in extended schema compaction.
+    for (const auto& [uid, info] : uid_to_variant_extended_info) {
+        if (info.has_nested_group) {
+            LOG(INFO) << "Variant column uid=" << uid
+                      << " has nested group, skip extended schema compaction";
+            return Status::OK();
+        }
     }
 
     // build the output schema
@@ -1438,8 +1453,17 @@ bool inherit_index(const std::vector<const TabletIndex*>& parent_indexes,
         if (column.get_sub_columns().empty()) {
             return false;
         }
-        return inherit_index(parent_indexes, subcolumns_indexes,
-                             column.get_sub_columns()[0]->type(),
+        const TabletColumn* nested = column.get_sub_columns()[0].get();
+        while (nested != nullptr && nested->is_array_type()) {
+            if (nested->get_sub_columns().empty()) {
+                return false;
+            }
+            nested = nested->get_sub_columns()[0].get();
+        }
+        if (nested == nullptr) {
+            return false;
+        }
+        return inherit_index(parent_indexes, subcolumns_indexes, nested->type(),
                              column.path_info_ptr()->get_path(), true);
     }
     return inherit_index(parent_indexes, subcolumns_indexes, column.type(),
@@ -1455,8 +1479,17 @@ bool inherit_index(const std::vector<const TabletIndex*>& parent_indexes,
         if (column_pb.children_columns_size() == 0) {
             return false;
         }
-        return inherit_index(parent_indexes, subcolumns_indexes,
-                             (FieldType)column_pb.children_columns(0).type(),
+        const ColumnMetaPB* nested = &column_pb.children_columns(0);
+        while (nested != nullptr && nested->type() == (int)FieldType::OLAP_FIELD_TYPE_ARRAY) {
+            if (nested->children_columns_size() == 0) {
+                return false;
+            }
+            nested = &nested->children_columns(0);
+        }
+        if (nested == nullptr) {
+            return false;
+        }
+        return inherit_index(parent_indexes, subcolumns_indexes, (FieldType)nested->type(),
                              column_pb.column_path_info().path(), true);
     }
     return inherit_index(parent_indexes, subcolumns_indexes, (FieldType)column_pb.type(),
@@ -1875,10 +1908,15 @@ Status parse_and_materialize_variant_columns(Block& block, const std::vector<uin
 Status parse_and_materialize_variant_columns(Block& block, const TabletSchema& tablet_schema,
                                              const std::vector<uint32_t>& column_pos) {
     std::vector<uint32_t> variant_column_pos;
-    for (const auto& pos : column_pos) {
-        const auto& column = tablet_schema.column(pos);
+    std::vector<uint32_t> variant_schema_pos;
+    variant_column_pos.reserve(column_pos.size());
+    variant_schema_pos.reserve(column_pos.size());
+    for (size_t block_pos = 0; block_pos < column_pos.size(); ++block_pos) {
+        const uint32_t schema_pos = column_pos[block_pos];
+        const auto& column = tablet_schema.column(schema_pos);
         if (column.is_variant_type()) {
-            variant_column_pos.push_back(pos);
+            variant_column_pos.push_back(static_cast<uint32_t>(block_pos));
+            variant_schema_pos.push_back(schema_pos);
         }
     }
 
@@ -1889,7 +1927,7 @@ Status parse_and_materialize_variant_columns(Block& block, const TabletSchema& t
     std::vector<ParseConfig> configs(variant_column_pos.size());
     for (size_t i = 0; i < variant_column_pos.size(); ++i) {
         configs[i].enable_flatten_nested = tablet_schema.variant_flatten_nested();
-        const auto& column = tablet_schema.column(variant_column_pos[i]);
+        const auto& column = tablet_schema.column(variant_schema_pos[i]);
         if (!column.is_variant_type()) {
             return Status::InternalError("column is not variant type, column name: {}",
                                          column.name());

@@ -97,8 +97,9 @@ std::shared_ptr<IndexExecContext> make_inverted_context(
         std::vector<std::unique_ptr<segment_v2::IndexIterator>>& index_iterators,
         std::vector<IndexFieldNameAndTypePair>& storage_types,
         std::unordered_map<ColumnId, std::unordered_map<const VExpr*, bool>>& status_map) {
+    segment_v2::ColumnIteratorOptions column_iter_opts;
     return std::make_shared<IndexExecContext>(col_ids, index_iterators, storage_types, status_map,
-                                              nullptr);
+                                              nullptr, nullptr, column_iter_opts);
 }
 
 } // namespace

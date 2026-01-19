@@ -20,7 +20,7 @@
 
 #include "vec/columns/column_variant.h"
 
-#include <assert.h>
+#include <cassert>
 #include <fmt/core.h>
 #include <fmt/format.h>
 #include <glog/logging.h>
@@ -2015,6 +2015,7 @@ void ColumnVariant::finalize(FinalizeMode mode) {
             std::count_if(new_subcolumns.begin(), new_subcolumns.end(),
                           [](const auto& entry) { return entry->path.has_nested_part(); });
     std::swap(subcolumns, new_subcolumns);
+
     _prev_positions.clear();
     ENABLE_CHECK_CONSISTENCY(this);
 }
@@ -2576,6 +2577,7 @@ MutableColumnPtr ColumnVariant::clone() const {
     auto doc_value_column = std::move(*new_doc_value_column).mutate();
     res->serialized_doc_value_column = doc_value_column->assume_mutable();
     res->set_num_rows(num_rows);
+
     ENABLE_CHECK_CONSISTENCY(res.get());
     return res;
 }
