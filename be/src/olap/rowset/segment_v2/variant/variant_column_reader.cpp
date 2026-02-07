@@ -122,6 +122,8 @@ static Status wrap_with_nested_group_offsets(const std::vector<const NestedGroup
     ColumnIteratorUPtr current_iter = std::move(*iter);
     vectorized::DataTypePtr current_type = *type;
 
+    // Wrap from inner-most group to outer-most group so each parent offsets iterator
+    // lifts the already materialized child iterator into the correct array depth.
     for (auto it = chain.rbegin(); it != chain.rend(); ++it) {
         const NestedGroupReader* group_reader = *it;
         ColumnIteratorUPtr offsets_iter;
@@ -866,7 +868,8 @@ Status VariantColumnReader::_build_read_plan(ReadPlan* plan, const TabletColumn&
         return Status::OK();
     }
 
-    // build nested group read plan
+    // NestedGroup path resolution must happen before sparse/hierarchical fallbacks.
+    // Otherwise a valid nested path may be misclassified as generic sparse extraction.
     if (_try_build_nested_group_plan(plan, target_col, opt, col_uid, relative_path)) {
         return Status::OK();
     }
@@ -1797,6 +1800,38 @@ struct PathMatchResult {
     bool found = false;
 };
 
+static PathMatchResult build_path_match(const NestedGroupReader* reader, std::string child_path,
+                                        bool collect_chain) {
+    PathMatchResult result;
+    result.reader = reader;
+    result.child_path = std::move(child_path);
+    result.found = true;
+    if (collect_chain) {
+        result.chain.push_back(reader);
+    }
+    return result;
+}
+
+static void maybe_prepend_chain(PathMatchResult* result, const NestedGroupReader* reader,
+                                bool collect_chain) {
+    if (result == nullptr || !result->found || !collect_chain) {
+        return;
+    }
+    result->chain.insert(result->chain.begin(), reader);
+}
+
+static bool has_child_or_nested_prefix(const NestedGroupReader& reader,
+                                       const std::string& remaining) {
+    std::string remaining_prefix_dot = remaining + ".";
+    auto has_child_prefix = std::any_of(
+            reader.child_readers.begin(), reader.child_readers.end(),
+            [&](const auto& entry) { return entry.first.starts_with(remaining_prefix_dot); });
+    auto has_nested_prefix = std::any_of(
+            reader.nested_group_readers.begin(), reader.nested_group_readers.end(),
+            [&](const auto& entry) { return entry.first.starts_with(remaining_prefix_dot); });
+    return has_child_prefix || has_nested_prefix;
+}
+
 static PathMatchResult find_in_nested_groups(const NestedGroupReaders& readers,
                                              const std::string& path, bool collect_chain) {
     if (path.empty()) {
@@ -1808,30 +1843,15 @@ static PathMatchResult find_in_nested_groups(const NestedGroupReaders& readers,
         const auto& root_reader = it->second;
         if (root_reader && root_reader->is_valid()) {
             if (path == root_path) {
-                PathMatchResult r;
-                r.reader = root_reader.get();
-                r.found = true;
-                if (collect_chain) {
-                    r.chain.push_back(root_reader.get());
-                }
-                return r;
+                return build_path_match(root_reader.get(), {}, collect_chain);
             }
             if (root_reader->child_readers.contains(path)) {
-                PathMatchResult r;
-                r.reader = root_reader.get();
-                r.child_path = path;
-                r.found = true;
-                if (collect_chain) {
-                    r.chain.push_back(root_reader.get());
-                }
-                return r;
+                return build_path_match(root_reader.get(), path, collect_chain);
             }
             auto nested =
                     find_in_nested_groups(root_reader->nested_group_readers, path, collect_chain);
             if (nested.found) {
-                if (collect_chain) {
-                    nested.chain.insert(nested.chain.begin(), root_reader.get());
-                }
+                maybe_prepend_chain(&nested, root_reader.get(), collect_chain);
                 return nested;
             }
         }
@@ -1846,13 +1866,7 @@ static PathMatchResult find_in_nested_groups(const NestedGroupReaders& readers,
         }
 
         if (path == ng_path) {
-            PathMatchResult r;
-            r.reader = reader.get();
-            r.found = true;
-            if (collect_chain) {
-                r.chain.push_back(reader.get());
-            }
-            return r;
+            return build_path_match(reader.get(), {}, collect_chain);
         }
 
         std::string prefix = ng_path + ".";
@@ -1860,45 +1874,18 @@ static PathMatchResult find_in_nested_groups(const NestedGroupReaders& readers,
             std::string remaining = path.substr(prefix.size());
 
             if (reader->child_readers.contains(remaining)) {
-                PathMatchResult r;
-                r.reader = reader.get();
-                r.child_path = std::move(remaining);
-                r.found = true;
-                if (collect_chain) {
-                    r.chain.push_back(reader.get());
-                }
-                return r;
+                return build_path_match(reader.get(), std::move(remaining), collect_chain);
             }
 
             auto nested =
                     find_in_nested_groups(reader->nested_group_readers, remaining, collect_chain);
             if (nested.found) {
-                if (collect_chain) {
-                    nested.chain.insert(nested.chain.begin(), reader.get());
-                }
+                maybe_prepend_chain(&nested, reader.get(), collect_chain);
                 return nested;
             }
 
-            std::string remaining_prefix_dot = remaining + ".";
-            auto has_child_prefix =
-                    std::any_of(reader->child_readers.begin(), reader->child_readers.end(),
-                                [&](const auto& entry) {
-                                    return entry.first.starts_with(remaining_prefix_dot);
-                                });
-            auto has_nested_prefix =
-                    std::any_of(reader->nested_group_readers.begin(),
-                                reader->nested_group_readers.end(), [&](const auto& entry) {
-                                    return entry.first.starts_with(remaining_prefix_dot);
-                                });
-            if (has_child_prefix || has_nested_prefix) {
-                PathMatchResult r;
-                r.reader = reader.get();
-                r.child_path = std::move(remaining);
-                r.found = true;
-                if (collect_chain) {
-                    r.chain.push_back(reader.get());
-                }
-                return r;
+            if (has_child_or_nested_prefix(*reader, remaining)) {
+                return build_path_match(reader.get(), std::move(remaining), collect_chain);
             }
         }
     }

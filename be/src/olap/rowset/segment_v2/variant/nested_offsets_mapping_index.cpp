@@ -19,9 +19,8 @@
 
 #include <algorithm>
 #include <limits>
-#include <utility>
-
 #include <roaring/roaring.hh>
+#include <utility>
 
 #include "olap/rowset/segment_v2/encoding_info.h"
 #include "olap/rowset/segment_v2/indexed_column_reader.h"
@@ -35,6 +34,9 @@
 namespace doris::segment_v2 {
 
 static inline int128_t encode_end_offset_key(uint64_t end_offset, uint32_t block_id) {
+    // Composite key layout: [end_offset:high bits][block_id:low 32 bits].
+    // This preserves ordering by end_offset first, then block_id, so seek_at_or_after()
+    // can quickly locate the first block whose cumulative end offset covers a target element.
     uint128_t key = (static_cast<uint128_t>(end_offset) << 32) | static_cast<uint128_t>(block_id);
     return static_cast<int128_t>(key);
 }
@@ -42,6 +44,121 @@ static inline int128_t encode_end_offset_key(uint64_t end_offset, uint32_t block
 static inline uint64_t decode_end_offset_from_key(int128_t key) {
     uint128_t u = static_cast<uint128_t>(key);
     return static_cast<uint64_t>(u >> 32);
+}
+
+static inline uint32_t read_cumulative_at(const Slice& payload, uint32_t idx) {
+    // Payload stores block-local cumulative offsets as little-endian uint32 array.
+    return decode_fixed32_le(reinterpret_cast<const uint8_t*>(payload.data) +
+                             static_cast<size_t>(idx) * sizeof(uint32_t));
+}
+
+static inline uint32_t upper_bound_cumulative(const Slice& payload, uint32_t from, uint32_t to,
+                                              uint32_t value) {
+    uint32_t lo = from;
+    uint32_t hi = to;
+    while (lo < hi) {
+        uint32_t mid = lo + ((hi - lo) >> 1);
+        if (read_cumulative_at(payload, mid) > value) {
+            hi = mid;
+        } else {
+            lo = mid + 1;
+        }
+    }
+    return lo;
+}
+
+static Status read_block_end_offset_by_ordinal(IndexedColumnIterator* end_ord_iter,
+                                               vectorized::MutableColumnPtr* end_col,
+                                               uint64_t block_idx, uint64_t* block_end_offset) {
+    if (end_ord_iter == nullptr || end_col == nullptr || block_end_offset == nullptr) {
+        return Status::InvalidArgument("invalid arguments when reading nested block end offset");
+    }
+
+    (*end_col)->clear();
+    RETURN_IF_ERROR(end_ord_iter->seek_to_ordinal(static_cast<ordinal_t>(block_idx)));
+    size_t one = 1;
+    RETURN_IF_ERROR(end_ord_iter->next_batch(&one, *end_col));
+    if (one != 1) {
+        return Status::Corruption("failed to read block_end_offsets at ordinal {}", block_idx);
+    }
+
+    auto* data = assert_cast<vectorized::ColumnInt128*>((*end_col).get());
+    *block_end_offset = decode_end_offset_from_key(data->get_data()[0]);
+    return Status::OK();
+}
+
+static Status load_block_cumulative_payload(IndexedColumnIterator* payload_iter,
+                                            vectorized::MutableColumnPtr* payload_col,
+                                            uint64_t block_idx, uint32_t block_size,
+                                            uint64_t offsets_num_rows, uint32_t* expected_rows,
+                                            Slice* payload, uint32_t* row_in_block,
+                                            uint32_t* row_end_offset) {
+    if (payload_iter == nullptr || payload_col == nullptr || expected_rows == nullptr ||
+        payload == nullptr || row_in_block == nullptr || row_end_offset == nullptr) {
+        return Status::InvalidArgument("invalid arguments when loading nested cumulative payload");
+    }
+
+    const uint64_t block_row_start = block_idx * block_size;
+    const uint64_t remaining_rows =
+            (block_row_start >= offsets_num_rows) ? 0 : (offsets_num_rows - block_row_start);
+    *expected_rows = static_cast<uint32_t>(std::min<uint64_t>(block_size, remaining_rows));
+
+    (*payload_col)->clear();
+    RETURN_IF_ERROR(payload_iter->seek_to_ordinal(static_cast<ordinal_t>(block_idx)));
+    size_t one = 1;
+    RETURN_IF_ERROR(payload_iter->next_batch(&one, *payload_col));
+    if (one != 1) {
+        return Status::Corruption("failed to read block_cumulative_offsets at ordinal {}",
+                                  block_idx);
+    }
+
+    const auto& s = (*payload_col)->get_data_at(0);
+    if (s.size != static_cast<size_t>(*expected_rows) * sizeof(uint32_t)) {
+        return Status::Corruption("nested offsets index v2 payload size mismatch at ordinal {}",
+                                  block_idx);
+    }
+
+    *payload = Slice(s.data, s.size);
+    *row_in_block = 0;
+    *row_end_offset = (*expected_rows > 0) ? read_cumulative_at(*payload, 0) : 0;
+    return Status::OK();
+}
+
+static Status advance_row_cursor_for_local_elem(uint32_t elem, uint32_t local, uint64_t block_idx,
+                                                const Slice& payload, uint32_t expected_rows,
+                                                uint32_t* row_in_block, uint32_t* row_end_offset) {
+    if (row_in_block == nullptr || row_end_offset == nullptr) {
+        return Status::InvalidArgument("row cursor is null");
+    }
+
+    if (*row_end_offset <= local) {
+        constexpr uint32_t kLinearSteps = 16;
+        uint32_t steps = 0;
+        while (*row_in_block < expected_rows && *row_end_offset <= local && steps < kLinearSteps) {
+            ++(*row_in_block);
+            ++steps;
+            if (*row_in_block >= expected_rows) {
+                break;
+            }
+            *row_end_offset = read_cumulative_at(payload, *row_in_block);
+        }
+
+        if (*row_in_block < expected_rows && *row_end_offset <= local) {
+            *row_in_block = upper_bound_cumulative(payload, *row_in_block, expected_rows, local);
+            if (*row_in_block >= expected_rows) {
+                return Status::Corruption("failed to locate row for element {} in block {}", elem,
+                                          block_idx);
+            }
+            *row_end_offset = read_cumulative_at(payload, *row_in_block);
+        }
+    }
+
+    if (UNLIKELY(*row_in_block >= expected_rows)) {
+        return Status::Corruption("failed to locate row for element {} in block {}", elem,
+                                  block_idx);
+    }
+
+    return Status::OK();
 }
 
 Status NestedOffsetsMappingIndexWriter::build(const uint64_t* offsets, size_t num_rows) {
@@ -65,21 +182,27 @@ Status NestedOffsetsMappingIndexWriter::build(const uint64_t* offsets, size_t nu
 
     for (uint64_t block_id = 0; block_id < num_blocks; ++block_id) {
         const uint64_t block_row_start = block_id * _block_size;
-        const uint64_t block_row_end_exclusive = std::min<uint64_t>(rows, block_row_start + _block_size);
+        const uint64_t block_row_end_exclusive =
+                std::min<uint64_t>(rows, block_row_start + _block_size);
         if (block_row_start >= block_row_end_exclusive) {
             break;
         }
 
         const uint64_t block_row_end = block_row_end_exclusive - 1;
+        // Block-level accelerator: cumulative end offset at the last row of the block.
         const uint64_t block_end_offset = offsets[block_row_end];
         _block_end_offset_keys.emplace_back(
                 encode_end_offset_key(block_end_offset, static_cast<uint32_t>(block_id)));
 
-        const uint64_t block_start_offset = (block_row_start == 0) ? 0 : offsets[block_row_start - 1];
+        const uint64_t block_start_offset =
+                (block_row_start == 0) ? 0 : offsets[block_row_start - 1];
         uint64_t prev = block_start_offset;
 
+        // Block payload: cumulative offsets normalized by block_start_offset so each
+        // entry fits in uint32 for compact storage and cache-friendly decoding.
         std::string payload;
-        payload.resize(static_cast<size_t>((block_row_end_exclusive - block_row_start) * sizeof(uint32_t)));
+        payload.resize(static_cast<size_t>((block_row_end_exclusive - block_row_start) *
+                                           sizeof(uint32_t)));
         uint8_t* dst = reinterpret_cast<uint8_t*>(payload.data());
 
         for (uint64_t r = block_row_start; r < block_row_end_exclusive; ++r) {
@@ -102,7 +225,8 @@ Status NestedOffsetsMappingIndexWriter::build(const uint64_t* offsets, size_t nu
     return Status::OK();
 }
 
-Status NestedOffsetsMappingIndexWriter::write(io::FileWriter* file_writer, ColumnMetaPB* offsets_meta,
+Status NestedOffsetsMappingIndexWriter::write(io::FileWriter* file_writer,
+                                              ColumnMetaPB* offsets_meta,
                                               CompressionTypePB compression_type) const {
     if (file_writer == nullptr) {
         return Status::InvalidArgument("file_writer is null");
@@ -164,7 +288,8 @@ Status NestedOffsetsMappingIndexWriter::write(io::FileWriter* file_writer, Colum
     return Status::OK();
 }
 
-Status NestedOffsetsMappingIndexReader::_load(bool use_page_cache, OlapReaderStatistics* stats) const {
+Status NestedOffsetsMappingIndexReader::_load(bool use_page_cache,
+                                              OlapReaderStatistics* stats) const {
     if (!_pb.has_block_end_offsets() || !_pb.has_block_cumulative_offsets()) {
         return Status::Corruption("nested offsets index v2 missing required metas");
     }
@@ -179,13 +304,14 @@ Status NestedOffsetsMappingIndexReader::_load(bool use_page_cache, OlapReaderSta
     if (_block_end_offsets_reader->num_values() != _block_cumulative_offsets_reader->num_values()) {
         return Status::Corruption(
                 "nested offsets index v2 meta mismatch. end_offsets={} cumulative_offsets={}",
-                _block_end_offsets_reader->num_values(), _block_cumulative_offsets_reader->num_values());
+                _block_end_offsets_reader->num_values(),
+                _block_cumulative_offsets_reader->num_values());
     }
     return Status::OK();
 }
 
 Status NestedOffsetsMappingIndexReader::get_total_elements(const ColumnIteratorOptions& opts,
-                                                          uint64_t* total_elements) const {
+                                                           uint64_t* total_elements) const {
     if (total_elements == nullptr) {
         return Status::InvalidArgument("total_elements is null");
     }
@@ -193,7 +319,8 @@ Status NestedOffsetsMappingIndexReader::get_total_elements(const ColumnIteratorO
     if (_pb.block_size() == 0) {
         return Status::Corruption("nested offsets index v2 block_size is 0");
     }
-    RETURN_IF_ERROR(_load_once.call([this, &opts] { return _load(opts.use_page_cache, opts.stats); }));
+    RETURN_IF_ERROR(
+            _load_once.call([this, &opts] { return _load(opts.use_page_cache, opts.stats); }));
     if (_block_end_offsets_reader == nullptr) {
         return Status::InternalError("nested offsets index v2 end_offsets reader not initialized");
     }
@@ -215,9 +342,9 @@ Status NestedOffsetsMappingIndexReader::get_total_elements(const ColumnIteratorO
     return Status::OK();
 }
 
-Status NestedOffsetsMappingIndexReader::map_elements_to_parent_ords(const ColumnIteratorOptions& opts,
-                                                                   const roaring::Roaring& element_bitmap,
-                                                                   roaring::Roaring* parent_bitmap) const {
+Status NestedOffsetsMappingIndexReader::map_elements_to_parent_ords(
+        const ColumnIteratorOptions& opts, const roaring::Roaring& element_bitmap,
+        roaring::Roaring* parent_bitmap) const {
     if (parent_bitmap == nullptr) {
         return Status::InvalidArgument("parent_bitmap is null");
     }
@@ -230,7 +357,8 @@ Status NestedOffsetsMappingIndexReader::map_elements_to_parent_ords(const Column
         return Status::Corruption("nested offsets index v2 block_size is 0");
     }
     const uint32_t block_size = _pb.block_size();
-    RETURN_IF_ERROR(_load_once.call([this, &opts] { return _load(opts.use_page_cache, opts.stats); }));
+    RETURN_IF_ERROR(
+            _load_once.call([this, &opts] { return _load(opts.use_page_cache, opts.stats); }));
 
     if (_block_end_offsets_reader == nullptr || _block_cumulative_offsets_reader == nullptr) {
         return Status::InternalError("nested offsets index v2 readers not initialized");
@@ -259,66 +387,16 @@ Status NestedOffsetsMappingIndexReader::map_elements_to_parent_ords(const Column
     vectorized::MutableColumnPtr end_col = vectorized::ColumnInt128::create();
     vectorized::MutableColumnPtr payload_col = vectorized::ColumnString::create();
 
-    auto get_cumulative_at = [&](uint32_t idx) -> uint32_t {
-        return decode_fixed32_le(reinterpret_cast<const uint8_t*>(current_payload.data) +
-                                 static_cast<size_t>(idx) * sizeof(uint32_t));
-    };
-
-    auto upper_bound_payload = [&](uint32_t from, uint32_t to, uint32_t value) -> uint32_t {
-        uint32_t lo = from;
-        uint32_t hi = to;
-        while (lo < hi) {
-            uint32_t mid = lo + ((hi - lo) >> 1);
-            if (get_cumulative_at(mid) > value) {
-                hi = mid;
-            } else {
-                lo = mid + 1;
-            }
-        }
-        return lo;
-    };
-
-    auto read_block_end_offset = [&](uint64_t block_idx, uint64_t* out) -> Status {
-        end_col->clear();
-        RETURN_IF_ERROR(end_ord_iter.seek_to_ordinal(static_cast<ordinal_t>(block_idx)));
-        size_t one = 1;
-        RETURN_IF_ERROR(end_ord_iter.next_batch(&one, end_col));
-        if (one != 1) {
-            return Status::Corruption("failed to read block_end_offsets at ordinal {}", block_idx);
-        }
-        auto* data = assert_cast<vectorized::ColumnInt128*>(end_col.get());
-        *out = decode_end_offset_from_key(data->get_data()[0]);
-        return Status::OK();
-    };
-
-    auto load_block_cumulative = [&](uint64_t block_idx) -> Status {
-        const uint64_t block_row_start = block_idx * block_size;
-        const uint64_t remaining_rows =
-                (block_row_start >= _offsets_num_rows) ? 0 : (_offsets_num_rows - block_row_start);
-        current_expected_rows = static_cast<uint32_t>(std::min<uint64_t>(block_size, remaining_rows));
-
-        payload_col->clear();
-        RETURN_IF_ERROR(payload_iter.seek_to_ordinal(static_cast<ordinal_t>(block_idx)));
-        size_t one = 1;
-        RETURN_IF_ERROR(payload_iter.next_batch(&one, payload_col));
-        if (one != 1) {
-            return Status::Corruption("failed to read block_cumulative_offsets at ordinal {}", block_idx);
-        }
-        const auto& s = payload_col->get_data_at(0);
-        if (s.size != static_cast<size_t>(current_expected_rows) * sizeof(uint32_t)) {
-            return Status::Corruption("nested offsets index v2 payload size mismatch at ordinal {}",
-                                      block_idx);
-        }
-        current_payload = Slice(s.data, s.size);
-        current_row_in_block = 0;
-        current_row_end_offset = (current_expected_rows > 0) ? get_cumulative_at(0) : 0;
-        return Status::OK();
-    };
-
+    // For each element ordinal:
+    // 1) locate the block covering (elem + 1) by block end offset index,
+    // 2) translate to block-local element ordinal,
+    // 3) advance row cursor within the block payload,
+    // 4) emit parent row ordinal (deduplicated across elements in same row).
     for (uint32_t elem : element_bitmap) {
         const uint64_t target = static_cast<uint64_t>(elem) + 1;
 
-        if (current_block_idx == std::numeric_limits<uint64_t>::max() || target > current_block_end_offset) {
+        if (current_block_idx == std::numeric_limits<uint64_t>::max() ||
+            target > current_block_end_offset) {
             bool exact = false;
             const int128_t search_key = encode_end_offset_key(target, 0);
             Status st = end_seek_iter.seek_at_or_after(&search_key, &exact);
@@ -328,18 +406,24 @@ Status NestedOffsetsMappingIndexReader::map_elements_to_parent_ords(const Column
             RETURN_IF_ERROR(st);
 
             current_block_idx = static_cast<uint64_t>(end_seek_iter.get_current_ordinal());
-            RETURN_IF_ERROR(read_block_end_offset(current_block_idx, &current_block_end_offset));
+            RETURN_IF_ERROR(read_block_end_offset_by_ordinal(
+                    &end_ord_iter, &end_col, current_block_idx, &current_block_end_offset));
             if (current_block_idx == 0) {
                 current_block_start_offset = 0;
             } else if (prev_block_idx != std::numeric_limits<uint64_t>::max() &&
                        current_block_idx == prev_block_idx + 1) {
                 current_block_start_offset = prev_block_end_offset;
             } else {
-                RETURN_IF_ERROR(read_block_end_offset(current_block_idx - 1, &current_block_start_offset));
+                RETURN_IF_ERROR(read_block_end_offset_by_ordinal(&end_ord_iter, &end_col,
+                                                                 current_block_idx - 1,
+                                                                 &current_block_start_offset));
             }
             prev_block_idx = current_block_idx;
             prev_block_end_offset = current_block_end_offset;
-            RETURN_IF_ERROR(load_block_cumulative(current_block_idx));
+            RETURN_IF_ERROR(load_block_cumulative_payload(
+                    &payload_iter, &payload_col, current_block_idx, block_size, _offsets_num_rows,
+                    &current_expected_rows, &current_payload, &current_row_in_block,
+                    &current_row_end_offset));
         }
 
         if (UNLIKELY(current_expected_rows == 0 || current_payload.data == nullptr)) {
@@ -348,39 +432,18 @@ Status NestedOffsetsMappingIndexReader::map_elements_to_parent_ords(const Column
         }
         const uint64_t local_elem = static_cast<uint64_t>(elem) - current_block_start_offset;
         if (UNLIKELY(local_elem > std::numeric_limits<uint32_t>::max())) {
-            return Status::Corruption("nested offsets index v2 local elem overflow: {}", local_elem);
+            return Status::Corruption("nested offsets index v2 local elem overflow: {}",
+                                      local_elem);
         }
         const uint32_t local = static_cast<uint32_t>(local_elem);
 
-        if (current_row_end_offset <= local) {
-            constexpr uint32_t kLinearSteps = 16;
-            uint32_t steps = 0;
-            while (current_row_in_block < current_expected_rows &&
-                   current_row_end_offset <= local && steps < kLinearSteps) {
-                ++current_row_in_block;
-                ++steps;
-                if (current_row_in_block >= current_expected_rows) {
-                    break;
-                }
-                current_row_end_offset = get_cumulative_at(current_row_in_block);
-            }
-            if (current_row_in_block < current_expected_rows && current_row_end_offset <= local) {
-                current_row_in_block =
-                        upper_bound_payload(current_row_in_block, current_expected_rows, local);
-                if (current_row_in_block >= current_expected_rows) {
-                    return Status::Corruption("failed to locate row for element {} in block {}", elem,
-                                              current_block_idx);
-                }
-                current_row_end_offset = get_cumulative_at(current_row_in_block);
-            }
-        }
-
-        if (UNLIKELY(current_row_in_block >= current_expected_rows)) {
-            return Status::Corruption("failed to locate row for element {} in block {}", elem,
-                                      current_block_idx);
-        }
+        RETURN_IF_ERROR(advance_row_cursor_for_local_elem(
+                elem, local, current_block_idx, current_payload, current_expected_rows,
+                &current_row_in_block, &current_row_end_offset));
 
         const uint64_t parent = current_block_idx * block_size + current_row_in_block;
+        // Bitmap may contain multiple element hits for the same parent row.
+        // Keep output compact by suppressing adjacent duplicates.
         if (parent != last_added_parent) {
             parent_bitmap->add(static_cast<uint32_t>(parent));
             last_added_parent = parent;

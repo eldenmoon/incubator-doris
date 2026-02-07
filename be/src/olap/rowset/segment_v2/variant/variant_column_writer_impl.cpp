@@ -86,6 +86,47 @@ static Status write_nested_offsets_mapping_index(
     return Status::OK();
 }
 
+static Status build_nested_groups_from_variant_jsonb(
+        const vectorized::ColumnVariant& variant, bool include_jsonb_subcolumns,
+        doris::segment_v2::NestedGroupsMap* nested_groups) {
+    if (nested_groups == nullptr) {
+        return Status::InvalidArgument("nested_groups is null");
+    }
+
+    nested_groups->clear();
+    doris::segment_v2::NestedGroupBuilder ng_builder;
+    ng_builder.set_max_depth(static_cast<size_t>(config::variant_nested_group_max_depth));
+
+    if (variant.get_root_type() &&
+        vectorized::remove_nullable(variant.get_root_type())->get_primitive_type() ==
+                PrimitiveType::TYPE_JSONB &&
+        variant.get_root()) {
+        RETURN_IF_ERROR(ng_builder.build_from_jsonb(variant.get_root()->get_ptr(), *nested_groups,
+                                                    variant.rows()));
+    }
+
+    if (!include_jsonb_subcolumns) {
+        return Status::OK();
+    }
+
+    for (const auto& entry :
+         vectorized::variant_util::get_sorted_subcolumns(variant.get_subcolumns())) {
+        if (entry->path.empty()) {
+            continue;
+        }
+        const auto& t = entry->data.get_least_common_type();
+        if (!t ||
+            vectorized::remove_nullable(t)->get_primitive_type() != PrimitiveType::TYPE_JSONB) {
+            continue;
+        }
+        RETURN_IF_ERROR(
+                ng_builder.build_from_jsonb(entry->data.get_finalized_column_ptr()->get_ptr(),
+                                            entry->path, *nested_groups, entry->data.size()));
+    }
+
+    return Status::OK();
+}
+
 void _init_column_meta(ColumnMetaPB* meta, uint32_t column_id, const TabletColumn& column,
                        CompressionTypePB compression_type) {
     meta->Clear();
@@ -772,30 +813,8 @@ Status VariantColumnWriterImpl::finalize() {
     // Build NestedGroups from JSONB columns. Both JSONB and NestedGroup are stored
     // for redundancy: JSONB for Whole reads, NestedGroup for column pruning.
     doris::segment_v2::NestedGroupsMap nested_groups;
-    doris::segment_v2::NestedGroupBuilder ng_builder;
-    ng_builder.set_max_depth(static_cast<size_t>(config::variant_nested_group_max_depth));
-
-    if (ptr->get_root_type() &&
-        vectorized::remove_nullable(ptr->get_root_type())->get_primitive_type() ==
-                PrimitiveType::TYPE_JSONB &&
-        ptr->get_root()) {
-        RETURN_IF_ERROR(ng_builder.build_from_jsonb(ptr->get_root()->get_ptr(), nested_groups,
-                                                    ptr->rows()));
-    }
-    for (const auto& entry :
-         vectorized::variant_util::get_sorted_subcolumns(ptr->get_subcolumns())) {
-        if (entry->path.empty()) {
-            continue;
-        }
-        const auto& t = entry->data.get_least_common_type();
-        if (!t ||
-            vectorized::remove_nullable(t)->get_primitive_type() != PrimitiveType::TYPE_JSONB) {
-            continue;
-        }
-        RETURN_IF_ERROR(
-                ng_builder.build_from_jsonb(entry->data.get_finalized_column_ptr()->get_ptr(),
-                                            entry->path, nested_groups, entry->data.size()));
-    }
+    RETURN_IF_ERROR(build_nested_groups_from_variant_jsonb(*ptr, /*include_jsonb_subcolumns=*/true,
+                                                           &nested_groups));
 
     size_t num_rows = _column->size();
     int column_id = 0;
@@ -1062,15 +1081,8 @@ Status VariantSubcolumnWriter::finalize() {
 
     // also expand array<object> JSONB into NestedGroup for compaction sub-variant writer.
     doris::segment_v2::NestedGroupsMap nested_groups;
-    doris::segment_v2::NestedGroupBuilder ng_builder;
-    ng_builder.set_max_depth(static_cast<size_t>(config::variant_nested_group_max_depth));
-    if (ptr->get_root_type() &&
-        vectorized::remove_nullable(ptr->get_root_type())->get_primitive_type() ==
-                PrimitiveType::TYPE_JSONB &&
-        ptr->get_root()) {
-        RETURN_IF_ERROR(ng_builder.build_from_jsonb(ptr->get_root()->get_ptr(), nested_groups,
-                                                    ptr->rows()));
-    }
+    RETURN_IF_ERROR(build_nested_groups_from_variant_jsonb(*ptr, /*include_jsonb_subcolumns=*/false,
+                                                           &nested_groups));
     RETURN_IF_ERROR(write_nested_groups_to_storage(
             nested_groups, &flush_column, _opts, olap_data_convertor.get(), ptr->rows(), column_id,
             /*writers=*/_nested_group_writers, /*statistics=*/_statistics));

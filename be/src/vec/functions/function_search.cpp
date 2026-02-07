@@ -61,6 +61,80 @@
 
 namespace doris::vectorized {
 
+namespace {
+
+class ResolverNullBitmapAdapter final : public query_v2::NullBitmapResolver {
+public:
+    explicit ResolverNullBitmapAdapter(const FieldReaderResolver& resolver) : _resolver(resolver) {}
+
+    segment_v2::IndexIterator* iterator_for(const query_v2::Scorer& /*scorer*/,
+                                            const std::string& logical_field) const override {
+        if (logical_field.empty()) {
+            return nullptr;
+        }
+        return _resolver.get_iterator(logical_field);
+    }
+
+private:
+    const FieldReaderResolver& _resolver;
+};
+
+void populate_binding_context(const FieldReaderResolver& resolver,
+                              query_v2::QueryExecutionContext* exec_ctx) {
+    DCHECK(exec_ctx != nullptr);
+    exec_ctx->readers = resolver.readers();
+    exec_ctx->reader_bindings = resolver.reader_bindings();
+    exec_ctx->field_reader_bindings = resolver.field_readers();
+    for (const auto& [binding_key, binding] : resolver.binding_cache()) {
+        if (binding_key.empty()) {
+            continue;
+        }
+        query_v2::FieldBindingContext binding_ctx;
+        binding_ctx.logical_field_name = binding.logical_field_name;
+        binding_ctx.stored_field_name = binding.stored_field_name;
+        binding_ctx.stored_field_wstr = binding.stored_field_wstr;
+        exec_ctx->binding_fields.emplace(binding_key, std::move(binding_ctx));
+    }
+}
+
+query_v2::QueryExecutionContext build_query_execution_context(
+        uint32_t segment_num_rows, const FieldReaderResolver& resolver,
+        query_v2::NullBitmapResolver* null_resolver) {
+    query_v2::QueryExecutionContext exec_ctx;
+    exec_ctx.segment_num_rows = segment_num_rows;
+    populate_binding_context(resolver, &exec_ctx);
+    exec_ctx.null_resolver = null_resolver;
+    return exec_ctx;
+}
+
+Status map_nested_element_bitmap_to_rows(
+        const std::vector<const segment_v2::NestedGroupReader*>& group_chain,
+        const segment_v2::ColumnIteratorOptions& iter_opts, const roaring::Roaring& element_bitmap,
+        std::shared_ptr<roaring::Roaring>* result_bitmap) {
+    if (result_bitmap == nullptr) {
+        return Status::InvalidArgument("result_bitmap is null");
+    }
+
+    roaring::Roaring current_bitmap = element_bitmap;
+    for (auto group_it = group_chain.rbegin(); group_it != group_chain.rend(); ++group_it) {
+        roaring::Roaring parent_bitmap;
+        RETURN_IF_ERROR((*group_it)->map_elements_to_parent_ords(iter_opts, current_bitmap,
+                                                                 &parent_bitmap));
+        current_bitmap = std::move(parent_bitmap);
+        if (current_bitmap.isEmpty()) {
+            break;
+        }
+    }
+
+    if (*result_bitmap == nullptr) {
+        *result_bitmap = std::make_shared<roaring::Roaring>();
+    }
+    **result_bitmap = std::move(current_bitmap);
+    return Status::OK();
+}
+
+} // namespace
+
 Status FieldReaderResolver::resolve(const std::string& field_name,
                                     InvertedIndexQueryType query_type,
                                     FieldReaderBinding* binding) {
@@ -332,40 +406,9 @@ Status FunctionSearch::evaluate_inverted_index_with_search_param(
         return Status::OK();
     }
 
-    query_v2::QueryExecutionContext exec_ctx;
-    exec_ctx.segment_num_rows = num_rows;
-    exec_ctx.readers = resolver.readers();
-    exec_ctx.reader_bindings = resolver.reader_bindings();
-    exec_ctx.field_reader_bindings = resolver.field_readers();
-    for (const auto& [binding_key, binding] : resolver.binding_cache()) {
-        if (binding_key.empty()) {
-            continue;
-        }
-        query_v2::FieldBindingContext binding_ctx;
-        binding_ctx.logical_field_name = binding.logical_field_name;
-        binding_ctx.stored_field_name = binding.stored_field_name;
-        binding_ctx.stored_field_wstr = binding.stored_field_wstr;
-        exec_ctx.binding_fields.emplace(binding_key, std::move(binding_ctx));
-    }
-
-    class ResolverAdapter final : public query_v2::NullBitmapResolver {
-    public:
-        explicit ResolverAdapter(const FieldReaderResolver& resolver) : _resolver(resolver) {}
-
-        segment_v2::IndexIterator* iterator_for(const query_v2::Scorer& /*scorer*/,
-                                                const std::string& logical_field) const override {
-            if (logical_field.empty()) {
-                return nullptr;
-            }
-            return _resolver.get_iterator(logical_field);
-        }
-
-    private:
-        const FieldReaderResolver& _resolver;
-    };
-
-    ResolverAdapter null_resolver(resolver);
-    exec_ctx.null_resolver = &null_resolver;
+    ResolverNullBitmapAdapter null_resolver(resolver);
+    query_v2::QueryExecutionContext exec_ctx =
+            build_query_execution_context(num_rows, resolver, &null_resolver);
 
     auto weight = root_query->weight(false);
     if (!weight) {
@@ -498,43 +541,13 @@ Status FunctionSearch::evaluate_nested_query(
         return Status::OK();
     }
 
-    query_v2::QueryExecutionContext exec_ctx;
     if (total_elements > std::numeric_limits<uint32_t>::max()) {
         return Status::InvalidArgument("nested element_count exceeds uint32_t max");
     }
-    exec_ctx.segment_num_rows = static_cast<uint32_t>(total_elements);
-    exec_ctx.readers = resolver.readers();
-    exec_ctx.reader_bindings = resolver.reader_bindings();
-    exec_ctx.field_reader_bindings = resolver.field_readers();
-    for (const auto& [binding_key, binding] : resolver.binding_cache()) {
-        if (binding_key.empty()) {
-            continue;
-        }
-        query_v2::FieldBindingContext binding_ctx;
-        binding_ctx.logical_field_name = binding.logical_field_name;
-        binding_ctx.stored_field_name = binding.stored_field_name;
-        binding_ctx.stored_field_wstr = binding.stored_field_wstr;
-        exec_ctx.binding_fields.emplace(binding_key, std::move(binding_ctx));
-    }
 
-    class ResolverAdapter final : public query_v2::NullBitmapResolver {
-    public:
-        explicit ResolverAdapter(const FieldReaderResolver& resolver) : _resolver(resolver) {}
-
-        segment_v2::IndexIterator* iterator_for(const query_v2::Scorer& /*scorer*/,
-                                                const std::string& logical_field) const override {
-            if (logical_field.empty()) {
-                return nullptr;
-            }
-            return _resolver.get_iterator(logical_field);
-        }
-
-    private:
-        const FieldReaderResolver& _resolver;
-    };
-
-    ResolverAdapter null_resolver(resolver);
-    exec_ctx.null_resolver = &null_resolver;
+    ResolverNullBitmapAdapter null_resolver(resolver);
+    query_v2::QueryExecutionContext exec_ctx = build_query_execution_context(
+            static_cast<uint32_t>(total_elements), resolver, &null_resolver);
 
     auto weight = inner_query->weight(false);
     if (!weight) {
@@ -559,19 +572,9 @@ Status FunctionSearch::evaluate_nested_query(
         }
     }
 
-    // 4. Map elements back to rows (Iterative optimization)
-    // Iterate group chain in reverse order (Leaf -> Root)
-    roaring::Roaring current_bitmap = element_bitmap;
-    for (auto group_it = group_chain.rbegin(); group_it != group_chain.rend(); ++group_it) {
-        roaring::Roaring parent_bitmap;
-        RETURN_IF_ERROR((*group_it)->map_elements_to_parent_ords(index_exec_ctx->column_iter_opts(),
-                                                                 current_bitmap, &parent_bitmap));
-        current_bitmap = std::move(parent_bitmap);
-        if (current_bitmap.isEmpty()) break;
-    }
-
-    *result_bitmap = std::move(current_bitmap);
-    return Status::OK();
+    // 4. Map element-level hits back to row-level hits through NestedGroup chain.
+    return map_nested_element_bitmap_to_rows(group_chain, index_exec_ctx->column_iter_opts(),
+                                             element_bitmap, &result_bitmap);
 }
 
 // Aligned with FE QsClauseType enum - uses enum.name() as clause_type

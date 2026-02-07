@@ -291,38 +291,7 @@ Status NestedGroupBuilder::_process_scalar_field(const doris::JsonbValue* value,
     }
 
     vectorized::Field f;
-    if (!value || value->isNull()) {
-        f = vectorized::Field();
-    } else {
-        switch (value->type) {
-        case doris::JsonbType::T_True:
-            f = vectorized::Field::create_field<PrimitiveType::TYPE_BOOLEAN>(true);
-            break;
-        case doris::JsonbType::T_False:
-            f = vectorized::Field::create_field<PrimitiveType::TYPE_BOOLEAN>(false);
-            break;
-        case doris::JsonbType::T_Int8:
-        case doris::JsonbType::T_Int16:
-        case doris::JsonbType::T_Int32:
-        case doris::JsonbType::T_Int64:
-            f = vectorized::Field::create_field<PrimitiveType::TYPE_BIGINT>(
-                    static_cast<int64_t>(value->int_val()));
-            break;
-        case doris::JsonbType::T_Double:
-            f = vectorized::Field::create_field<PrimitiveType::TYPE_DOUBLE>(
-                    value->unpack<doris::JsonbDoubleVal>()->val());
-            break;
-        case doris::JsonbType::T_String: {
-            const auto* s = value->unpack<doris::JsonbStringVal>();
-            f = vectorized::Field::create_field<PrimitiveType::TYPE_STRING>(
-                    vectorized::String(s->getBlob(), s->getBlobLen()));
-            break;
-        }
-        default:
-            RETURN_IF_ERROR(_jsonb_to_field(value, f));
-            break;
-        }
-    }
+    RETURN_IF_ERROR(_jsonb_to_field(value, f));
 
     // Ensure subcolumn exists and is nullable (for NestedGroup children, we need nullable
     // to support NULL values when a field is missing in some rows)

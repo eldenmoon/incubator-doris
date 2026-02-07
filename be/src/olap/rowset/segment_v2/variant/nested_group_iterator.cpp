@@ -17,6 +17,9 @@
 
 #include "nested_group_iterator.h"
 
+#include <optional>
+#include <string_view>
+
 #include "olap/rowset/segment_v2/variant/offset_manager.h"
 #include "olap/rowset/segment_v2/variant/variant_column_reader.h"
 #include "vec/columns/column_array.h"
@@ -28,6 +31,102 @@
 #include "vec/json/path_in_data.h"
 
 namespace doris::segment_v2 {
+
+namespace {
+
+struct ArrayReadTarget {
+    vectorized::ColumnNullable* nullable = nullptr;
+    vectorized::ColumnArray* array = nullptr;
+};
+
+bool should_include_field(std::string_view name, std::string_view pruned_prefix_dot,
+                          const NestedGroupPathFilter* filter) {
+    if (!pruned_prefix_dot.empty() &&
+        name.substr(0, pruned_prefix_dot.size()) != pruned_prefix_dot) {
+        return false;
+    }
+    return filter == nullptr || filter->matches_child(std::string(name));
+}
+
+std::optional<std::string> maybe_rebase_name(std::string_view name,
+                                             std::string_view pruned_prefix_dot) {
+    if (pruned_prefix_dot.empty()) {
+        return std::string(name);
+    }
+    std::string rebased;
+    if (!vectorized::PathInData::try_strip_prefix(std::string(name), std::string(pruned_prefix_dot),
+                                                  &rebased)) {
+        return std::nullopt;
+    }
+    return rebased;
+}
+
+ArrayReadTarget get_array_read_target(vectorized::MutableColumnPtr& dst) {
+    ArrayReadTarget target;
+    if (dst->is_nullable()) {
+        target.nullable = assert_cast<vectorized::ColumnNullable*>(dst.get());
+        target.array = assert_cast<vectorized::ColumnArray*>(&target.nullable->get_nested_column());
+        return target;
+    }
+    target.array = assert_cast<vectorized::ColumnArray*>(dst.get());
+    return target;
+}
+
+void append_non_null_array_rows(const ArrayReadTarget& target, size_t num_rows) {
+    if (target.nullable) {
+        target.nullable->get_null_map_data().resize_fill(
+                target.nullable->get_null_map_data().size() + num_rows, 0);
+    }
+}
+
+void append_array_offsets_from_flat(const std::vector<uint64_t>& flat_offsets, uint64_t start_flat,
+                                    size_t expected_rows, bool fill_when_empty,
+                                    vectorized::ColumnArray::Offsets64* dst_offsets) {
+    DCHECK(dst_offsets != nullptr);
+    uint64_t prev_flat = start_flat;
+    size_t prev_dst_offset = dst_offsets->empty() ? 0 : dst_offsets->back();
+
+    if (fill_when_empty && flat_offsets.empty() && expected_rows > 0) {
+        for (size_t i = 0; i < expected_rows; ++i) {
+            dst_offsets->push_back(prev_dst_offset);
+        }
+        return;
+    }
+
+    for (uint64_t curr_flat : flat_offsets) {
+        prev_dst_offset += static_cast<size_t>(curr_flat - prev_flat);
+        dst_offsets->push_back(prev_dst_offset);
+        prev_flat = curr_flat;
+    }
+}
+
+Status read_child_elements(ColumnIterator* child_iter, bool seek_first, uint64_t start_flat,
+                           size_t expected_num_elements, vectorized::ColumnArray* array) {
+    if (expected_num_elements == 0) {
+        return Status::OK();
+    }
+    DCHECK(child_iter != nullptr);
+    DCHECK(array != nullptr);
+
+    if (seek_first) {
+        RETURN_IF_ERROR(child_iter->seek_to_ordinal(start_flat));
+    }
+
+    bool child_has_null = false;
+    size_t actual_num_elements = expected_num_elements;
+    auto nested_dst = array->get_data_ptr()->assume_mutable();
+    RETURN_IF_ERROR(child_iter->next_batch(&actual_num_elements, nested_dst, &child_has_null));
+    array->get_data_ptr() = std::move(nested_dst);
+    if (UNLIKELY(actual_num_elements != expected_num_elements)) {
+        return Status::InternalError(
+                "NestedGroupIterator child_iter returned {} elements, expected {}",
+                actual_num_elements, expected_num_elements);
+    }
+
+    return Status::OK();
+}
+
+} // namespace
 
 #include "common/compile_check_begin.h"
 
@@ -101,10 +200,7 @@ Status NestedGroupWholeIterator::_build_group_state(GroupState& state,
     RETURN_IF_ERROR(state.offsets_iter->init(_iter_opts));
     // Initialize child column iterators (scalar fields)
     for (const auto& [name, cr] : reader->child_readers) {
-        if (!state.pruned_prefix_dot.empty() && !name.starts_with(state.pruned_prefix_dot)) {
-            continue;
-        }
-        if (active_filter && !active_filter->matches_child(name)) {
+        if (!should_include_field(name, state.pruned_prefix_dot, active_filter)) {
             continue;
         }
         ColumnIteratorUPtr it;
@@ -118,10 +214,7 @@ Status NestedGroupWholeIterator::_build_group_state(GroupState& state,
     }
     // Initialize nested group states (for nested arrays within elements)
     for (const auto& [name, nested] : reader->nested_group_readers) {
-        if (!state.pruned_prefix_dot.empty() && !name.starts_with(state.pruned_prefix_dot)) {
-            continue;
-        }
-        if (active_filter && !active_filter->matches_child(name)) {
+        if (!should_include_field(name, state.pruned_prefix_dot, active_filter)) {
             continue;
         }
         auto st = std::make_unique<GroupState>();
@@ -220,18 +313,13 @@ Status NestedGroupWholeIterator::_add_child_columns(GroupState& state, size_t el
             RETURN_IF_ERROR(child.iter->next_batch(&to_read, col, &child_has_null));
         }
 
-        if (state.pruned_prefix_dot.empty()) {
-            if (!out.add_sub_column(path, std::move(col), type)) {
-                return Status::InternalError("Failed to add subcolumn {}", name);
-            }
+        const auto rebased = maybe_rebase_name(name, state.pruned_prefix_dot);
+        if (!rebased.has_value()) {
             continue;
         }
-
-        std::string rebased;
-        if (!vectorized::PathInData::try_strip_prefix(name, state.pruned_prefix_dot, &rebased)) {
-            continue;
-        }
-        if (!out.add_sub_column(vectorized::PathInData(rebased), std::move(col), type)) {
+        const vectorized::PathInData output_path =
+                state.pruned_prefix_dot.empty() ? path : vectorized::PathInData(*rebased);
+        if (!out.add_sub_column(output_path, std::move(col), type)) {
             return Status::InternalError("Failed to add subcolumn {}", name);
         }
     }
@@ -245,19 +333,14 @@ Status NestedGroupWholeIterator::_add_nested_group_columns(GroupState& state, or
         vectorized::MutableColumnPtr nested_array;
         RETURN_IF_ERROR(_build_nested_array_column(*nested_state.state, elem_start, elem_count,
                                                    &nested_array));
-        if (state.pruned_prefix_dot.empty()) {
-            if (!out.add_sub_column(nested_state.path, std::move(nested_array),
-                                    vectorized::ColumnVariant::NESTED_TYPE)) {
-                return Status::InternalError("Failed to add nested subcolumn {}", name);
-            }
+        const auto rebased = maybe_rebase_name(name, state.pruned_prefix_dot);
+        if (!rebased.has_value()) {
             continue;
         }
-
-        std::string rebased;
-        if (!vectorized::PathInData::try_strip_prefix(name, state.pruned_prefix_dot, &rebased)) {
-            continue;
-        }
-        if (!out.add_sub_column(_build_nested_array_path(rebased), std::move(nested_array),
+        const vectorized::PathInData output_path = state.pruned_prefix_dot.empty()
+                                                           ? nested_state.path
+                                                           : _build_nested_array_path(*rebased);
+        if (!out.add_sub_column(output_path, std::move(nested_array),
                                 vectorized::ColumnVariant::NESTED_TYPE)) {
             return Status::InternalError("Failed to add nested subcolumn {}", name);
         }
@@ -395,15 +478,7 @@ Status NestedGroupIterator::seek_to_ordinal(ordinal_t ord_idx) {
 
 Status NestedGroupIterator::next_batch(size_t* n, vectorized::MutableColumnPtr& dst,
                                        bool* has_null) {
-    // Handle Nullable wrapper if present
-    vectorized::ColumnNullable* dst_nullable = nullptr;
-    vectorized::ColumnArray* dst_array = nullptr;
-    if (dst->is_nullable()) {
-        dst_nullable = assert_cast<vectorized::ColumnNullable*>(dst.get());
-        dst_array = assert_cast<vectorized::ColumnArray*>(&dst_nullable->get_nested_column());
-    } else {
-        dst_array = assert_cast<vectorized::ColumnArray*>(dst.get());
-    }
+    ArrayReadTarget target = get_array_read_target(dst);
 
     // Read offsets for these rows
     std::vector<uint64_t> offsets;
@@ -420,33 +495,16 @@ Status NestedGroupIterator::next_batch(size_t* n, vectorized::MutableColumnPtr& 
     size_t end_offset = offsets.empty() ? start_offset : offsets.back();
     size_t num_elements = end_offset - start_offset;
 
-    if (num_elements > 0) {
-        bool child_has_null = false;
-        size_t expected_num_elements = num_elements;
-        auto nested_dst = dst_array->get_data_ptr()->assume_mutable();
-        RETURN_IF_ERROR(_child_iter->next_batch(&num_elements, nested_dst, &child_has_null));
-        dst_array->get_data_ptr() = std::move(nested_dst);
-        if (UNLIKELY(num_elements != expected_num_elements)) {
-            return Status::InternalError(
-                    "NestedGroupIterator child_iter returned {} elements, expected {}",
-                    num_elements, expected_num_elements);
-        }
-    }
+    RETURN_IF_ERROR(read_child_elements(_child_iter.get(), /*seek_first=*/false, start_offset,
+                                        num_elements, target.array));
 
     // Convert offsets to array offsets (relative to start)
-    auto& dst_offsets = dst_array->get_offsets();
-    size_t prev_offset = dst_offsets.empty() ? 0 : dst_offsets.back();
-    for (size_t i = 0; i < offsets.size(); ++i) {
-        size_t array_size = (i == 0) ? (offsets[i] - start_offset) : (offsets[i] - offsets[i - 1]);
-        dst_offsets.push_back(prev_offset + array_size);
-        prev_offset = dst_offsets.back();
-    }
+    auto& dst_offsets = target.array->get_offsets();
+    append_array_offsets_from_flat(offsets, start_offset, *n, /*fill_when_empty=*/false,
+                                   &dst_offsets);
 
-    // Update null map if destination is nullable (all elements are non-null)
-    if (dst_nullable) {
-        dst_nullable->get_null_map_data().resize_fill(dst_nullable->get_null_map_data().size() + *n,
-                                                      0);
-    }
+    // All reconstructed arrays are present (non-null) for these rows.
+    append_non_null_array_rows(target, *n);
 
     _current_ordinal += *n;
     // Update cached flat position for next sequential read
@@ -464,16 +522,8 @@ Status NestedGroupIterator::read_by_rowids(const rowid_t* rowids, const size_t c
         return Status::OK();
     }
 
-    // Handle Nullable wrapper if present
-    vectorized::ColumnNullable* dst_nullable = nullptr;
-    vectorized::ColumnArray* dst_array = nullptr;
-    if (dst->is_nullable()) {
-        dst_nullable = assert_cast<vectorized::ColumnNullable*>(dst.get());
-        dst_array = assert_cast<vectorized::ColumnArray*>(&dst_nullable->get_nested_column());
-    } else {
-        dst_array = assert_cast<vectorized::ColumnArray*>(dst.get());
-    }
-    auto& dst_offsets = dst_array->get_offsets();
+    ArrayReadTarget target = get_array_read_target(dst);
+    auto& dst_offsets = target.array->get_offsets();
 
     size_t i = 0;
     while (i < count) {
@@ -494,35 +544,13 @@ Status NestedGroupIterator::read_by_rowids(const rowid_t* rowids, const size_t c
         uint64_t batch_end_flat = offsets_data.empty() ? batch_start_flat : offsets_data.back();
         size_t total_elements = batch_end_flat - batch_start_flat;
 
-        // Read all child elements for this batch in one go
-        if (total_elements > 0) {
-            RETURN_IF_ERROR(_child_iter->seek_to_ordinal(batch_start_flat));
-            bool child_has_null = false;
-            size_t expected_total_elements = total_elements;
-            auto nested_dst = dst_array->get_data_ptr()->assume_mutable();
-            RETURN_IF_ERROR(_child_iter->next_batch(&total_elements, nested_dst, &child_has_null));
-            dst_array->get_data_ptr() = std::move(nested_dst);
-            if (UNLIKELY(total_elements != expected_total_elements)) {
-                return Status::InternalError(
-                        "NestedGroupIterator child_iter returned {} elements, expected {}",
-                        total_elements, expected_total_elements);
-            }
-        }
+        // Read all child elements for this consecutive batch in one go.
+        RETURN_IF_ERROR(read_child_elements(_child_iter.get(), /*seek_first=*/true,
+                                            batch_start_flat, total_elements, target.array));
 
-        // Distribute child elements to each row in the batch
-        size_t prev_dst_offset = dst_offsets.empty() ? 0 : dst_offsets.back();
-        uint64_t prev_flat = batch_start_flat;
-        for (size_t j = 0; j < run_len; ++j) {
-            uint64_t curr_flat = offsets_data.empty() ? batch_start_flat : offsets_data[j];
-            size_t num_elements = curr_flat - prev_flat;
-            prev_dst_offset += num_elements;
-            dst_offsets.push_back(prev_dst_offset);
-            prev_flat = curr_flat;
-        }
-        if (dst_nullable) {
-            dst_nullable->get_null_map_data().resize_fill(
-                    dst_nullable->get_null_map_data().size() + run_len, 0);
-        }
+        append_array_offsets_from_flat(offsets_data, batch_start_flat, run_len,
+                                       /*fill_when_empty=*/true, &dst_offsets);
+        append_non_null_array_rows(target, run_len);
 
         i += run_len;
     }
