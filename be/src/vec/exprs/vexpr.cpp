@@ -695,6 +695,12 @@ Status VExpr::open(const VExprContextSPtrs& ctxs, RuntimeState* state) {
     return Status::OK();
 }
 
+bool VExpr::contains_blockable_function(const VExprContextSPtrs& ctxs) {
+    return std::any_of(ctxs.begin(), ctxs.end(), [](const VExprContextSPtr& ctx) {
+        return ctx != nullptr && ctx->root() != nullptr && ctx->root()->is_blockable();
+    });
+}
+
 Status VExpr::clone_if_not_exists(const VExprContextSPtrs& ctxs, RuntimeState* state,
                                   VExprContextSPtrs& new_ctxs) {
     if (!new_ctxs.empty()) {
