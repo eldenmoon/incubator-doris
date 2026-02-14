@@ -119,9 +119,15 @@ DataTypePtr get_base_type_of_array(const DataTypePtr& type) {
     /// Get raw pointers to avoid extra copying of type pointers.
     const DataTypeArray* last_array = nullptr;
     const auto* current_type = type.get();
+    if (const auto* nullable = typeid_cast<const DataTypeNullable*>(current_type)) {
+        current_type = nullable->get_nested_type().get();
+    }
     while (const auto* type_array = typeid_cast<const DataTypeArray*>(current_type)) {
         current_type = type_array->get_nested_type().get();
         last_array = type_array;
+        if (const auto* nullable = typeid_cast<const DataTypeNullable*>(current_type)) {
+            current_type = nullable->get_nested_type().get();
+        }
     }
     return last_array ? last_array->get_nested_type() : type;
 }
