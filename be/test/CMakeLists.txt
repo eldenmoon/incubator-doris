@@ -36,6 +36,10 @@ endif()
 
 if (OS_MACOSX)
     list(REMOVE_ITEM UT_FILES ${CMAKE_CURRENT_SOURCE_DIR}/util/system_metrics_test.cpp)
+    list(REMOVE_ITEM UT_FILES ${CMAKE_CURRENT_SOURCE_DIR}/vec/function/cast/cast_to_ip_test.cpp)
+    list(REMOVE_ITEM UT_FILES ${CMAKE_CURRENT_SOURCE_DIR}/vec/function/function_array_aggregation_test.cpp)
+    list(REMOVE_ITEM UT_FILES ${CMAKE_CURRENT_SOURCE_DIR}/vec/function/function_ip_test.cpp)
+    list(REMOVE_ITEM UT_FILES ${CMAKE_CURRENT_SOURCE_DIR}/vec/function/function_ip_dict_test.cpp)
 endif()
 
 list(REMOVE_ITEM UT_FILES ${CMAKE_CURRENT_SOURCE_DIR}/tools/benchmark_tool.cpp)
@@ -109,8 +113,13 @@ add_subdirectory(olap/vector_search)
 
 add_executable(doris_be_test ${UT_FILES})
 
-target_link_libraries(doris_be_test ${TEST_LINK_LIBS} 
-    -Wl,--whole-archive vector_search_test -Wl,--no-whole-archive)
+if (OS_MACOSX)
+    target_link_libraries(doris_be_test ${TEST_LINK_LIBS})
+    target_link_options(doris_be_test PRIVATE -Wl,-force_load,$<TARGET_FILE:vector_search_test>)
+else()
+    target_link_libraries(doris_be_test ${TEST_LINK_LIBS}
+        -Wl,--whole-archive vector_search_test -Wl,--no-whole-archive)
+endif()
 set_target_properties(doris_be_test PROPERTIES COMPILE_FLAGS "-fno-access-control")
 target_compile_options(doris_be_test PRIVATE -include gtest/gtest.h -Wno-shadow -Wno-shadow-field)
 

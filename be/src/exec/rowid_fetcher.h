@@ -22,7 +22,10 @@
 #include <gen_cpp/DataSinks_types.h>
 #include <gen_cpp/internal_service.pb.h>
 
+#include <atomic>
+#include <condition_variable>
 #include <memory>
+#include <mutex>
 #include <utility>
 #include <vector>
 
@@ -141,7 +144,8 @@ private:
             const TFileScanRangeParams& rpc_scan_params,
             const std::unordered_map<std::string, int>& colname_to_slot_id,
             std::atomic<int>& producer_count, size_t scan_rows_count,
-            std::counting_semaphore<>& semaphore, std::condition_variable& cv, std::mutex& mtx,
+            std::atomic<int>& running_scanners, std::condition_variable& running_cv,
+            std::mutex& running_mtx, std::condition_variable& producer_cv, std::mutex& producer_mtx,
             TupleDescriptor& tuple_desc);
 
     struct ExternalFetchStatistics {

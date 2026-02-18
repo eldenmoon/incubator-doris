@@ -55,7 +55,6 @@
 #include "runtime/fragment_mgr.h"  // FragmentMgr
 #include "runtime/runtime_state.h" // RuntimeState
 #include "runtime/workload_group/workload_group_manager.h"
-#include "semaphore"
 #include "util/brpc_client_cache.h" // BrpcClientCache
 #include "util/defer_op.h"
 #include "vec/columns/column.h"
@@ -714,9 +713,9 @@ Status RowIdStorageReader::read_external_row_from_file_mapping(
         std::vector<RowIdStorageReader::ExternalFetchStatistics>& fetch_statistics,
         const TFileScanRangeParams& rpc_scan_params,
         const std::unordered_map<std::string, int>& colname_to_slot_id,
-        std::atomic<int>& producer_count, size_t scan_rows_count,
-        std::counting_semaphore<>& semaphore, std::condition_variable& cv, std::mutex& mtx,
-        TupleDescriptor& tuple_desc) {
+        std::atomic<int>& producer_count, size_t scan_rows_count, std::atomic<int>& running_scanners,
+        std::condition_variable& running_cv, std::mutex& running_mtx,
+        std::condition_variable& producer_cv, std::mutex& producer_mtx, TupleDescriptor& tuple_desc) {
     SCOPED_ATTACH_TASK(ExecEnv::GetInstance()->rowid_storage_reader_tracker());
     signal::set_signal_task_id(query_id);
 
@@ -769,10 +768,15 @@ Status RowIdStorageReader::read_external_row_from_file_mapping(
                 file_read_times_counter->value(), file_read_times_counter->type());
     }
 
-    semaphore.release();
+    {
+        std::lock_guard<std::mutex> lock(running_mtx);
+        --running_scanners;
+    }
+    running_cv.notify_one();
+
     if (++producer_count == scan_rows_count) {
-        std::lock_guard<std::mutex> lock(mtx);
-        cv.notify_one();
+        std::lock_guard<std::mutex> lock(producer_mtx);
+        producer_cv.notify_one();
     }
     return Status::OK();
 }
@@ -909,16 +913,24 @@ Status RowIdStorageReader::read_batch_external_row(
             [&]() -> Status {
                 // Make sure to insert data into result_block only after all scan tasks have been executed.
                 std::atomic<int> producer_count {0};
-                std::condition_variable cv;
-                std::mutex mtx;
+                std::condition_variable producer_cv;
+                std::mutex producer_mtx;
+                std::condition_variable running_cv;
+                std::mutex running_mtx;
+                std::atomic<int> running_scanners {0};
 
-                //semaphore: Limit the number of scan tasks submitted at one time
-                std::counting_semaphore semaphore {max_file_scanners};
+                const int scanner_limit = std::max(1, max_file_scanners);
 
                 size_t idx = 0;
                 for (const auto& [_, scan_info] : scan_rows) {
-                    semaphore.acquire();
-                    RETURN_IF_ERROR(remote_scan_sched->submit_scan_task(
+                    {
+                        std::unique_lock<std::mutex> lock(running_mtx);
+                        running_cv.wait(
+                                lock, [&] { return running_scanners.load() < scanner_limit; });
+                        ++running_scanners;
+                    }
+
+                    auto submit_status = remote_scan_sched->submit_scan_task(
                             vectorized::SimplifiedScanTask(
                                     [&, idx, scan_info]() -> Status {
                                         const auto& [row_ids, file_mapping] = scan_info;
@@ -927,16 +939,25 @@ Status RowIdStorageReader::read_batch_external_row(
                                                 runtime_state, scan_blocks, row_id_block_idx,
                                                 fetch_statistics, rpc_scan_params,
                                                 colname_to_slot_id, producer_count,
-                                                scan_rows.size(), semaphore, cv, mtx, tuple_desc);
+                                                scan_rows.size(), running_scanners, running_cv,
+                                                running_mtx, producer_cv, producer_mtx, tuple_desc);
                                     },
                                     nullptr, nullptr),
-                            fmt::format("{}-read_batch_external_row-{}", print_id(query_id), idx)));
+                            fmt::format("{}-read_batch_external_row-{}", print_id(query_id), idx));
+                    if (!submit_status.ok()) {
+                        {
+                            std::lock_guard<std::mutex> lock(running_mtx);
+                            --running_scanners;
+                        }
+                        running_cv.notify_one();
+                        return submit_status;
+                    }
                     idx++;
                 }
 
                 {
-                    std::unique_lock<std::mutex> lock(mtx);
-                    cv.wait(lock, [&] { return producer_count == scan_rows.size(); });
+                    std::unique_lock<std::mutex> lock(producer_mtx);
+                    producer_cv.wait(lock, [&] { return producer_count == scan_rows.size(); });
                 }
                 return Status::OK();
             },

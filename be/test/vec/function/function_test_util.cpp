@@ -424,9 +424,13 @@ bool insert_cell(MutableColumnPtr& column, DataTypePtr type_ptr, const AnyType& 
             break;
         }
         case PrimitiveType::TYPE_IPV6: {
+#ifdef OS_MACOSX
+            return false;
+#else
             auto value = any_cast<ut_type::IPV6>(cell);
             column->insert_data(reinterpret_cast<char*>(&value), 0);
             break;
+#endif
         }
         case PrimitiveType::TYPE_BOOLEAN: {
             auto value = any_cast<ut_type::BOOLEAN>(cell);

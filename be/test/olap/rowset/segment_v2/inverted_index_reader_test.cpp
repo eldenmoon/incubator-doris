@@ -2665,8 +2665,9 @@ public:
         EXPECT_TRUE(status.ok()) << status;
 
         for (const auto& value : values) {
-            status = column_writer->add_values(column.name(), reinterpret_cast<const void*>(&value),
-                                               1);
+            auto value_copy = value;
+            status = column_writer->add_values(column.name(),
+                                               reinterpret_cast<const void*>(&value_copy), 1);
             EXPECT_TRUE(status.ok()) << status;
         }
 
@@ -3137,8 +3138,9 @@ public:
         EXPECT_TRUE(status.ok()) << status;
 
         for (const auto& value : values) {
-            status = column_writer->add_values(column.name(), reinterpret_cast<const void*>(&value),
-                                               1);
+            T value_copy = static_cast<T>(value);
+            status = column_writer->add_values(column.name(),
+                                               reinterpret_cast<const void*>(&value_copy), 1);
             EXPECT_TRUE(status.ok()) << status;
         }
 

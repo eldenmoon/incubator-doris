@@ -387,8 +387,10 @@ TEST_F(ColumnTypeConverterTest, TestDecimalConversions) {
         auto& src_data = src_col->get_data();
 
         // Add test values
-        src_data.push_back(Decimal64(12345678901234));  // Normal value: 1234567890.1234
-        src_data.push_back(Decimal64(-98765432109876)); // Negative value: -9876543210.9876
+        src_data.push_back(Decimal64(static_cast<Int64>(
+                12345678901234))); // Normal value: 1234567890.1234
+        src_data.push_back(Decimal64(static_cast<Int64>(
+                -98765432109876))); // Negative value: -9876543210.9876
 
         auto dst_col = dst_type->create_column();
         auto mutable_dst = dst_col->assume_mutable();
@@ -504,7 +506,7 @@ TEST_F(ColumnTypeConverterTest, TestDecimalConversions) {
         src_data.push_back(Decimal256(327673345));
         src_data.push_back(Decimal256(655353345));
         src_data.push_back(Decimal256(655363345));
-        src_data.push_back(Decimal256(3333333333332345));
+        src_data.push_back(Decimal256(static_cast<Int64>(3333333333332345)));
 
         auto dst_col = nullable_dst_type->create_column();
         auto mutable_dst = dst_col->assume_mutable();
