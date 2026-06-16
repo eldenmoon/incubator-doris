@@ -617,8 +617,7 @@ TEST_F(IndexStorageVariantLifecycleTest,
     expect_applied_variant_path_index(c_after_drop.value(), "c", 20007, 2);
 }
 
-TEST_F(IndexStorageVariantLifecycleTest,
-       DISABLED_PatchedSchemaAddDropVariantColumnCompactsNewRows) {
+TEST_F(IndexStorageVariantLifecycleTest, PatchedSchemaAddDropVariantColumnCompactsNewRows) {
     VariantColumnSpec variant;
     variant.unique_id = 2;
     variant.name = "v";
