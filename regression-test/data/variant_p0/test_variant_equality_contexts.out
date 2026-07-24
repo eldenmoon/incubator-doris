@@ -13,8 +13,8 @@ false	0	3
 false	1	2
 false	null	1
 
--- !count_distinct_canonical_et_nulls --
-5	5
+-- !count_distinct_canonical --
+4
 
 -- !intersect_encoded_canonical_numeric --
 0
@@ -32,6 +32,37 @@ false	null	1
 -- !union_distinct_canonical --
 1
 {"a":1,"b":2}
+
+-- !group_by_cross_metadata_shuffle --
+false	1	3
+false	[1,2]	1
+false	[2,1]	1
+false	null	2
+false	{"a":1,"b":2}	2
+true	\N	2
+
+-- !count_distinct_cross_metadata --
+5
+
+-- !intersect_cross_metadata --
+false	1
+false	null
+false	{"a":1,"b":2}
+true	\N
+
+-- !except_cross_metadata_array_order --
+[1,2]
+
+-- !union_distinct_cross_metadata --
+false	1
+false	[1,2]
+false	[2,1]
+false	null
+false	{"a":1,"b":2}
+true	\N
+
+-- !explicit_path_cast_join --
+7	17
 
 -- !explicit_cast_equality --
 true

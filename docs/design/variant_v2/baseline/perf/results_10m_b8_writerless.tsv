@@ -1,0 +1,16 @@
+phase	run	engine	wall_ms	client_rss_kb	pre_idle_pct	during_idle_pct	accepted	profile_id	note
+metadata_only_moderate	1	ColumnVariantV2	22600	7680	73.63	70.05	false	a6cfa4c3714b4d22-ad7d2ec5e8f37ffb	Directional only; host below formal 80% idle gate
+metadata_only_moderate	1	JSONB	20600	7680	73.21	69.79	false	63ff671858f6494c-bd885a1fb9dfa44e	Directional only; host below formal 80% idle gate
+metadata_only_moderate	2	JSONB	19550	7680	72.33	70.07	false	3c2037f678294d20-bd48317b26329936	Directional only; host below formal 80% idle gate
+metadata_only_moderate	2	ColumnVariantV2	22660	7680	74.56	70.61	false	db35bcbf4f394122-bacd5a9cd8931e05	Directional only; host below formal 80% idle gate
+metadata_only_moderate	3	ColumnVariantV2	23160	7680	72.19	71.14	false	2052709cfe724638-8f3647d69e82602c	Directional only; host below formal 80% idle gate
+metadata_only_moderate	3	JSONB	19740	7680	71.49	71.30	false	59f504db3e9e45a5-81d3fd4466f8adde	Directional only; host below formal 80% idle gate
+column_invariant_final	warmup	ColumnVariantV2	20340	7680	84.08	84.62	false	6ce5ce1c9e9545fd-8a9e45958d7be611	Unmeasured warmup; Release binary sha256 06ebd9d79baf6eb2ff9a959eb3875220a8f0ec5128887c1be747b17b4e9f7bcb
+column_invariant_final	warmup	JSONB	19530	7680	86.95	83.64	false	654d9ce6dee24224-abe4d1e49ef92553	Unmeasured warmup
+column_invariant_final	rejected_1	ColumnVariantV2	-	-	62.24	-	false	-	External ASAN build present; query not executed
+column_invariant_final	1	ColumnVariantV2	20500	7680	89.68	84.24	true	e157514fd8bf4ee9-b213023827677063	Interleaved V2 then JSONB; full interval passed 80% idle gate
+column_invariant_final	1	JSONB	19010	7680	84.59	87.67	true	c1edddaa4a9d46dc-9e9d026e4985595c	Interleaved V2 then JSONB; full interval passed 80% idle gate
+column_invariant_final	2	JSONB	19550	7680	87.48	84.25	true	55ae2e0d709c4cb4-8323e8313534630c	Interleaved JSONB then V2; full interval passed 80% idle gate
+column_invariant_final	2	ColumnVariantV2	20240	7680	87.42	84.36	true	9366ec1f6fe54ac3-a6f02d1b7a504772	Interleaved JSONB then V2; full interval passed 80% idle gate
+column_invariant_final	3	ColumnVariantV2	19950	7680	90.04	85.32	true	519a163b8ad54c04-a7f8d5780057cddf	Interleaved V2 then JSONB; full interval passed 80% idle gate
+column_invariant_final	3	JSONB	19520	7680	86.77	85.03	true	f32c94c03a4ad2-b2abff00235c0ea6	Interleaved V2 then JSONB; full interval passed 80% idle gate

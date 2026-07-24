@@ -45,7 +45,7 @@ suite("test_variant_multi_index_nonCurrent", "p0, nonConcurrent") {
         INDEX idx_a_d_2 (var) USING INVERTED
     ) ENGINE=OLAP DUPLICATE KEY(`id`) DISTRIBUTED BY HASH(`id`) BUCKETS 1 PROPERTIES ( "replication_allocation" = "tag.location.default: 1", "disable_auto_compaction" = "true")"""
 
-    sql """insert into ${tableName} values(1, '{"string" : "hello", "array_string" : ["hello"]}'), (2, '{"string" : "world", "array_string" : ["world"]}'), (3, '{"string" : "hello", "array_string" : ["hello"]}'), (4, '{"string" : "world", "array_string" : ["world"]}'), (5, '{"string" : "hello", "array_string" : ["hello"]}') """
+    sql """insert into ${tableName} values(1, parse_to_variant('{"string" : "hello", "array_string" : ["hello"]}')), (2, parse_to_variant('{"string" : "world", "array_string" : ["world"]}')), (3, parse_to_variant('{"string" : "hello", "array_string" : ["hello"]}')), (4, parse_to_variant('{"string" : "world", "array_string" : ["world"]}')), (5, parse_to_variant('{"string" : "hello", "array_string" : ["hello"]}')) """
     // insert into test_variant_multi_index_nonCurrent  values(1, '{"string" : "hello", "array_string" : ["hello"]}'), (2, '{"string" : "world", "array_string" : ["world"]}'), (3, '{"string" : "hello", "array_string" : ["hello"]}'), (4, '{"string" : "world", "array_string" : ["world"]}'), (5, '{"string" : "hello", "array_string" : ["hello"]}')
     sql """ set inverted_index_skip_threshold = 0 """
     sql """ set enable_segment_limit_pushdown = true """
@@ -64,7 +64,7 @@ suite("test_variant_multi_index_nonCurrent", "p0, nonConcurrent") {
     queryAndCheck("select count() from ${tableName} where array_contains(cast(var['array_string'] as array<text>), 'hello')", 2)
 
     for (int i = 0; i < 10; i++) {
-        sql """insert into ${tableName} values(1, '{"string" : "hello", "array_string" : ["hello"]}'), (2, '{"string" : "world", "array_string" : ["world"]}'), (3, '{"string" : "hello", "array_string" : ["hello"]}'), (4, '{"string" : "world", "array_string" : ["world"]}'), (5, '{"string" : "hello", "array_string" : ["hello"]}') """
+        sql """insert into ${tableName} values(1, parse_to_variant('{"string" : "hello", "array_string" : ["hello"]}')), (2, parse_to_variant('{"string" : "world", "array_string" : ["world"]}')), (3, parse_to_variant('{"string" : "hello", "array_string" : ["hello"]}')), (4, parse_to_variant('{"string" : "world", "array_string" : ["world"]}')), (5, parse_to_variant('{"string" : "hello", "array_string" : ["hello"]}')) """
     }
     trigger_and_wait_compaction(tableName, "cumulative", 1800)
 
@@ -118,11 +118,11 @@ suite("test_variant_multi_index_nonCurrent", "p0, nonConcurrent") {
         INDEX idx_a_d_7 (var) USING INVERTED PROPERTIES("field_pattern" = "array_string") COMMENT ''
     ) ENGINE=OLAP DUPLICATE KEY(`id`) DISTRIBUTED BY HASH(`id`) BUCKETS 1 PROPERTIES ( "replication_allocation" = "tag.location.default: 1", "disable_auto_compaction" = "true")"""
 
-    sql """insert into ${tableName} values(1, '{"string1" : "hello", "array_string" : ["hello"], "string2" : "hello"}'),
-                                (2, '{"string1" : "world", "array_string" : ["world"], "string2" : "world"}'),
-                                (3, '{"string1" : "hello", "array_string" : ["hello"], "string2" : "hello"}'),
-                                (4, '{"string1" : "world", "array_string" : ["world"], "string2" : "world"}'),
-                                (5, '{"string1" : "hello", "array_string" : ["hello"], "string2" : "hello"}') """
+    sql """insert into ${tableName} values(1, parse_to_variant('{"string1" : "hello", "array_string" : ["hello"], "string2" : "hello"}')),
+                                (2, parse_to_variant('{"string1" : "world", "array_string" : ["world"], "string2" : "world"}')),
+                                (3, parse_to_variant('{"string1" : "hello", "array_string" : ["hello"], "string2" : "hello"}')),
+                                (4, parse_to_variant('{"string1" : "world", "array_string" : ["world"], "string2" : "world"}')),
+                                (5, parse_to_variant('{"string1" : "hello", "array_string" : ["hello"], "string2" : "hello"}')) """
 
     sql """ set inverted_index_skip_threshold = 0 """
     sql """ set enable_segment_limit_pushdown = true """
@@ -152,11 +152,11 @@ suite("test_variant_multi_index_nonCurrent", "p0, nonConcurrent") {
     queryAndCheck("select count() from ${tableName} where var['string2'] = 'world'", 3)
 
     for (int i = 0; i < 10; i++) {
-        sql """insert into ${tableName} values(1, '{"string1" : "hello", "array_string" : ["hello"], "string2" : "hello"}'),
-                                            (2, '{"string1" : "world", "array_string" : ["world"], "string2" : "world"}'),
-                                            (3, '{"string1" : "hello", "array_string" : ["hello"], "string2" : "hello"}'),
-                                            (4, '{"string1" : "world", "array_string" : ["world"], "string2" : "world"}'),
-                                            (5, '{"string1" : "hello", "array_string" : ["hello"], "string2" : "hello"}') """
+        sql """insert into ${tableName} values(1, parse_to_variant('{"string1" : "hello", "array_string" : ["hello"], "string2" : "hello"}')),
+                                            (2, parse_to_variant('{"string1" : "world", "array_string" : ["world"], "string2" : "world"}')),
+                                            (3, parse_to_variant('{"string1" : "hello", "array_string" : ["hello"], "string2" : "hello"}')),
+                                            (4, parse_to_variant('{"string1" : "world", "array_string" : ["world"], "string2" : "world"}')),
+                                            (5, parse_to_variant('{"string1" : "hello", "array_string" : ["hello"], "string2" : "hello"}')) """
     }
     trigger_and_wait_compaction(tableName, "cumulative", 1800)
 
@@ -254,7 +254,7 @@ suite("test_variant_multi_index_nonCurrent", "p0, nonConcurrent") {
     sql """
          INSERT INTO ${tableName} (`var`) VALUES
         (
-            '{
+            parse_to_variant('{
               "array_decimal_1": ["12345678901234567.123456789", "987.654321"],
               "array_ipv6_1": ["2001:0db8:85a3:0000:0000:8a2e:0370:7334", "::1"],
               "int_1": 42,
@@ -279,7 +279,7 @@ suite("test_variant_multi_index_nonCurrent", "p0, nonConcurrent") {
               "ipv6_1": "::1",
               "largeint_1": "12345678901234567890123456789012345678",
               "char_1": "short text"
-            }'
+            }')
         );
     """
 

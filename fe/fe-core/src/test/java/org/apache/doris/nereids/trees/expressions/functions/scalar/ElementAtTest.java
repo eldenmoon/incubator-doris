@@ -19,9 +19,8 @@ package org.apache.doris.nereids.trees.expressions.functions.scalar;
 
 import org.apache.doris.catalog.FunctionSignature;
 import org.apache.doris.nereids.trees.expressions.Expression;
-import org.apache.doris.nereids.trees.expressions.literal.BooleanLiteral;
-import org.apache.doris.nereids.trees.expressions.literal.IntegerLiteral;
 import org.apache.doris.nereids.trees.expressions.literal.NullLiteral;
+import org.apache.doris.nereids.trees.expressions.literal.TinyIntLiteral;
 import org.apache.doris.nereids.trees.expressions.literal.VarcharLiteral;
 import org.apache.doris.nereids.trees.expressions.visitor.ExpressionVisitor;
 import org.apache.doris.nereids.types.BigIntType;
@@ -41,24 +40,18 @@ import java.util.List;
 public class ElementAtTest {
 
     @Test
-    public void testVariantSelectorKeepsIntegerAndStringSemanticsDistinct() {
-        VariantType variantType = new VariantType(100);
+    public void testVariantIntegerIndexBindsToBigIntSignature() {
+        ElementAt elementAt = new ElementAt(new MockVariantExpression(VariantType.INSTANCE),
+                new TinyIntLiteral((byte) 1));
+        ElementAt fieldLookup = new ElementAt(new MockVariantExpression(VariantType.INSTANCE),
+                new VarcharLiteral("1"));
 
-        ElementAt arrayElement = new ElementAt(
-                new MockVariantExpression(variantType), new IntegerLiteral(1));
-        Assertions.assertEquals(BigIntType.INSTANCE, arrayElement.getSignature().getArgType(1));
-
-        ElementAt objectField = new ElementAt(
-                new MockVariantExpression(variantType), new VarcharLiteral("1"));
-        Assertions.assertTrue(objectField.getSignature().getArgType(1) instanceof VarcharType);
-
-        ElementAt booleanIndex = new ElementAt(
-                new MockVariantExpression(variantType), BooleanLiteral.TRUE);
-        Assertions.assertEquals(BigIntType.INSTANCE, booleanIndex.getSignature().getArgType(1));
+        Assertions.assertTrue(elementAt.getSignature().getArgType(1) instanceof BigIntType);
+        Assertions.assertTrue(fieldLookup.getSignature().getArgType(1) instanceof VarcharType);
     }
 
     @Test
-    public void testComputeSignatureSingleVariant() {
+    public void testComputeSignatureUsesLogicalVariantType() {
         VariantType variantType = new VariantType(100);
         ElementAt elementAt = new ElementAt(new MockVariantExpression(variantType), new VarcharLiteral("k"));
         FunctionSignature signature = FunctionSignature.ret(VariantType.INSTANCE)
@@ -67,25 +60,12 @@ public class ElementAtTest {
         signature = elementAt.computeSignature(signature);
 
         Assertions.assertTrue(signature.returnType instanceof VariantType);
-        Assertions.assertEquals(100, ((VariantType) signature.returnType).getVariantMaxSubcolumnsCount());
+        Assertions.assertEquals(0, ((VariantType) signature.returnType).getVariantMaxSubcolumnsCount());
 
         Assertions.assertTrue(signature.getArgType(0) instanceof VariantType);
-        Assertions.assertEquals(100, ((VariantType) signature.getArgType(0)).getVariantMaxSubcolumnsCount());
+        Assertions.assertEquals(0, ((VariantType) signature.getArgType(0)).getVariantMaxSubcolumnsCount());
 
         Assertions.assertTrue(signature.getArgType(1) instanceof VarcharType);
-    }
-
-    @Test
-    public void testComputeSignaturePreservesVariantV2Marker() {
-        ElementAt elementAt = new ElementAt(
-                new MockVariantExpression(VariantType.COMPUTE_V2_INSTANCE), new VarcharLiteral("k"));
-        FunctionSignature signature = FunctionSignature.ret(VariantType.INSTANCE)
-                .args(VariantType.INSTANCE, VarcharType.SYSTEM_DEFAULT);
-
-        signature = elementAt.computeSignature(signature);
-
-        Assertions.assertTrue(((VariantType) signature.returnType).isComputeV2());
-        Assertions.assertTrue(((VariantType) signature.getArgType(0)).isComputeV2());
     }
 
     @Test
@@ -102,7 +82,7 @@ public class ElementAtTest {
     }
 
     @Test
-    public void testComputeSignatureMultipleVariantsThrowsException() {
+    public void testComputeSignatureMultipleVariantsUsesLogicalType() {
         VariantType variantType1 = new VariantType(150);
         VariantType variantType2 = new VariantType(250);
         ElementAt elementAt = new ElementAt(new MockVariantExpression(variantType1),
@@ -110,12 +90,11 @@ public class ElementAtTest {
         FunctionSignature signature = FunctionSignature.ret(VariantType.INSTANCE)
                 .args(VariantType.INSTANCE, VariantType.INSTANCE);
 
-        // New behavior: ElementAt only looks at the 1st argument's VariantType and keeps its max-subcolumns-count.
         signature = elementAt.computeSignature(signature);
         Assertions.assertTrue(signature.returnType instanceof VariantType);
-        Assertions.assertEquals(150, ((VariantType) signature.returnType).getVariantMaxSubcolumnsCount());
+        Assertions.assertEquals(0, ((VariantType) signature.returnType).getVariantMaxSubcolumnsCount());
         Assertions.assertTrue(signature.getArgType(0) instanceof VariantType);
-        Assertions.assertEquals(150, ((VariantType) signature.getArgType(0)).getVariantMaxSubcolumnsCount());
+        Assertions.assertEquals(0, ((VariantType) signature.getArgType(0)).getVariantMaxSubcolumnsCount());
     }
 
     /**

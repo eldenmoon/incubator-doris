@@ -124,7 +124,6 @@ void BeExecVersionManager::check_function_compatibility(int current_be_exec_vers
 
 // 10: start from doris 4.0.3
 //   a. use new fixed object serialization way.
-
 const int BeExecVersionManager::max_be_exec_version = 10;
 const int BeExecVersionManager::min_be_exec_version = 0;
 std::map<std::string, std::set<int>> BeExecVersionManager::_function_change_map {};

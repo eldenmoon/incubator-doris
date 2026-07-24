@@ -1,0 +1,45 @@
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+#
+# variant-semantics-internal-v1
+# base_head=e8a13279055752c7c698b772adecda3e6f5673a0
+# columns=case_id\tsource\tinput\tconfig\tpath\tpath_parts\tfield_shape\tobservation
+codec_empty_array	VariantBatchBuilder/VariantField	start_array();finish()	VARIANT_ENCODING_VERSION=1	$	[]	VARIANT(metadata_hex=110000;value_hex=030000;field_hex=03000000110000030000)	metadata_size=3;value_size=3;field_size=10;root_basic_type=ARRAY
+codec_empty_object	VariantBatchBuilder/VariantField	start_object();finish()	VARIANT_ENCODING_VERSION=1	$	[]	VARIANT(metadata_hex=110000;value_hex=020000;field_hex=03000000110000020000)	metadata_size=3;value_size=3;field_size=10;root_basic_type=OBJECT
+codec_null	VariantBatchBuilder/VariantField	builder.add_null()	VARIANT_ENCODING_VERSION=1	$	[]	VARIANT(metadata_hex=110000;value_hex=00;field_hex=0300000011000000)	metadata_size=3;value_size=1;field_size=8;root_basic_type=PRIMITIVE
+depth_codec_constant	be/src/core/value/variant/variant_parquet_encoding.h	VARIANT_MAX_NESTING_DEPTH	compiled constant	<none>	[]	not_applicable	value=128
+depth_config_source_scan	be/src/common/config.h|be/src/common/config.cpp	variant_max_depth	exact macro/token regex scan	<none>	[]	not_applicable	declaration_matches=0;definition_matches=0;config_h_token_matches=0;config_cpp_token_matches=0
+depth_json_data_parser_128	JSONDataParser<SimdJSONParser>::parse	nested_array_depth=128	fresh parser;deprecated_enable_flatten_nested=false	$	[]	not_collected	parse_success=true;records=1
+depth_json_data_parser_129	JSONDataParser<SimdJSONParser>::parse	nested_array_depth=129	fresh parser;deprecated_enable_flatten_nested=false	$	[]	not_collected	parse_success=true;records=1
+depth_simdjson_constant	simdjson/base.h	simdjson::DEFAULT_MAX_DEPTH	compiled dependency constant	<none>	[]	not_applicable	value=1024
+depth_simdjson_parse_1023	SimdJSONParser::parse	nested_array_depth=1023	fresh parser	$	[]	not_collected	parse_success=true
+depth_simdjson_parse_1024	SimdJSONParser::parse	nested_array_depth=1024	fresh parser	$	[]	not_collected	parse_success=false
+depth_simdjson_parse_1025	SimdJSONParser::parse	nested_array_depth=1025	fresh parser	$	[]	not_collected	parse_success=false
+json_array_object_member_flatten	JSONDataParser<SimdJSONParser>	{"a":[{"x":1},{}]}	deprecated_enable_flatten_nested=true;check_duplicate_json_path=false;parse_to=OnlySubcolumns	a.x	[key="a",nested=true,anonymous_array_level=0;key="x",nested=false,anonymous_array_level=0]	ARRAY[BIGINT(1),NULL]	parse=success;records=1
+json_array_object_member_no_flatten	JSONDataParser<SimdJSONParser>	{"a":[{"x":1},{}]}	deprecated_enable_flatten_nested=false;check_duplicate_json_path=false;parse_to=OnlySubcolumns	a	[key="a",nested=false,anonymous_array_level=0]	JSONB(hex=010b150000000a0b00000001780601000000000000000a00000000)	parse=success;records=1
+json_empty_member_array	JSONDataParser<SimdJSONParser>	{"a":[]}	deprecated_enable_flatten_nested=false;check_duplicate_json_path=false;parse_to=OnlySubcolumns	a	[key="a",nested=false,anonymous_array_level=0]	ARRAY[]	parse=success;records=1
+json_empty_member_object	JSONDataParser<SimdJSONParser>	{"a":{}}	deprecated_enable_flatten_nested=false;check_duplicate_json_path=false;parse_to=OnlySubcolumns	<none>	[]	no_field	parse=success;records=0
+json_empty_root_array	JSONDataParser<SimdJSONParser>	[]	deprecated_enable_flatten_nested=false;check_duplicate_json_path=false;parse_to=OnlySubcolumns	$	[]	ARRAY[]	parse=success;records=1
+json_empty_root_object	JSONDataParser<SimdJSONParser>	{}	deprecated_enable_flatten_nested=false;check_duplicate_json_path=false;parse_to=OnlySubcolumns	<none>	[]	no_field	parse=success;records=0
+json_single_empty_object_array_flatten	JSONDataParser<SimdJSONParser>	[{}]	deprecated_enable_flatten_nested=true;check_duplicate_json_path=false;parse_to=OnlySubcolumns	$	[]	ARRAY[]	parse=success;records=1
+json_single_empty_object_array_no_flatten	JSONDataParser<SimdJSONParser>	[{}]	deprecated_enable_flatten_nested=false;check_duplicate_json_path=false;parse_to=OnlySubcolumns	$	[]	JSONB(hex=010b050000000a00000000)	parse=success;records=1
+json_top_array_object_flatten	JSONDataParser<SimdJSONParser>	[{"x":1},{}]	deprecated_enable_flatten_nested=true;check_duplicate_json_path=false;parse_to=OnlySubcolumns	x	[key="x",nested=false,anonymous_array_level=1]	ARRAY[BIGINT(1),NULL]	parse=success;records=1
+json_top_array_object_no_flatten	JSONDataParser<SimdJSONParser>	[{"x":1},{}]	deprecated_enable_flatten_nested=false;check_duplicate_json_path=false;parse_to=OnlySubcolumns	$	[]	JSONB(hex=010b150000000a0b00000001780601000000000000000a00000000)	parse=success;records=1
+legacy_default_insert_default	DataTypeVariant/ColumnVariant	create_column();insert_default()	max_subcolumns_count=0;enable_doc_mode=false	$	[]	[NULL]	rows=1;subcolumns=1;root_type=Nothing;root_rows=1;root_nulls=[true];root_num_defaults_prefix=1;root_current_num_defaults=0;finalized=false;sparse_rows=1;sparse_keys=0;sparse_values=0;doc_rows=1;doc_keys=0;doc_values=0;get_fields=[NULL];index_fields=[NULL];json_rows=[{}];serde_json_rows=[{}];serde_string_rows=[{}];serde_json_equals_direct=true;serde_string_equals_direct=true
+legacy_default_insert_default_twice	DataTypeVariant/ColumnVariant	create_column();insert_default();insert_default()	max_subcolumns_count=0;enable_doc_mode=false	$	[]	[NULL,NULL]	rows=2;subcolumns=1;root_type=Nothing;root_rows=2;root_nulls=[true,true];root_num_defaults_prefix=2;root_current_num_defaults=0;finalized=false;sparse_rows=2;sparse_keys=0;sparse_values=0;doc_rows=2;doc_keys=0;doc_values=0;get_fields=[NULL,NULL];index_fields=[NULL,NULL];json_rows=[{},{}];serde_json_rows=[{},{}];serde_string_rows=[{},{}];serde_json_equals_direct=true;serde_string_equals_direct=true
+legacy_default_insert_many_defaults_2	DataTypeVariant/ColumnVariant	create_column();insert_many_defaults(2)	max_subcolumns_count=0;enable_doc_mode=false	$	[]	[NULL,NULL]	rows=2;subcolumns=1;root_type=Nothing;root_rows=2;root_nulls=[true,true];root_num_defaults_prefix=2;root_current_num_defaults=0;finalized=false;sparse_rows=2;sparse_keys=0;sparse_values=0;doc_rows=2;doc_keys=0;doc_values=0;get_fields=[NULL,NULL];index_fields=[NULL,NULL];json_rows=[{},{}];serde_json_rows=[{},{}];serde_string_rows=[{},{}];serde_json_equals_direct=true;serde_string_equals_direct=true
+legacy_default_insert_many_equivalence	ColumnVariant public API	insert_default() twice vs insert_many_defaults(2)	max_subcolumns_count=0;enable_doc_mode=false	$	[]	not_applicable	observable_shape_equal=true

@@ -33,14 +33,14 @@
 #include <utility>
 #include <vector>
 
-#include "common/config.h"
 #include "common/status.h"
 #include "core/block/block.h"
 #include "core/column/column.h"
 #include "core/column/column_string.h"
-#include "core/column/column_variant.h"
-#include "core/data_type/data_type_string.h"
-#include "core/field.h"
+#include "core/column/variant_v2/column_variant_v2.h"
+#include "core/data_type_serde/data_type_serde.h"
+#include "core/data_type_serde/data_type_variant_v2_serde.h"
+#include "core/string_buffer.hpp"
 #include "io/fs/local_file_system.h"
 #include "runtime/exec_env.h"
 #include "storage/compaction/cumulative_compaction.h"
@@ -61,7 +61,6 @@
 #include "storage/tablet/tablet.h"
 #include "storage/tablet/tablet_meta.h"
 #include "storage/tablet/tablet_schema.h"
-#include "testutil/variant_util.h"
 
 #ifndef NDEBUG
 namespace doris {
@@ -70,6 +69,20 @@ using namespace ErrorCode;
 static constexpr uint32_t MAX_PATH_LEN = 1024;
 static StorageEngine* engine_ref = nullptr;
 static constexpr int32_t kRowsPerSegment = 400000;
+
+std::string variant_json_at(const ColumnVariantV2& column, size_t row) {
+    auto output = ColumnString::create();
+    BufferWritable writer(*output);
+    DataTypeSerDe::FormatOptions options;
+    DataTypeVariantV2SerDe serde;
+    const Status status = serde.serialize_one_cell_to_json(column, row, writer, options);
+    EXPECT_TRUE(status.ok()) << status.to_string();
+    if (!status.ok()) {
+        return {};
+    }
+    writer.commit();
+    return output->get_data_at(0).to_string();
+}
 
 class VariantDocModeCompactionTest : public ::testing::Test {
 protected:
@@ -252,19 +265,29 @@ protected:
 
         Block block = tablet_schema->create_block();
         auto columns = std::move(block).mutate_columns();
-        auto* variant_col = assert_cast<ColumnVariant*>(columns[1].get());
-        auto raw_json_column = ColumnString::create();
-        raw_json_column->reserve(kRowsPerSegment);
+        auto* variant_col = assert_cast<ColumnVariantV2*>(columns[1].get());
+        std::vector<std::string> json_rows;
+        json_rows.reserve(kRowsPerSegment);
         for (uint32_t i = 0; i < kRowsPerSegment; ++i) {
             int32_t c1 = static_cast<int32_t>(start_key + i);
             columns[0]->insert_data(reinterpret_cast<const char*>(&c1), sizeof(c1));
 
             std::string json = generate_random_json(key_pool, rng, static_cast<uint32_t>(c1));
-            raw_json_column->insert_data(json.data(), json.size());
+            json_rows.emplace_back(std::move(json));
         }
 
-        variant_col->create_root(make_nullable(std::make_shared<DataTypeString>()),
-                                 std::move(raw_json_column));
+        std::vector<Slice> slices;
+        slices.reserve(json_rows.size());
+        for (const auto& json : json_rows) {
+            slices.emplace_back(json.data(), json.size());
+        }
+        DataTypeVariantV2SerDe serde;
+        DataTypeSerDe::FormatOptions options;
+        uint64_t num_deserialized = 0;
+        auto parse_status = serde.deserialize_column_from_json_vector(*variant_col, slices,
+                                                                      &num_deserialized, options);
+        EXPECT_TRUE(parse_status.ok()) << parse_status.to_string();
+        EXPECT_EQ(num_deserialized, kRowsPerSegment);
 
         auto import_start = std::chrono::steady_clock::now();
         auto s = rowset_writer->add_block(&block);
@@ -437,8 +460,10 @@ TEST_F(VariantDocModeCompactionTest, variant_doc_mode_compaction_merge_10_segmen
             ASSERT_EQ(1, input_block.columns());
             ASSERT_GT(input_block.rows(), 0);
             const auto& var =
-                    assert_cast<const ColumnVariant&>(*input_block.get_by_position(0).column);
-            ASSERT_GT(var.serialized_doc_value_column_offsets()[0], 0);
+                    assert_cast<const ColumnVariantV2&>(*input_block.get_by_position(0).column);
+            const std::string json = variant_json_at(var, 0);
+            ASSERT_FALSE(json.empty());
+            EXPECT_EQ(json.front(), '{');
         }
         ASSERT_TRUE(tablet->add_rowset(rowset).ok());
         input_rowsets.push_back(rowset);
@@ -453,7 +478,6 @@ TEST_F(VariantDocModeCompactionTest, variant_doc_mode_compaction_merge_10_segmen
     CumulativeCompaction cu_compaction(*engine_ref, tablet);
     cu_compaction._input_rowsets = std::move(input_rowsets);
 
-    config::enable_variant_doc_sparse_write_subcolumns = true;
     std::cout << "variant start compaction" << std::endl;
     auto start = std::chrono::steady_clock::now();
     auto st = cu_compaction.CompactionMixin::execute_compact();
@@ -473,22 +497,33 @@ TEST_F(VariantDocModeCompactionTest, variant_doc_mode_compaction_merge_10_segmen
     RowsetReaderContext reader_context;
     reader_context.tablet_schema = tablet_schema;
     reader_context.need_ordered_result = false;
-    std::vector<uint32_t> return_columns = {0};
+    std::vector<uint32_t> return_columns = {0, 1};
     reader_context.return_columns = &return_columns;
     RowsetReaderSharedPtr output_rs_reader;
     create_and_init_rowset_reader(out_rowset.get(), reader_context, &output_rs_reader);
 
     int64_t total_rows = 0;
+    bool saw_variant = false;
     Status s = Status::OK();
     while (s.ok()) {
         Block output_block = tablet_schema->create_block_by_cids(return_columns);
         s = output_rs_reader->next_batch(&output_block);
         if (s.ok()) {
+            ASSERT_EQ(output_block.columns(), 2);
+            if (output_block.rows() > 0) {
+                const auto& variant = assert_cast<const ColumnVariantV2&>(
+                        *output_block.get_by_position(1).column);
+                const std::string json = variant_json_at(variant, 0);
+                ASSERT_FALSE(json.empty());
+                EXPECT_EQ(json.front(), '{');
+                saw_variant = true;
+            }
             total_rows += output_block.rows();
         }
     }
     ASSERT_TRUE(s.is<ErrorCode::END_OF_FILE>()) << s.to_json();
     ASSERT_EQ(static_cast<int64_t>(kRowsPerSegment) * 10, total_rows);
+    ASSERT_TRUE(saw_variant);
 }
 
 } // namespace doris

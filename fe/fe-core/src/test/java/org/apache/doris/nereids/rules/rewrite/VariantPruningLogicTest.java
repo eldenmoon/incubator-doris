@@ -26,7 +26,17 @@ import org.apache.doris.catalog.Type;
 import org.apache.doris.common.Pair;
 import org.apache.doris.nereids.NereidsPlanner;
 import org.apache.doris.nereids.rules.RuleType;
+import org.apache.doris.nereids.trees.expressions.Expression;
+import org.apache.doris.nereids.trees.expressions.SearchExpression;
+import org.apache.doris.nereids.trees.expressions.Slot;
+import org.apache.doris.nereids.trees.expressions.SlotReference;
+import org.apache.doris.nereids.trees.expressions.functions.scalar.ElementAt;
+import org.apache.doris.nereids.trees.plans.Plan;
+import org.apache.doris.nereids.trees.plans.logical.LogicalFilter;
+import org.apache.doris.nereids.trees.plans.logical.LogicalOlapScan;
 import org.apache.doris.nereids.trees.plans.physical.PhysicalPlan;
+import org.apache.doris.nereids.util.MemoPatternMatchSupported;
+import org.apache.doris.nereids.util.PlanChecker;
 import org.apache.doris.planner.OlapScanNode;
 import org.apache.doris.planner.PlanFragment;
 import org.apache.doris.utframe.TestWithFeService;
@@ -39,7 +49,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.TreeSet;
 
-public class VariantPruningLogicTest extends TestWithFeService {
+public class VariantPruningLogicTest extends TestWithFeService implements MemoPatternMatchSupported {
     @Override
     protected void runBeforeAll() throws Exception {
         createDatabase("test_variant_pruning_logic");
@@ -50,8 +60,10 @@ public class VariantPruningLogicTest extends TestWithFeService {
                 + ") properties ('replication_num'='1')");
         createTable("create table variant_msg_tbl(\n"
                 + "  id int,\n"
-                + "  msg variant\n"
-                + ") properties ('replication_num'='1')");
+                + "  msg variant<properties(\"variant_max_subcolumns_count\"=\"0\")>,\n"
+                + "  index idx_msg(msg) using inverted properties(\n"
+                + "    \"parser\"=\"unicode\", \"lower_case\"=\"true\", \"support_phrase\"=\"true\")\n"
+                + ") properties ('replication_num'='1', 'inverted_index_storage_format'='V2')");
         connectContext.getSessionVariable().setDisableNereidsRules(RuleType.PRUNE_EMPTY_PARTITION.name());
         connectContext.getSessionVariable().enableNereidsTimeout = false;
         connectContext.getSessionVariable().enablePruneNestedColumns = true;
@@ -61,10 +73,7 @@ public class VariantPruningLogicTest extends TestWithFeService {
     public void testVariantNumericIndexSubPath() throws Exception {
         assertVariantSubColumnSlots(
                 "select v['arr'][0]['x'] from variant_tbl",
-                ImmutableList.of(
-                        ImmutableList.of("arr", "0", "x")
-                )
-        );
+                ImmutableList.of(ImmutableList.of("arr", "0", "x")));
         assertAllAccessPathsContain(
                 "select v['arr'][0]['x'] from variant_tbl",
                 ImmutableList.of(path("v", "arr", "0", "x")),
@@ -82,12 +91,7 @@ public class VariantPruningLogicTest extends TestWithFeService {
                 explain);
         Assertions.assertFalse(explain.contains("element_at(CAST(element_at(element_at("),
                 explain);
-        assertVariantSubColumnSlots(
-                sql,
-                ImmutableList.of(
-                        ImmutableList.of("items", "type")
-                )
-        );
+        assertVariantSubColumnSlots(sql, ImmutableList.of(ImmutableList.of("items", "type")));
     }
 
     @Test
@@ -98,11 +102,7 @@ public class VariantPruningLogicTest extends TestWithFeService {
         );
         assertVariantSubColumnSlots(
                 "select 1 from variant_tbl where v['a'] = 1 or v['b']['c'] = 2",
-                ImmutableList.of(
-                        ImmutableList.of("a"),
-                        ImmutableList.of("b", "c")
-                )
-        );
+                ImmutableList.of(ImmutableList.of("a"), ImmutableList.of("b", "c")));
     }
 
     @Test
@@ -112,9 +112,7 @@ public class VariantPruningLogicTest extends TestWithFeService {
                 ImmutableList.of(
                         ImmutableList.of("a"),
                         ImmutableList.of("b", "c"),
-                        ImmutableList.of("d")
-                )
-        );
+                        ImmutableList.of("d")));
         assertAllAccessPathsContain(
                 "select if(v['a'] is null, v['b']['c'], v['d']) from variant_tbl",
                 ImmutableList.of(path("v", "a"), path("v", "b", "c"), path("v", "d")),
@@ -190,7 +188,7 @@ public class VariantPruningLogicTest extends TestWithFeService {
     }
 
     @Test
-    public void testMatchOnDotVariantSubColumnUsesSlotRefInScanPredicate() throws Exception {
+    public void testMatchOnIndexedDotVariantSubColumnUsesSlotRefInScanPredicate() throws Exception {
         String sql = "select id from variant_msg_tbl "
                 + "where cast(msg.trace_id as string) match_phrase_prefix 'abc'";
         List<OlapScanNode> olapScanNodes = collectOlapScanNodes(sql);
@@ -204,6 +202,57 @@ public class VariantPruningLogicTest extends TestWithFeService {
         Assertions.assertInstanceOf(SlotRef.class, leftWithoutCast, matchPredicates.get(0).toString());
         SlotRef leftSlot = (SlotRef) leftWithoutCast;
         Assertions.assertEquals(ImmutableList.of("trace_id"), leftSlot.getDesc().getSubColLables());
+    }
+
+    @Test
+    public void testSearchOnDotVariantSubColumnUsesSlotRefInScanPredicate() throws Exception {
+        String sql = "select id from variant_msg_tbl where search('msg.trace_id:abc')";
+        assertSearchRewrite(sql, ImmutableList.of(ImmutableList.of("trace_id")));
+    }
+
+    @Test
+    public void testMatchWithoutInvertedIndexPrunesAllStaticVariantElementAt() throws Exception {
+        String sql = "select v['display'] from variant_tbl "
+                + "where cast(v.trace_id as string) match_phrase_prefix 'abc' and v['ordinary'] = 'x'";
+        assertVariantRootAndSubColumnSlots(
+                sql,
+                ImmutableList.of(
+                        ImmutableList.of("display"),
+                        ImmutableList.of("ordinary"),
+                        ImmutableList.of("trace_id")),
+                0);
+        String explain = getSQLPlanOrErrorMsg(sql, true);
+        Assertions.assertTrue(explain.contains("subColPath=[display]"), explain);
+        Assertions.assertTrue(explain.contains("subColPath=[trace_id]"), explain);
+        Assertions.assertTrue(explain.contains("subColPath=[ordinary]"), explain);
+    }
+
+    @Test
+    public void testIndexedMatchPrunesAllStaticVariantElementAt() throws Exception {
+        String sql = "select msg['display'] from variant_msg_tbl "
+                + "where cast(msg.trace_id as string) match_phrase_prefix 'abc' and msg['ordinary'] = 'x'";
+        assertVariantRootAndSubColumnSlots(
+                sql,
+                ImmutableList.of(
+                        ImmutableList.of("display"),
+                        ImmutableList.of("ordinary"),
+                        ImmutableList.of("trace_id")),
+                0);
+        String explain = getSQLPlanOrErrorMsg(sql, true);
+        Assertions.assertTrue(explain.contains("subColPath=[display]"), explain);
+        Assertions.assertTrue(explain.contains("subColPath=[trace_id]"), explain);
+        Assertions.assertTrue(explain.contains("subColPath=[ordinary]"), explain);
+    }
+
+    @Test
+    public void testSearchPrunesAllStaticVariantElementAt() throws Exception {
+        String sql = "select msg['display'] from variant_msg_tbl "
+                + "where search('msg.trace_id:abc') and msg['ordinary'] = 'x'";
+        List<List<String>> expectedSubPaths = ImmutableList.of(
+                ImmutableList.of("display"),
+                ImmutableList.of("ordinary"),
+                ImmutableList.of("trace_id"));
+        assertSearchRewrite(sql, expectedSubPaths);
     }
 
     private Pair<PhysicalPlan, List<SlotDescriptor>> collectVariantSlots(String sql) throws Exception {
@@ -255,6 +304,77 @@ public class VariantPruningLogicTest extends TestWithFeService {
         }
 
         Assertions.assertEquals(expectedSubColPathSet, actualSubColPaths);
+    }
+
+    private void assertVariantRootAndSubColumnSlots(
+            String sql, List<List<String>> expectedSubColPaths, int expectedRootSlotCount) throws Exception {
+        Pair<PhysicalPlan, List<SlotDescriptor>> result = collectVariantSlots(sql);
+        TreeSet<String> actualSubColPaths = new TreeSet<>();
+        int actualRootSlotCount = 0;
+        for (SlotDescriptor slotDescriptor : result.second) {
+            List<String> subColPath = slotDescriptor.getSubColLables();
+            if (subColPath == null || subColPath.isEmpty()) {
+                actualRootSlotCount++;
+            } else {
+                actualSubColPaths.add(String.join(".", subColPath));
+            }
+        }
+
+        TreeSet<String> expectedSubColPathSet = new TreeSet<>();
+        for (List<String> expected : expectedSubColPaths) {
+            expectedSubColPathSet.add(String.join(".", expected));
+        }
+        Assertions.assertEquals(expectedRootSlotCount, actualRootSlotCount);
+        Assertions.assertEquals(expectedSubColPathSet, actualSubColPaths);
+    }
+
+    private void assertSearchRewrite(String sql, List<List<String>> expectedSubPaths) {
+        PlanChecker.from(connectContext)
+                .analyze(sql)
+                .rewrite()
+                .matches(logicalFilter(
+                        logicalOlapScan().when(scan -> hasVariantRootAndSubPaths(scan, expectedSubPaths))
+                ).when(this::hasSearchSlotWithoutElementAt));
+    }
+
+    private boolean hasVariantRootAndSubPaths(LogicalOlapScan scan, List<List<String>> expectedSubPaths) {
+        int rootSlots = 0;
+        TreeSet<String> subPaths = new TreeSet<>();
+        for (Slot slot : scan.getOutput()) {
+            if (!slot.getDataType().isVariantType()) {
+                continue;
+            }
+            List<String> subPath = ((SlotReference) slot).getSubPath();
+            if (subPath.isEmpty()) {
+                rootSlots++;
+            } else {
+                subPaths.add(String.join(".", subPath));
+            }
+        }
+        TreeSet<String> expected = new TreeSet<>();
+        for (List<String> expectedSubPath : expectedSubPaths) {
+            expected.add(String.join(".", expectedSubPath));
+        }
+        return rootSlots == 1 && subPaths.equals(expected);
+    }
+
+    private boolean hasSearchSlotWithoutElementAt(LogicalFilter<? extends Plan> filter) {
+        List<SearchExpression> searches = new ArrayList<>();
+        List<ElementAt> elementAts = new ArrayList<>();
+        for (Expression expression : filter.getExpressions()) {
+            searches.addAll(expression.collectToList(SearchExpression.class::isInstance));
+            elementAts.addAll(expression.collectToList(ElementAt.class::isInstance));
+        }
+        if (searches.size() != 1 || searches.get(0).getSlotChildren().size() != 1
+                || !(searches.get(0).getSlotChildren().get(0) instanceof SlotReference)) {
+            return false;
+        }
+        SlotReference searchSlot = (SlotReference) searches.get(0).getSlotChildren().get(0);
+        if (!searchSlot.getSubPath().equals(ImmutableList.of("trace_id"))) {
+            return false;
+        }
+
+        return elementAts.isEmpty();
     }
 
     private void assertPredicateAccessPathsEqual(String sql, List<ColumnAccessPath> expected) throws Exception {

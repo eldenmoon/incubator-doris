@@ -42,44 +42,44 @@ suite("test_variant_compaction_empty_path_bug", "nonConcurrent") {
 
         // First batch: establish column usage patterns
         sql """INSERT INTO ${tableName} VALUES
-            (1, '{"a": 1, "b": 2, "c": 3}'),
-            (2, '{"a": 10, "b": 20, "c": 30}'),
-            (3, '{"a": 100, "b": 200, "c": 300}')
+            (1, parse_to_variant('{"a": 1, "b": 2, "c": 3}')),
+            (2, parse_to_variant('{"a": 10, "b": 20, "c": 30}')),
+            (3, parse_to_variant('{"a": 100, "b": 200, "c": 300}'))
         """
 
         // Second batch: introduce additional columns that will become sparse
         sql """INSERT INTO ${tableName} VALUES
-            (4, '{"a": 1, "d": 4, "e": 5, "f": 6}'),
-            (5, '{"b": 2, "d": 40, "e": 50, "f": 60}'),
-            (6, '{"c": 3, "d": 400, "e": 500, "f": 600}')
+            (4, parse_to_variant('{"a": 1, "d": 4, "e": 5, "f": 6}')),
+            (5, parse_to_variant('{"b": 2, "d": 40, "e": 50, "f": 60}')),
+            (6, parse_to_variant('{"c": 3, "d": 400, "e": 500, "f": 600}'))
         """
 
         // Third batch: more sparse columns
         sql """INSERT INTO ${tableName} VALUES
-            (7, '{"a": 7, "g": 70, "h": 700}'),
-            (8, '{"b": 8, "g": 80, "h": 800}'),
-            (9, '{"c": 9, "g": 90, "h": 900}')
+            (7, parse_to_variant('{"a": 7, "g": 70, "h": 700}')),
+            (8, parse_to_variant('{"b": 8, "g": 80, "h": 800}')),
+            (9, parse_to_variant('{"c": 9, "g": 90, "h": 900}'))
         """
 
         // Fourth batch: edge case - JSON with empty key
         // This creates a scenario where statistics might contain empty path
         sql """INSERT INTO ${tableName} VALUES
-            (10, '{"": "empty_key_value", "a": 1000}'),
-            (11, '{"": "empty_key_value2", "b": 2000}'),
-            (12, '{"": "empty_key_value3", "c": 3000}')
+            (10, parse_to_variant('{"": "empty_key_value", "a": 1000}')),
+            (11, parse_to_variant('{"": "empty_key_value2", "b": 2000}')),
+            (12, parse_to_variant('{"": "empty_key_value3", "c": 3000}'))
         """
 
         // Additional inserts to create more rowsets for compaction
         sql """INSERT INTO ${tableName} VALUES
-            (13, '{"a": 13, "d": 130}'),
-            (14, '{"b": 14, "e": 140}'),
-            (15, '{"c": 15, "f": 150}')
+            (13, parse_to_variant('{"a": 13, "d": 130}')),
+            (14, parse_to_variant('{"b": 14, "e": 140}')),
+            (15, parse_to_variant('{"c": 15, "f": 150}'))
         """
 
         sql """INSERT INTO ${tableName} VALUES
-            (16, '{"d": 16, "g": 160}'),
-            (17, '{"e": 17, "h": 170}'),
-            (18, '{"f": 18, "a": 180}')
+            (16, parse_to_variant('{"d": 16, "g": 160}')),
+            (17, parse_to_variant('{"e": 17, "h": 170}')),
+            (18, parse_to_variant('{"f": 18, "a": 180}'))
         """
 
         // Verify data before compaction

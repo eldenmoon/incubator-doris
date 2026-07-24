@@ -48,7 +48,7 @@ suite("test_variant_external_meta_concurrent", "nonConcurrent") {
             fields.add("\"field_${j}\": ${i * 100 + j}")
         }
         def json = "{" + fields.join(", ") + "}"
-        sql """insert into test_concurrent_read values (${i}, '${json}')"""
+        sql """insert into test_concurrent_read values (${i}, parse_to_variant('${json}'))"""
     }
     
     // Run concurrent queries that will trigger external meta loading
@@ -99,8 +99,8 @@ suite("test_variant_external_meta_concurrent", "nonConcurrent") {
             properties("replication_num" = "1", "disable_auto_compaction" = "true", "storage_format" = "V3");
         """
         
-        sql """insert into ${tableName} values (1, '{"table_${tableIdx}": ${tableIdx}}')"""
-        sql """insert into ${tableName} values (2, '{"table_${tableIdx}": ${tableIdx * 10}}')"""
+        sql """insert into ${tableName} values (1, parse_to_variant('{"table_${tableIdx}": ${tableIdx}}'))"""
+        sql """insert into ${tableName} values (2, parse_to_variant('{"table_${tableIdx}": ${tableIdx * 10}}'))"""
     }
     
     // Query all tables concurrently
@@ -144,7 +144,7 @@ suite("test_variant_external_meta_concurrent", "nonConcurrent") {
     
     // Initial data
     for (int i = 0; i < 10; i++) {
-        sql """insert into test_concurrent_write_read values (${i}, '{"initial": ${i}}')"""
+        sql """insert into test_concurrent_write_read values (${i}, parse_to_variant('{"initial": ${i}}'))"""
     }
     
     threads = []
@@ -173,7 +173,7 @@ suite("test_variant_external_meta_concurrent", "nonConcurrent") {
             try {
                 for (int i = 0; i < 3; i++) {
                     def k = 100 + threadId * 10 + i
-                    sql """insert into test_concurrent_write_read values (${k}, '{"writer": ${threadId}}')"""
+                    sql """insert into test_concurrent_write_read values (${k}, parse_to_variant('{"writer": ${threadId}}'))"""
                     Thread.sleep(150)
                 }
                 results.add([type: 'writer', threadId: threadId, success: true])
@@ -208,7 +208,7 @@ suite("test_variant_external_meta_concurrent", "nonConcurrent") {
     
     // Insert multiple small segments
     for (int i = 0; i < 15; i++) {
-        sql """insert into test_compaction_stress values (${i}, '{"segment": ${i}, "value": ${i * 100}}')"""
+        sql """insert into test_compaction_stress values (${i}, parse_to_variant('{"segment": ${i}, "value": ${i * 100}}'))"""
     }
     
     // Trigger compaction while querying
@@ -271,7 +271,7 @@ suite("test_variant_external_meta_concurrent", "nonConcurrent") {
     def json = "{" + fields.join(", ") + "}"
     
     for (int i = 0; i < 5; i++) {
-        sql """insert into test_cache_behavior values (${i}, '${json}')"""
+        sql """insert into test_cache_behavior values (${i}, parse_to_variant('${json}'))"""
     }
     
     // First query - should load external meta
@@ -303,5 +303,4 @@ suite("test_variant_external_meta_concurrent", "nonConcurrent") {
     sql "DROP TABLE IF EXISTS test_cache_behavior"
     
 }
-
 

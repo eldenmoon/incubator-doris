@@ -15,8 +15,9 @@
 // specific language governing permissions and limitations
 // under the License.
 
-#include "core/column/column_variant.h"
+#include "core/column/column_map.h"
 #include "storage/segment/column_reader.h"
+#include "storage/segment/variant/hierarchical_data_iterator.h"
 
 namespace doris::segment_v2 {
 
@@ -26,6 +27,12 @@ public:
             : _doc_value_iterator(std::move(column_iterator)) {}
 
     Status init(const ColumnIteratorOptions& opts) override {
+        VariantAssemblerPlanOptions plan_options;
+        plan_options.mode = VariantAssemblerMode::HIERARCHICAL;
+        plan_options.has_doc = true;
+        std::shared_ptr<const VariantAssemblerPlan> plan;
+        RETURN_IF_ERROR(VariantAssemblerPlan::create(std::move(plan_options), &plan));
+        _assembler = std::make_unique<VariantAssembler>(std::move(plan));
         return _doc_value_iterator->init(opts);
     }
 
@@ -34,16 +41,20 @@ public:
     }
 
     Status next_batch(size_t* n, MutableColumnPtr& dst, bool* has_null) override {
-        MutableColumnPtr doc_value_column = ColumnVariant::create_binary_column_fn();
+        MutableColumnPtr doc_value_column =
+                ColumnMap::create(ColumnString::create(), ColumnString::create(),
+                                  ColumnArray::ColumnOffsets::create());
         RETURN_IF_ERROR(_doc_value_iterator->next_batch(n, doc_value_column, has_null));
-        return _set_doc_value_into_variant(dst, std::move(doc_value_column), *n);
+        return _set_doc_value_into_variant(dst, doc_value_column, *n);
     }
 
     Status read_by_rowids(const rowid_t* rowids, const size_t count,
                           MutableColumnPtr& dst) override {
-        MutableColumnPtr doc_value_column = ColumnVariant::create_binary_column_fn();
+        MutableColumnPtr doc_value_column =
+                ColumnMap::create(ColumnString::create(), ColumnString::create(),
+                                  ColumnArray::ColumnOffsets::create());
         RETURN_IF_ERROR(_doc_value_iterator->read_by_rowids(rowids, count, doc_value_column));
-        return _set_doc_value_into_variant(dst, std::move(doc_value_column), count);
+        return _set_doc_value_into_variant(dst, doc_value_column, count);
     }
 
     ordinal_t get_current_ordinal() const override {
@@ -51,17 +62,22 @@ public:
     }
 
 private:
-    Status _set_doc_value_into_variant(MutableColumnPtr& dst, MutableColumnPtr&& doc_value_column,
-                                       size_t count) const {
-        auto& variant = assert_cast<ColumnVariant&>(*dst);
-        auto container = ColumnVariant::create(variant.max_subcolumns_count(),
-                                               variant.enable_doc_mode(), count);
-        container->set_doc_value_column(std::move(doc_value_column));
-        variant.insert_range_from(*container, 0, count);
-        return Status::OK();
+    Status _set_doc_value_into_variant(MutableColumnPtr& dst,
+                                       const MutableColumnPtr& doc_value_column, size_t count) {
+        const auto* doc = check_and_get_column<ColumnMap>(doc_value_column.get());
+        if (doc == nullptr) {
+            return Status::Corruption("Variant doc-value stream is not Map<String,String>");
+        }
+        VariantAssemblerBatchView batch;
+        batch.num_rows = count;
+        batch.doc_values = doc;
+        VariantAssembledColumn assembled;
+        RETURN_IF_ERROR(_assembler->assemble(batch, &assembled));
+        return append_assembled_variant(dst, std::move(assembled));
     }
 
     ColumnIteratorUPtr _doc_value_iterator;
+    std::unique_ptr<VariantAssembler> _assembler;
 };
 
 } // namespace doris::segment_v2

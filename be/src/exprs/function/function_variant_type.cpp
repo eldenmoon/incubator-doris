@@ -14,99 +14,54 @@
 // KIND, either express or implied.  See the License for the
 // specific language governing permissions and limitations
 // under the License.
-#include <glog/logging.h>
+
+#include <span>
 
 #include "core/column/column_nullable.h"
-#include "core/column/column_variant.h"
 #include "core/column/variant_v2/column_variant_v2.h"
-#include "exec/common/variant_util.h"
+#include "core/data_type/data_type_nullable.h"
+#include "core/data_type/data_type_string.h"
+#include "exprs/function/function_variant_native_v2.h"
 #include "exprs/function/simple_function_factory.h"
-#include "util/string_util.h"
-
-namespace doris {
-class FunctionContext;
-} // namespace doris
 
 namespace doris {
 
-// get data type of variant column
 class FunctionVariantType : public IFunction {
 public:
     static constexpr auto name = "variant_type";
     static FunctionPtr create() { return std::make_shared<FunctionVariantType>(); }
 
     String get_name() const override { return name; }
-
     size_t get_number_of_arguments() const override { return 1; }
+    bool use_default_implementation_for_nulls() const override { return false; }
 
-    DataTypePtr get_return_type_impl(const DataTypes& arguments) const override {
+    DataTypePtr get_return_type_impl(const DataTypes&) const override {
         return make_nullable(std::make_shared<DataTypeString>());
     }
 
-    std::map<std::string, std::string> get_type_info(const ColumnVariant& column,
-                                                     size_t row) const {
-        std::map<std::string, std::string> result;
-        Field field = column[row];
-        const auto& variant_map = field.get<TYPE_VARIANT>();
-        for (const auto& [key, value] : variant_map) {
-            if (key.empty() && value.base_scalar_type_id == PrimitiveType::TYPE_JSONB &&
-                value.num_dimensions == 0 && value.field.get<TYPE_JSONB>().get_size() == 0) {
-                // ignore empty jsonb root, it's tricky here
-                continue;
-            }
-            result[key.get_path()] =
-                    to_lower(type_to_string(value.base_scalar_type_id != PrimitiveType::INVALID_TYPE
-                                                    ? value.base_scalar_type_id
-                                                    : value.field.get_type()));
-        }
-        return result;
-    }
-
-    Status execute_impl(FunctionContext* context, Block& block, const ColumnNumbers& arguments,
+    Status execute_impl(FunctionContext*, Block& block, const ColumnNumbers& arguments,
                         uint32_t result, size_t input_rows_count) const override {
         const ColumnPtr materialized =
                 block.get_by_position(arguments[0]).column->convert_to_full_column_if_const();
-        const IColumn* physical = materialized.get();
-        if (const auto* nullable = check_and_get_column<ColumnNullable>(physical)) {
-            physical = &nullable->get_nested_column();
+        const IColumn* source = materialized.get();
+        std::span<const uint8_t> outer_nulls;
+        if (const auto* nullable = check_and_get_column<ColumnNullable>(source)) {
+            outer_nulls = nullable->get_null_map_data();
+            source = &nullable->get_nested_column();
         }
-        if (check_and_get_column<ColumnVariantV2>(physical) != nullptr) {
-            return Status::NotSupported(
-                    "function variant_type does not support ColumnVariantV2 execution");
+        const auto* variant = check_and_get_column<ColumnVariantV2>(source);
+        if (variant == nullptr) {
+            return Status::RuntimeError("function {} requires ColumnVariantV2, got {}", get_name(),
+                                        source->get_name());
+        }
+        if (variant->size() != input_rows_count) {
+            return Status::InternalError("function {} received {} Variant rows, expected {}",
+                                         get_name(), variant->size(), input_rows_count);
         }
 
-        const auto& arg_column = assert_cast<const ColumnVariant&>(*physical);
-        auto result_column = ColumnString::create();
-
-        for (size_t i = 0; i < input_rows_count; ++i) {
-            auto type_info = get_type_info(arg_column, i);
-
-            // Use ColumnString as buffer for JSON serialization
-            VectorBufferWriter writer(*result_column.get());
-
-            // Write JSON object
-            writer.write_char('{');
-
-            bool first = true;
-            for (const auto& [key, value] : type_info) {
-                if (!first) {
-                    writer.write_char(',');
-                }
-                first = false;
-
-                // Write key
-                writer.write_json_string(key);
-                writer.write_c_string(":");
-
-                // Write value
-                writer.write_json_string(value);
-            }
-
-            writer.write_char('}');
-            writer.commit();
-        }
-        auto result_nullable_column = make_nullable(result_column->get_ptr());
-        block.replace_by_position(result, std::move(result_nullable_column));
+        ColumnPtr output;
+        RETURN_IF_ERROR(variant_type_v2(*variant, outer_nulls, &output));
+        block.replace_by_position(result, std::move(output));
         return Status::OK();
     }
 };

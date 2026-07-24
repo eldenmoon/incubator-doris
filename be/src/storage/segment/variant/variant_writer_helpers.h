@@ -34,6 +34,13 @@ namespace segment_v2 {
 
 namespace variant_writer_helpers {
 
+Status create_column_writer(uint32_t cid, const TabletColumn& column,
+                            const TabletSchemaSPtr& tablet_schema,
+                            IndexFileWriter* inverted_index_file_writer,
+                            std::unique_ptr<ColumnWriter>* writer, TabletIndexes& subcolumn_indexes,
+                            ColumnWriterOptions* opt, int64_t none_null_value_size,
+                            bool need_record_none_null_value_size);
+
 Status convert_and_write_column(OlapBlockDataConvertor* converter, const TabletColumn& column,
                                 DataTypePtr data_type, ColumnWriter* writer,
                                 const ColumnPtr& src_column, size_t num_rows, int column_id);

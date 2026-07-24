@@ -23,6 +23,7 @@
 #include "core/data_type/data_type_decimal.h"
 #include "core/data_type/data_type_number.h"
 #include "core/data_type/data_type_string.h"
+#include "core/data_type/data_type_variant.h"
 #include "core/uint128.h"
 
 namespace doris {
@@ -50,6 +51,22 @@ TEST_F(SetUtilsTest, TestSetDataVariantsInitString) {
 
     ASSERT_NO_THROW(variants.init({data_type}, HashKeyType::string_key));
     ASSERT_TRUE(std::holds_alternative<SetMethodOneString>(variants.method_variant));
+}
+
+TEST_F(SetUtilsTest, TestVariantUsesSerializedHashKeys) {
+    auto variant_type = std::make_shared<DataTypeVariant>();
+    auto int_type = std::make_shared<DataTypeInt32>();
+
+    EXPECT_EQ(get_hash_key_type({variant_type}), HashKeyType::serialized);
+    EXPECT_EQ(get_hash_key_type({make_nullable(variant_type)}), HashKeyType::serialized);
+    EXPECT_EQ(get_hash_key_type({variant_type, int_type}), HashKeyType::serialized);
+    EXPECT_EQ(get_hash_key_type({int_type, variant_type}), HashKeyType::serialized);
+    EXPECT_EQ(get_hash_key_type({make_nullable(variant_type), make_nullable(int_type)}),
+              HashKeyType::serialized);
+
+    SetDataVariants set_variants;
+    ASSERT_TRUE(init_hash_method(&set_variants, {variant_type}, true).ok());
+    EXPECT_TRUE(std::holds_alternative<SetSerializedHashTableContext>(set_variants.method_variant));
 }
 
 template <typename T, typename TT>

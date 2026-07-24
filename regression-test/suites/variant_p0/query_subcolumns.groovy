@@ -53,25 +53,25 @@ suite("regression_test_query_subcolumns", "nonConcurrent"){
                 DISTRIBUTED BY HASH(k) BUCKETS 1
                 properties("replication_num" = "1", "disable_auto_compaction" = "true", "storage_format" = "V3");
         """
-        sql """insert into query_subcolumns values (1, '{"a" : 1, "b" : "2"}')"""
+        sql """insert into query_subcolumns values (1, parse_to_variant('{"a" : 1, "b" : "2"}'))"""
         // legacy V2 write
-        sql """insert into query_subcolumns values (2, '{"a" : 1, "b" : "2", "c" : 3}')"""
+        sql """insert into query_subcolumns values (2, parse_to_variant('{"a" : 1, "b" : "2", "c" : 3}'))"""
         // switch to V2.1
-        sql """insert into query_subcolumns values (3, '{"a" : 1, "b" : "2", "c" : 3, "d" : 4}')"""
+        sql """insert into query_subcolumns values (3, parse_to_variant('{"a" : 1, "b" : "2", "c" : 3, "d" : 4}'))"""
         // keep V2.1
-        sql """insert into query_subcolumns values (4, '{"a" : 1}')"""
+        sql """insert into query_subcolumns values (4, parse_to_variant('{"a" : 1}'))"""
         // switch back to V2
-        sql """insert into query_subcolumns values (5, '{"e" : "hello, world"}')"""
+        sql """insert into query_subcolumns values (5, parse_to_variant('{"e" : "hello, world"}'))"""
         // and again V2.1
-        sql """insert into query_subcolumns values (6, '{"f" : "make it work"}')"""
+        sql """insert into query_subcolumns values (6, parse_to_variant('{"f" : "make it work"}'))"""
 
-        qt_sql "select v['a'] from query_subcolumns where cast(v['a'] as int) is not null order by k"
-        qt_sql "select v['b'] from query_subcolumns where cast(v['b'] as int) is not null order by k"
-        qt_sql "select v['c'] from query_subcolumns where cast(v['c'] as int) is not null order by k"
-        qt_sql "select v['d'] from query_subcolumns where cast(v['d'] as int) is not null order by k"
-        qt_sql "select v['e'] from query_subcolumns where v['e'] like 'hello%' order by k"
+        qt_sql "select cast(v['a'] as int) from query_subcolumns where cast(v['a'] as int) is not null order by k"
+        qt_sql "select cast(v['b'] as int) from query_subcolumns where cast(v['b'] as int) is not null order by k"
+        qt_sql "select cast(v['c'] as int) from query_subcolumns where cast(v['c'] as int) is not null order by k"
+        qt_sql "select cast(v['d'] as int) from query_subcolumns where cast(v['d'] as int) is not null order by k"
+        qt_sql "select cast(v['e'] as string) from query_subcolumns where cast(v['e'] as string) like 'hello%' order by k"
         if (max_subcolumns_count >= 6) {
-            sql "select v['f'] from query_subcolumns where v['f'] match 'make' order by k"
+            sql "select cast(v['f'] as string) from query_subcolumns where cast(v['f'] as string) match 'make' order by k"
         }
 
         // if (max_subcolumns_count % 2) {
@@ -83,13 +83,13 @@ suite("regression_test_query_subcolumns", "nonConcurrent"){
         // triger compaction
         trigger_and_wait_compaction("query_subcolumns", "full", 1800)
 
-        qt_sql "select v['a'] from query_subcolumns where cast(v['a'] as int) is not null order by k"
-        qt_sql "select v['b'] from query_subcolumns where cast(v['b'] as int) is not null order by k"
-        qt_sql "select v['c'] from query_subcolumns where cast(v['c'] as int) is not null order by k"
-        qt_sql "select v['d'] from query_subcolumns where cast(v['d'] as int) is not null order by k"
-        qt_sql "select v['e'] from query_subcolumns where v['e'] like 'hello%' order by k"
+        qt_sql "select cast(v['a'] as int) from query_subcolumns where cast(v['a'] as int) is not null order by k"
+        qt_sql "select cast(v['b'] as int) from query_subcolumns where cast(v['b'] as int) is not null order by k"
+        qt_sql "select cast(v['c'] as int) from query_subcolumns where cast(v['c'] as int) is not null order by k"
+        qt_sql "select cast(v['d'] as int) from query_subcolumns where cast(v['d'] as int) is not null order by k"
+        qt_sql "select cast(v['e'] as string) from query_subcolumns where cast(v['e'] as string) like 'hello%' order by k"
         if (max_subcolumns_count >= 6) {
-            sql "select v['f'] from query_subcolumns where v['f'] match 'make' order by k"
+            sql "select cast(v['f'] as string) from query_subcolumns where cast(v['f'] as string) match 'make' order by k"
         }
     }
 }

@@ -38,8 +38,10 @@
 #include "core/block/block.h"
 #include "core/column/column_nullable.h"
 #include "core/column/column_string.h"
-#include "core/column/column_variant.h"
+#include "core/column/variant_v2/column_variant_v2.h"
+#include "core/data_type_serde/data_type_variant_v2_serde.h"
 #include "exec/common/variant_util.h"
+#include "exprs/function/parse/variant_string_parse.h"
 #include "io/fs/local_file_system.h"
 #include "runtime/exec_env.h"
 #include "storage/compaction/cumulative_compaction.h"
@@ -401,19 +403,16 @@ void ensure_variant_json_shape(const IndexBatch& batch, size_t column_pos) {
 Status fill_variant_column(const VariantColumnSpec& column_spec, const IndexBatch& batch,
                            size_t column_pos, MutableColumnPtr* output) {
     ensure_variant_json_shape(batch, column_pos);
-    auto variant_column =
-            ColumnVariant::create(column_spec.max_subcolumns_count, column_spec.enable_doc_mode);
-    auto json_column = ColumnString::create();
+    JsonStringToVariantEncoder encoder(
+            {.max_json_key_length = kMaxPathLen,
+             .throw_on_invalid_json = true,
+             .check_duplicate_json_path = batch.check_duplicate_json_path});
     for (const auto& json : batch.variant_jsons_by_column[column_pos]) {
-        json_column->insert_data(json.data(), json.size());
+        encoder.add_json(StringRef(json));
     }
-
-    ParseConfig config;
-    config.deprecated_enable_flatten_nested = batch.deprecated_enable_flatten_nested;
-    config.check_duplicate_json_path = batch.check_duplicate_json_path;
-    config.parse_to =
-            column_spec.enable_doc_mode ? ParseConfig::ParseTo::OnlyDocValueColumn : batch.parse_to;
-    variant_util::parse_json_to_variant(*variant_column, *json_column, config);
+    VariantBatchBuilder encoded = encoder.finish_batch();
+    auto variant_column = ColumnVariantV2::create();
+    variant_column->insert_encoded_batch(encoded);
     if (column_spec.nullable) {
         auto null_map = ColumnUInt8::create();
         null_map->insert_many_defaults(variant_column->size());
@@ -444,10 +443,10 @@ Status validate_direct_variant_column(const VariantColumnSpec& column_spec, cons
         }
         nested_column = &nullable_column->get_nested_column();
     }
-    if (check_and_get_column<ColumnVariant>(nested_column) == nullptr) {
+    if (check_and_get_column<ColumnVariantV2>(nested_column) == nullptr) {
         return Status::InvalidArgument(
-                "direct variant column {} must be ColumnVariant or ColumnNullable(ColumnVariant), "
-                "actual={}",
+                "direct variant column {} must be ColumnVariantV2 or "
+                "ColumnNullable(ColumnVariantV2), actual={}",
                 column_spec.name, column->get_name());
     }
     return Status::OK();
@@ -544,6 +543,7 @@ void collect_string_values_from_block(const TabletSchema& schema,
 void collect_variant_values_from_block(const TabletSchema& schema,
                                        const std::vector<uint32_t>& return_columns,
                                        const Block& block, IndexReadResult* result) {
+    DataTypeVariantV2SerDe serde;
     DataTypeSerDe::FormatOptions options;
     auto tz = cctz::utc_time_zone();
     options.timezone = &tz;
@@ -562,17 +562,21 @@ void collect_variant_values_from_block(const TabletSchema& schema,
         const auto* nullable_column = check_and_get_column<ColumnNullable>(*full_column);
         const auto* variant_column =
                 nullable_column != nullptr
-                        ? assert_cast<const ColumnVariant*>(&nullable_column->get_nested_column())
-                        : assert_cast<const ColumnVariant*>(full_column.get());
+                        ? assert_cast<const ColumnVariantV2*>(&nullable_column->get_nested_column())
+                        : assert_cast<const ColumnVariantV2*>(full_column.get());
         auto& values = result->variant_values_by_uid[tablet_column.unique_id()];
         for (size_t row = 0; row < full_column->size(); ++row) {
             if (full_column->is_null_at(row)) {
                 values.push_back(std::nullopt);
                 continue;
             }
-            std::string value;
-            variant_column->serialize_one_row_to_string(row, &value, options);
-            values.emplace_back(std::move(value));
+            auto serialized = ColumnString::create();
+            BufferWritable writer(*serialized);
+            const Status status =
+                    serde.serialize_one_cell_to_json(*variant_column, row, writer, options);
+            CHECK(status.ok()) << status;
+            writer.commit();
+            values.emplace_back(serialized->get_data_at(0).to_string());
         }
     }
 }

@@ -40,9 +40,9 @@ suite("regression_test_variant_rowstore", "variant_type"){
             properties("replication_num" = "1", "disable_auto_compaction" = "false", "store_row_column" = "true");
         """
     sql "sync"
-    sql """insert into ${table_name} values (-3, '{"a" : 1, "b" : 1.5, "c" : [1, 2, 3]}')"""
-    sql """insert into  ${table_name} select * from (select -2, '{"a": 11245, "b" : [123, {"xx" : 1}], "c" : {"c" : 456, "d" : "null", "e" : 7.111}}'  as json_str
-            union  all select -1, '{"a": 1123}' as json_str union all select *, '{"a" : 1234, "xxxx" : "kaana"}' as json_str from numbers("number" = "4096"))t order by 1 limit 4096 ;"""
+    sql """insert into ${table_name} values (-3, parse_to_variant('{"a" : 1, "b" : 1.5, "c" : [1, 2, 3]}'))"""
+    sql """insert into  ${table_name} select * from (select -2, parse_to_variant('{"a": 11245, "b" : [123, {"xx" : 1}], "c" : {"c" : 456, "d" : "null", "e" : 7.111}}')  as json_str
+            union  all select -1, parse_to_variant('{"a": 1123}') as json_str union all select *, parse_to_variant('{"a" : 1234, "xxxx" : "kaana"}') as json_str from numbers("number" = "4096"))t order by 1 limit 4096 ;"""
     sql "sync"
     qt_sql "select * from ${table_name} order by k limit 10"
 
@@ -59,7 +59,7 @@ suite("regression_test_variant_rowstore", "variant_type"){
             DISTRIBUTED BY HASH(k) BUCKETS 1
             properties("replication_num" = "1", "disable_auto_compaction" = "false", "store_row_column" = "true");
     """
-    sql """insert into ${table_name} select k, cast(v as string), cast(v as string) from var_rowstore"""
+    sql """insert into ${table_name} select k, parse_to_variant(cast(v as string)), parse_to_variant(cast(v as string)) from var_rowstore"""
     qt_sql "select * from ${table_name} order by k limit 10"
 
     // Parse url
@@ -91,7 +91,7 @@ suite("regression_test_variant_rowstore", "variant_type"){
             DISTRIBUTED BY HASH(k) BUCKETS 1
             properties("replication_num" = "1", "disable_auto_compaction" = "false", "store_row_column" = "true", "enable_unique_key_merge_on_write" = "true");
     """
-    sql """insert into ${table_name} select k, cast(v as string), cast(v as string) from var_rowstore"""
+    sql """insert into ${table_name} select k, parse_to_variant(cast(v as string)), parse_to_variant(cast(v as string)) from var_rowstore"""
     def result1 = connect(user, password, prepare_url) {
         def stmt = prepareStatement "select * from var_rs_pq where k = ?"
         assertEquals(stmt.class, com.mysql.cj.jdbc.ServerPreparedStatement);

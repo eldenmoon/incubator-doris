@@ -16,6 +16,7 @@
 // under the License.
 
 #include <algorithm>
+#include <string_view>
 #include <utility>
 
 #include "core/assert_cast.h"
@@ -26,6 +27,7 @@
 #include "core/string_buffer.hpp"
 #include "exprs/function/cast/variant_v2/cast_variant_v2_internal.h"
 #include "exprs/function/parse/variant_string_parse.h"
+#include "util/simd/bits.h"
 
 namespace doris::CastWrapper::variant_v2_internal {
 namespace {
@@ -163,47 +165,52 @@ Status cast_values_to_string(FunctionContext* context, size_t rows, ForcedNulls 
 
 Status cast_typed_variant_to_string(FunctionContext* context, const ColumnVariantV2& source,
                                     size_t rows, ForcedNulls forced_nulls, ColumnPtr* output) {
-    const auto& typed = assert_cast<const ColumnNullable&>(source.typed_column());
-    const DataTypePtr string_type = std::make_shared<DataTypeString>();
-    const NullMap& inner_nulls = typed.get_null_map_data();
-    size_t concrete_rows = 0;
-    for (size_t row = 0; row < rows; ++row) {
-        if (inner_nulls[row] == 0 && (forced_nulls.empty() || forced_nulls[row] == 0)) {
-            ++concrete_rows;
-        }
-    }
-    if (concrete_rows == rows) {
-        return cast_variant_values_to_scalar(context, source, string_type, rows, {}, output);
+    ColumnPtr converted = source.typed_column().get_ptr();
+    if (!is_string_type(source.typed_type()->get_primitive_type())) {
+        RETURN_IF_ERROR(cast_typed_variant_to_scalar(
+                context, source, std::make_shared<DataTypeString>(), rows, {}, &converted));
     }
 
-    ColumnPtr concrete;
-    if (concrete_rows != 0) {
-        RETURN_IF_ERROR(cast_variant_values_to_scalar(context, source, string_type, rows,
-                                                      forced_nulls, &concrete));
+    const auto& nullable = assert_cast<const ColumnNullable&>(*converted);
+    const NullMap& inner_nulls = nullable.get_null_map_data();
+    const bool has_inner_nulls = nullable.has_null();
+    const bool has_forced_nulls =
+            !forced_nulls.empty() && simd::contain_one(forced_nulls.data(), rows);
+
+    bool has_unmasked_inner_nulls = has_inner_nulls;
+    if (has_inner_nulls && has_forced_nulls) {
+        has_unmasked_inner_nulls = false;
+        for (size_t row = 0; row < rows; ++row) {
+            if (inner_nulls[row] != 0 && forced_nulls[row] == 0) {
+                has_unmasked_inner_nulls = true;
+                break;
+            }
+        }
     }
-    const ColumnNullable* converted =
-            concrete ? &assert_cast<const ColumnNullable&>(*concrete) : nullptr;
-    const ColumnString* converted_strings =
-            converted == nullptr
-                    ? nullptr
-                    : &assert_cast<const ColumnString&>(converted->get_nested_column());
+    if (!has_unmasked_inner_nulls && !has_forced_nulls) {
+        *output = std::move(converted);
+        return Status::OK();
+    }
+    if (!has_unmasked_inner_nulls) {
+        auto nulls = ColumnUInt8::create();
+        nulls->get_data().assign(forced_nulls.begin(), forced_nulls.end());
+        *output = ColumnNullable::create(nullable.get_nested_column_ptr(), std::move(nulls));
+        return Status::OK();
+    }
+
+    const auto& values = assert_cast<const ColumnString&>(nullable.get_nested_column());
     auto strings = ColumnString::create();
-    auto nulls = ColumnUInt8::create();
+    auto nulls = ColumnUInt8::create(rows, 0);
     strings->reserve(rows);
-    nulls->reserve(rows);
+    constexpr std::string_view null_literal = "null";
     for (size_t row = 0; row < rows; ++row) {
-        const bool forced = !forced_nulls.empty() && forced_nulls[row] != 0;
-        if (forced) {
+        if (!forced_nulls.empty() && forced_nulls[row] != 0) {
             strings->insert_default();
-            nulls->insert_value(1);
+            nulls->get_data()[row] = 1;
         } else if (inner_nulls[row] != 0) {
-            strings->insert_data("null", 4);
-            nulls->insert_value(0);
+            strings->insert_data(null_literal.data(), null_literal.size());
         } else {
-            DCHECK(converted != nullptr);
-            DCHECK_EQ(converted->get_null_map_data()[row], 0);
-            strings->insert_from(*converted_strings, row);
-            nulls->insert_value(0);
+            strings->insert_from(values, row);
         }
     }
     *output = ColumnNullable::create(std::move(strings), std::move(nulls));

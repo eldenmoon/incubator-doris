@@ -26,6 +26,8 @@
 #include <vector>
 
 #include "common/exception.h"
+#include "core/column/variant_v2/column_variant_v2.h"
+#include "core/value/variant/variant_field.h"
 #include "core/value/variant/variant_parquet_encoding.h"
 #include "util/utf8_check.h"
 
@@ -278,6 +280,17 @@ void validate_node(VariantRef value, std::vector<bool>& referenced_keys) {
 }
 
 } // namespace
+
+void insert_encoded_field(ColumnVariantV2& column, const VariantField& field) {
+    const VariantRef value = field.ref();
+    const std::array<uint32_t, 2> metadata_offsets {0, static_cast<uint32_t>(value.metadata.size)};
+    const std::array<uint32_t, 2> value_offsets {0, static_cast<uint32_t>(value.value.size)};
+    column.insert_encoded_rows({.metadata_bytes = {value.metadata.data, value.metadata.size},
+                                .metadata_offsets = metadata_offsets,
+                                .meta_ids = {},
+                                .value_bytes = value.value,
+                                .value_offsets = value_offsets});
+}
 
 void validate_canonical(VariantMetadataRef metadata, std::span<const VariantRef> rows) {
     metadata.validate();

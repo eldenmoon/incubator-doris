@@ -79,13 +79,13 @@ suite("outfile_csv_variant_doc_value", "p0") {
 
 
         // insert data
-        sql """ insert into ${export_table_name} values (1, 'doris1', '[9, 99, 999]'), (2, 'doris2', '[8, 88]'); """
-        sql """ insert into ${export_table_name} values (3, 'doris3', '{"a" : 123}'); """
+        sql """ insert into ${export_table_name} values (1, 'doris1', parse_to_variant('[9, 99, 999]')), (2, 'doris2', parse_to_variant('[8, 88]')); """
+        sql """ insert into ${export_table_name} values (3, 'doris3', parse_to_variant('{"a" : 123}')); """
         sql """ insert into ${export_table_name} values (4, 'doris4', null); """
-        sql """ insert into ${export_table_name} values (5, 'doris5', '[1, null, 2]'); """
-        sql """ insert into ${export_table_name} values (6, 'doris6', '{"aaaa" : "111111"}'); """
-        sql """ insert into ${export_table_name} values (7, 'doris7', '{"bbbb" : 1.1111}'); """
-        sql """ insert into ${export_table_name} values (8, 'doris8', '{"xxx" : [111.11]}'); """
+        sql """ insert into ${export_table_name} values (5, 'doris5', parse_to_variant('[1, null, 2]')); """
+        sql """ insert into ${export_table_name} values (6, 'doris6', parse_to_variant('{"aaaa" : "111111"}')); """
+        sql """ insert into ${export_table_name} values (7, 'doris7', parse_to_variant('{"bbbb" : 1.1111}')); """
+        sql """ insert into ${export_table_name} values (8, 'doris8', parse_to_variant('{"xxx" : [111.11]}')); """
 
 
         // test base data
@@ -116,12 +116,12 @@ suite("outfile_csv_variant_doc_value", "p0") {
 
         // insert data
         // insert data
-        sql """ insert into ${export_table_name} values (1, 'doris1', '[9, 99, 999]'), (2, 'doris2', '[8, 88]'); """
-        sql """ insert into ${export_table_name} values (3, 'doris3', '{"a" : 123}'); """
-        sql """ insert into ${export_table_name} values (5, 'doris5', '[1, null, 2]'); """
-        sql """ insert into ${export_table_name} values (6, 'doris6', '{"aaaa" : "111111"}'); """
-        sql """ insert into ${export_table_name} values (7, 'doris7', '{"bbbb" : 1.1111}'); """
-        sql """ insert into ${export_table_name} values (8, 'doris8', '{"xxx" : [111.11]}'); """
+        sql """ insert into ${export_table_name} values (1, 'doris1', parse_to_variant('[9, 99, 999]')), (2, 'doris2', parse_to_variant('[8, 88]')); """
+        sql """ insert into ${export_table_name} values (3, 'doris3', parse_to_variant('{"a" : 123}')); """
+        sql """ insert into ${export_table_name} values (5, 'doris5', parse_to_variant('[1, null, 2]')); """
+        sql """ insert into ${export_table_name} values (6, 'doris6', parse_to_variant('{"aaaa" : "111111"}')); """
+        sql """ insert into ${export_table_name} values (7, 'doris7', parse_to_variant('{"bbbb" : 1.1111}')); """
+        sql """ insert into ${export_table_name} values (8, 'doris8', parse_to_variant('{"xxx" : [111.11]}')); """
 
         // test base data
         qt_select_base2 """ SELECT * FROM ${export_table_name} t ORDER BY user_id; """

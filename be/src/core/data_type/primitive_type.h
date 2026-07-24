@@ -32,16 +32,16 @@
 #include "core/types.h"
 #include "core/uint24.h"
 #include "core/value/timestamptz_value.h"
+#include "core/value/variant/variant_field.h"
 #include "core/value/vdatetime_value.h"
 #include "exec/common/template_helpers.hpp"
-#include "util/json/path_in_data.h"
 
 namespace doris {
 template <typename T>
 class ColumnStr;
 class IColumnDummy;
 class ColumnMap;
-class ColumnVariant;
+class ColumnVariantV2;
 class ColumnStruct;
 class ColumnVarbinary;
 using ColumnString = ColumnStr<UInt32>;
@@ -49,8 +49,6 @@ class JsonbField;
 struct Array;
 struct Struct;
 struct Map;
-struct FieldWithDataType;
-using VariantMap = std::map<PathInData, FieldWithDataType>;
 template <DecimalNativeTypeConcept T>
 struct Decimal;
 template <PrimitiveType T>
@@ -496,10 +494,10 @@ struct PrimitiveTypeTraits<TYPE_STRUCT> {
 };
 template <>
 struct PrimitiveTypeTraits<TYPE_VARIANT> {
-    using CppType = VariantMap;
+    using CppType = VariantField;
     using StorageFieldType = CppType;
     using DataType = DataTypeVariant;
-    using ColumnType = ColumnVariant;
+    using ColumnType = ColumnVariantV2;
 };
 template <>
 struct PrimitiveTypeTraits<TYPE_BITMAP> {

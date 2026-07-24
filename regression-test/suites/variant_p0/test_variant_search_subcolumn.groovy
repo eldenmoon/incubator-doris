@@ -45,12 +45,12 @@ suite("test_variant_search_subcolumn") {
     // Insert test data
     sql """
         INSERT INTO ${table_name} VALUES
-        (1, '{"string4": "0ff dpr test"}'),
-        (2, '{"string4": "hello world"}'),
-        (3, '{"string4": "0ff test"}'),
-        (4, '{"string5": "0ff dpr"}'),
-        (5, '{"string4": "dpr only"}'),
-        (6, '{"nested": {"field": "0ff dpr"}}')
+        (1, parse_to_variant('{"string4": "0ff dpr test"}')),
+        (2, parse_to_variant('{"string4": "hello world"}')),
+        (3, parse_to_variant('{"string4": "0ff test"}')),
+        (4, parse_to_variant('{"string5": "0ff dpr"}')),
+        (5, parse_to_variant('{"string4": "dpr only"}')),
+        (6, parse_to_variant('{"nested": {"field": "0ff dpr"}}'))
     """
 
     // Wait for data to be flushed and index to be built
@@ -122,7 +122,7 @@ suite("test_variant_search_subcolumn") {
     logger.info("Test 8: Quoted field names")
     sql """
         INSERT INTO ${table_name} VALUES
-        (7, '{"field-name": "test value"}')
+        (7, parse_to_variant('{"field-name": "test value"}'))
     """
     Thread.sleep(5000)
 

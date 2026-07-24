@@ -204,18 +204,8 @@ public class RewriteSearchToSlots extends OneRewriteRuleFactory {
                     columnName, table.getName(), dsl));
         }
 
-        if (isVariantParent) {
-            for (Index index : table.getIndexes()) {
-                if (index.getIndexType() != IndexType.INVERTED) {
-                    continue;
-                }
-                List<String> columns = index.getColumns();
-                if (columns != null && !columns.isEmpty()
-                        && columnName.equalsIgnoreCase(columns.get(0))) {
-                    return;
-                }
-            }
-        } else if (table.getInvertedIndex(column, null) != null) {
+        if ((isVariantParent && hasVariantParentInvertedIndex(table, columnName))
+                || (!isVariantParent && table.getInvertedIndex(column, null) != null)) {
             return;
         }
 
@@ -224,6 +214,20 @@ public class RewriteSearchToSlots extends OneRewriteRuleFactory {
                         + "Create an inverted index on the column first "
                         + "(ALTER TABLE ... ADD INDEX ... USING INVERTED).",
                 columnName, dsl));
+    }
+
+    static boolean hasVariantParentInvertedIndex(OlapTable table, String columnName) {
+        for (Index index : table.getIndexes()) {
+            if (index.getIndexType() != IndexType.INVERTED) {
+                continue;
+            }
+            List<String> columns = index.getColumns();
+            if (columns != null && !columns.isEmpty()
+                    && columnName.equalsIgnoreCase(columns.get(0))) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private Slot findSlotByName(String fieldName, LogicalOlapScan scan) {

@@ -90,7 +90,7 @@ suite("test_variant_predefine_types_with_indexes_profile", "p0,nonConcurrent"){
     sql """
          INSERT INTO test_variant_predefine_types_with_indexes_profile (`var`) VALUES
         (
-            '{
+            parse_to_variant('{
               "array_decimal_1": ["12345678901234567.123456789", "987.654321"],
               "array_ipv6_1": ["2001:0db8:85a3:0000:0000:8a2e:0370:7334", "::1"],
               "int_1": 42,
@@ -115,7 +115,7 @@ suite("test_variant_predefine_types_with_indexes_profile", "p0,nonConcurrent"){
               "ipv6_1": "::1",
               "largeint_1": "12345678901234567890123456789012345678",
               "char_1": "short text"
-            }'
+            }')
         );
     """
     for (int i = 1; i < 10; i++) {
@@ -224,10 +224,10 @@ suite("test_variant_predefine_types_with_indexes_profile", "p0,nonConcurrent"){
     queryAndCheckWithBloomFilter("select count() from test_variant_predefine_types_with_indexes_profile where cast(var['largeint_1'] as largeint) = 12345678901234567890123456789012345678")
 
     for (int i = 1; i < 10; i++) {
-      sql """insert into test_variant_predefine_types_with_indexes_profile values (1, '{"a" : 123, "b" : 456, "d" : 789, "f" : "12345678901234567890123456789012345678", "int_1" : 123}')"""
+      sql """insert into test_variant_predefine_types_with_indexes_profile values (1, parse_to_variant('{"a" : 123, "b" : 456, "d" : 789, "f" : "12345678901234567890123456789012345678", "int_1" : 123}'))"""
     }
     for (int i = 1; i < 10; i++) {
-      sql """insert into test_variant_predefine_types_with_indexes_profile values (1, '{"a" : 123, "b" : 456, "d" : 789, "f" : "12345678901234567890123456789012345678"}')"""
+      sql """insert into test_variant_predefine_types_with_indexes_profile values (1, parse_to_variant('{"a" : 123, "b" : 456, "d" : 789, "f" : "12345678901234567890123456789012345678"}'))"""
     }
     trigger_and_wait_compaction(tableName, "full", 1800)
 }

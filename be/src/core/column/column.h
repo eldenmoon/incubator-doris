@@ -113,7 +113,7 @@ public:
         return nullptr;
     }
 
-    // Only used in ColumnVariant to handle lifecycle of variant. Other columns would do nothing.
+    // Hook for columns that need to finalize deferred internal state.
     virtual void finalize() {}
 
     // Only used on ColumnDictionary

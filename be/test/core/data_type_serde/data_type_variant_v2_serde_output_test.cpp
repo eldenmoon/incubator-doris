@@ -242,6 +242,21 @@ ColumnVariantV2::MutablePtr invalid_date_column() {
                                          std::make_shared<DataTypeDateV2>());
 }
 
+ColumnVariantV2::MutablePtr trailing_value_column() {
+    constexpr std::array<char, 3> metadata {static_cast<char>(0x11), 0, 0};
+    constexpr std::array<uint32_t, 2> metadata_offsets {0, 3};
+    constexpr std::array<uint32_t, 2> ids {0, 0};
+    constexpr std::array<char, 3> values {0, 0, 0};
+    constexpr std::array<uint32_t, 3> value_offsets {0, 1, 3};
+    auto result = ColumnVariantV2::create();
+    result->insert_encoded_rows({.metadata_bytes = {metadata.data(), metadata.size()},
+                                 .metadata_offsets = metadata_offsets,
+                                 .meta_ids = ids,
+                                 .value_bytes = {values.data(), values.size()},
+                                 .value_offsets = value_offsets});
+    return result;
+}
+
 } // namespace
 
 TEST(DataTypeVariantV2SerdeOutputTest, DormantDirectClassExists) {
@@ -309,6 +324,13 @@ TEST(DataTypeVariantV2SerdeOutputTest, DocumentsTemporalAndColumnJsonAreExact) {
     ASSERT_TRUE(serde.serialize_column_to_json(*documents, 0, 3, writer, options).ok());
     writer.commit();
     EXPECT_EQ(output->get_data_at(0), StringRef("{\"a\":[1,null,\"x\"]}|[]|null"));
+
+    auto batch = ColumnString::create();
+    serde.to_string_batch(*documents, *batch, options);
+    ASSERT_EQ(batch->size(), 3);
+    EXPECT_EQ(batch->get_data_at(0), StringRef("{\"a\":[1,null,\"x\"]}"));
+    EXPECT_EQ(batch->get_data_at(1), StringRef("[]"));
+    EXPECT_EQ(batch->get_data_at(2), StringRef("null"));
 }
 
 TEST(DataTypeVariantV2SerdeOutputTest, ConstNullableAndOuterMasksPreserveBoundaries) {
@@ -377,6 +399,10 @@ TEST(DataTypeVariantV2SerdeOutputTest, ConstNullableAndOuterMasksPreserveBoundar
     EXPECT_EQ(status.code(), ErrorCode::INVALID_ARGUMENT);
     EXPECT_EQ(reversed_builder.length(), 0);
     EXPECT_TRUE(invalid_dates->is_typed());
+}
+
+TEST(DataTypeVariantV2SerdeOutputTest, BadEncodedRowsAreRejectedBeforeSerde) {
+    EXPECT_THROW(static_cast<void>(trailing_value_column()), Exception);
 }
 
 } // namespace doris

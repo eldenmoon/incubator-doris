@@ -15,8 +15,8 @@
 // specific language governing permissions and limitations
 // under the License.
 
-// Unit tests for DefaultNestedGroupReadProvider, DefaultNestedGroupWriteProvider,
-// NestedGroupReader struct, NestedGroupPathMatch struct, and find_in_nested_groups.
+// Unit tests for DefaultNestedGroupReadProvider, NestedGroupReader,
+// NestedGroupPathMatch, and find_in_nested_groups.
 //
 // See also:
 //   nested_group_path_test.cpp       — nested_group_path.h utilities
@@ -28,11 +28,7 @@
 
 #include <roaring/roaring.hh>
 
-#include "core/column/column_variant.h"
-#include "storage/iterator/olap_data_convertor.h"
-#include "storage/segment/column_writer.h"
 #include "storage/segment/variant/variant_column_reader.h"
-#include "storage/segment/variant/variant_statistics.h"
 
 namespace doris::segment_v2 {
 
@@ -47,50 +43,6 @@ TEST(NestedGroupProviderTest, DefaultReadProviderIsDisabled) {
         GTEST_SKIP() << "EE build: read provider is enabled";
     }
     EXPECT_FALSE(provider->should_enable_nested_group_read_path());
-}
-
-TEST(NestedGroupProviderTest, DefaultWriteProviderRejectsNestedGroupWritePath) {
-    auto write_provider = create_nested_group_write_provider();
-    ASSERT_TRUE(write_provider != nullptr);
-
-    // In EE, the write provider may have real behavior, skip these checks.
-    auto read_provider = create_nested_group_read_provider();
-    if (read_provider && read_provider->should_enable_nested_group_read_path()) {
-        GTEST_SKIP() << "EE build: write provider has real implementation";
-    }
-
-    auto column_variant = ColumnVariant::create(0, false);
-    ColumnWriterOptions opts;
-    VariantStatistics statistics;
-
-    auto status =
-            write_provider->prepare(*column_variant, nullptr, opts, nullptr, nullptr, &statistics);
-    EXPECT_FALSE(status.ok());
-    EXPECT_TRUE(status.is<ErrorCode::INVALID_ARGUMENT>());
-
-    TabletColumn tablet_column;
-    OlapBlockDataConvertor converter;
-    int column_id = 0;
-    status = write_provider->prepare(*column_variant, &tablet_column, opts, &converter, &column_id,
-                                     &statistics);
-    EXPECT_FALSE(status.ok());
-    EXPECT_TRUE(status.is<ErrorCode::NOT_IMPLEMENTED_ERROR>());
-    EXPECT_NE(status.to_string().find("not available"), std::string::npos);
-
-    NestedGroupsMap nested_groups;
-    status = write_provider->prepare_with_built_groups(nested_groups, &tablet_column, opts,
-                                                       &converter, &column_id, &statistics);
-    EXPECT_FALSE(status.ok());
-    EXPECT_TRUE(status.is<ErrorCode::NOT_IMPLEMENTED_ERROR>());
-    EXPECT_NE(status.to_string().find("not available"), std::string::npos);
-
-    EXPECT_EQ(0, write_provider->estimate_buffer_size());
-    EXPECT_TRUE(write_provider->finish().ok());
-    EXPECT_TRUE(write_provider->write_data().ok());
-    EXPECT_TRUE(write_provider->write_ordinal_index().ok());
-    EXPECT_TRUE(write_provider->write_zone_map().ok());
-    EXPECT_TRUE(write_provider->write_inverted_index().ok());
-    EXPECT_TRUE(write_provider->write_bloom_filter_index().ok());
 }
 
 // ===========================================================================

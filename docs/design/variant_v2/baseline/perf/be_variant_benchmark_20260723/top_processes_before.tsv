@@ -1,0 +1,21 @@
+    PID COMMAND         %CPU %MEM
+ 248364 doris_be         438  0.2
+   4309 clickhouse-serv  137  0.1
+   5091 cloud-monitor-a  111  0.0
+3148490 java             104  0.2
+2467761 doris_be        83.7  1.5
+2794589 doris_be        73.7  0.7
+3753674 clickhouse-serv 68.9  0.0
+3122059 codex           65.6  0.0
+ 384748 doris_be        60.3  0.1
+2422737 cmake           56.6  0.0
+   2699 systemd-journal 55.7  0.0
+2360000 codex           54.0  0.0
+2246720 codex           47.9  0.0
+1649972 doris_cloud     47.2  0.1
+2467076 doris_cloud     47.0  0.1
+3493087 doris_be        42.5  0.1
+3491181 doris_be        37.1  0.1
+ 382127 doris_be        36.1  0.1
+ 514832 doris_be        34.2  0.2
+  51633 agent           33.3  0.0

@@ -287,6 +287,11 @@ public class CheckCast implements ExpressionPatternRuleFactory {
         allowedTypes.add(FloatType.class);
         allowedTypes.add(DoubleType.class);
         unStrictCastWhiteList.put(TimeV2Type.class, allowedTypes);
+
+        // Variant representation changes to JSONB are explicit escape hatches in non-strict mode.
+        allowedTypes = Sets.newHashSet();
+        allowedTypes.add(JsonType.class);
+        unStrictCastWhiteList.put(VariantType.class, allowedTypes);
     }
 
     private static void allowToBasicType(Set<Class<? extends DataType>> allowedTypes) {
@@ -355,17 +360,14 @@ public class CheckCast implements ExpressionPatternRuleFactory {
      */
     public static boolean check(DataType originalType, DataType targetType,
             boolean isStrictMode, boolean looseAggState) {
-        if (originalType.isVariantType() && targetType.isVariantType()) {
-            // Variant properties describe the source column layout. The execution value type is
-            // still Variant, so operators may align those properties without changing the value.
-            return true;
-        }
-        if (originalType.isVariantType() && (targetType instanceof PrimitiveType || targetType.isArrayType())) {
-            // variant could cast to primitive types and array
-            return true;
-        }
         if (originalType.isNullType()) {
             return true;
+        }
+        if (targetType.isVariantType()) {
+            return isSupportedVariantSource(originalType);
+        }
+        if (originalType.isVariantType()) {
+            return isSupportedVariantTarget(targetType);
         }
         if (originalType.equals(targetType)) {
             return true;
@@ -429,6 +431,46 @@ public class CheckCast implements ExpressionPatternRuleFactory {
         } else {
             return true;
         }
+    }
+
+    private static boolean isSupportedVariantSource(DataType sourceType) {
+        if (sourceType.isNullType() || sourceType.isVariantType() || sourceType.isStringLikeType()
+                || sourceType.isBooleanType() || sourceType.isIntegralType()
+                || sourceType.isFloatLikeType() || sourceType.isDateLikeType()
+                || sourceType.isIPType() || sourceType.isJsonType()) {
+            return true;
+        }
+        if (sourceType instanceof DecimalV2Type) {
+            return ((DecimalV2Type) sourceType).getPrecision() <= 27;
+        }
+        if (sourceType instanceof DecimalV3Type) {
+            return ((DecimalV3Type) sourceType).getPrecision() <= 38;
+        }
+        if (sourceType instanceof ArrayType) {
+            DataType itemType = ((ArrayType) sourceType).getItemType();
+            return isSupportedVariantSource(itemType);
+        }
+        return false;
+    }
+
+    private static boolean isSupportedVariantTarget(DataType targetType) {
+        if (targetType.isNullType() || targetType.isVariantType() || targetType.isStringLikeType()
+                || targetType.isBooleanType() || targetType.isIntegralType()
+                || targetType.isFloatLikeType() || targetType.isDateLikeType()
+                || targetType.isIPType() || targetType.isJsonType()) {
+            return true;
+        }
+        if (targetType instanceof DecimalV2Type) {
+            return true;
+        }
+        if (targetType instanceof DecimalV3Type) {
+            return true;
+        }
+        if (targetType instanceof ArrayType) {
+            DataType itemType = ((ArrayType) targetType).getItemType();
+            return isSupportedVariantTarget(itemType);
+        }
+        return false;
     }
 
     /**

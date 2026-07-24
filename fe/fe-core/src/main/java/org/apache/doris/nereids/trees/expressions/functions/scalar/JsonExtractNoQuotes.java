@@ -18,12 +18,16 @@
 package org.apache.doris.nereids.trees.expressions.functions.scalar;
 
 import org.apache.doris.catalog.FunctionSignature;
+import org.apache.doris.nereids.trees.expressions.Cast;
 import org.apache.doris.nereids.trees.expressions.Expression;
 import org.apache.doris.nereids.trees.expressions.functions.AlwaysNullable;
 import org.apache.doris.nereids.trees.expressions.functions.ExplicitlyCastableSignature;
+import org.apache.doris.nereids.trees.expressions.functions.RewriteWhenAnalyze;
 import org.apache.doris.nereids.trees.expressions.visitor.ExpressionVisitor;
 import org.apache.doris.nereids.types.JsonType;
+import org.apache.doris.nereids.types.StringType;
 import org.apache.doris.nereids.types.VarcharType;
+import org.apache.doris.nereids.types.VariantType;
 import org.apache.doris.nereids.util.ExpressionUtils;
 
 import com.google.common.base.Preconditions;
@@ -35,11 +39,14 @@ import java.util.List;
  * ScalarFunction 'json_object'.
  */
 public class JsonExtractNoQuotes extends ScalarFunction
-        implements ExplicitlyCastableSignature, AlwaysNullable {
+        implements ExplicitlyCastableSignature, AlwaysNullable, RewriteWhenAnalyze {
 
     public static final List<FunctionSignature> SIGNATURES =
-            ImmutableList.of(FunctionSignature.ret(JsonType.INSTANCE)
-                    .varArgs(JsonType.INSTANCE, VarcharType.SYSTEM_DEFAULT));
+            ImmutableList.of(
+                    FunctionSignature.ret(JsonType.INSTANCE)
+                            .varArgs(JsonType.INSTANCE, VarcharType.SYSTEM_DEFAULT),
+                    FunctionSignature.ret(StringType.INSTANCE)
+                            .args(VariantType.INSTANCE, VarcharType.SYSTEM_DEFAULT));
 
     /**
      * constructor with 1 or more arguments.
@@ -65,6 +72,15 @@ public class JsonExtractNoQuotes extends ScalarFunction
     @Override
     public List<FunctionSignature> getSignatures() {
         return SIGNATURES;
+    }
+
+    @Override
+    public Expression rewriteWhenAnalyze() {
+        if (children.get(0).getDataType().isVariantType()) {
+            return new Cast(VariantJsonNativeRewrite.get(children.get(0), children.get(1)),
+                    StringType.INSTANCE, false);
+        }
+        return this;
     }
 
     @Override

@@ -1,0 +1,4 @@
+file	source_commit	source_path	extraction
+ordinary_sparse.dat	b344b5580bd34e50c340c76b34d7de4eb8aa79f8	docs/design/variant_v2/baseline/segments/samples/ordinary_sparse.dat	git show <source_commit>:<source_path>
+doc.dat	b344b5580bd34e50c340c76b34d7de4eb8aa79f8	docs/design/variant_v2/baseline/segments/samples/doc.dat	git show <source_commit>:<source_path>
+bucketed_sparse.dat	b344b5580bd34e50c340c76b34d7de4eb8aa79f8	docs/design/variant_v2/baseline/segments/samples/bucketed_sparse.dat	git show <source_commit>:<source_path>

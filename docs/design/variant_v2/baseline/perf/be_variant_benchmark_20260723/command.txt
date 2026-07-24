@@ -1,0 +1,1 @@
+/mnt/disk1/claude-max/.codex/worktrees/b441/doris/be/build_RELEASE/bin/benchmark_test --benchmark_filter=\^BM_Variant --benchmark_repetitions=5 --benchmark_min_time=0.5s --benchmark_display_aggregates_only=true --benchmark_out=docs/design/variant_v2/baseline/perf/be_variant_benchmark_20260723/benchmark.json --benchmark_out_format=json

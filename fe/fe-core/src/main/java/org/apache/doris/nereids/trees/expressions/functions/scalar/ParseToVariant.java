@@ -19,14 +19,13 @@ package org.apache.doris.nereids.trees.expressions.functions.scalar;
 
 import org.apache.doris.catalog.FunctionSignature;
 import org.apache.doris.nereids.trees.expressions.Expression;
-import org.apache.doris.nereids.trees.expressions.NeedSessionVarGuard;
-import org.apache.doris.nereids.trees.expressions.functions.ExplicitlyCastableSignature;
+import org.apache.doris.nereids.trees.expressions.functions.NullOrIdenticalSignature;
 import org.apache.doris.nereids.trees.expressions.functions.PropagateNullable;
 import org.apache.doris.nereids.trees.expressions.shape.UnaryExpression;
 import org.apache.doris.nereids.trees.expressions.visitor.ExpressionVisitor;
+import org.apache.doris.nereids.types.JsonType;
 import org.apache.doris.nereids.types.VarcharType;
 import org.apache.doris.nereids.types.VariantType;
-import org.apache.doris.qe.ConnectContext;
 
 import com.google.common.base.Preconditions;
 import com.google.common.collect.ImmutableList;
@@ -35,10 +34,11 @@ import java.util.List;
 
 /** Parse JSON text into a Variant value. */
 public class ParseToVariant extends ScalarFunction
-        implements UnaryExpression, ExplicitlyCastableSignature, PropagateNullable, NeedSessionVarGuard {
+        implements UnaryExpression, NullOrIdenticalSignature, PropagateNullable {
 
     public static final List<FunctionSignature> SIGNATURES = ImmutableList.of(
-            FunctionSignature.ret(VariantType.INSTANCE).args(VarcharType.SYSTEM_DEFAULT)
+            FunctionSignature.ret(VariantType.INSTANCE).args(VarcharType.SYSTEM_DEFAULT),
+            FunctionSignature.ret(VariantType.INSTANCE).args(JsonType.INSTANCE)
     );
 
     public ParseToVariant(Expression argument) {
@@ -58,15 +58,6 @@ public class ParseToVariant extends ScalarFunction
     @Override
     public List<FunctionSignature> getSignatures() {
         return SIGNATURES;
-    }
-
-    @Override
-    public FunctionSignature computeSignature(FunctionSignature signature) {
-        ConnectContext connectContext = ConnectContext.get();
-        if (connectContext != null && connectContext.getSessionVariable().isEnableVariantV2()) {
-            return signature.withReturnType(VariantType.COMPUTE_V2_INSTANCE);
-        }
-        return signature;
     }
 
     @Override

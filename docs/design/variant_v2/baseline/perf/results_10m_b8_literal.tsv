@@ -1,0 +1,21 @@
+phase	run	engine	wall_ms	client_rss_kb	accepted	profile_id	note
+before	1	ColumnVariantV2	44870	7680	true	9a64a272848645d2-81afa6562fb9e2fc	Release; caches disabled
+before	1	JSONB	25170	7680	true	73960b4e51784ee6-aa549738b0623900	Release; caches disabled
+before	2	ColumnVariantV2	44700	7680	true	1588114a6c44471a-b62c20632371c566	Release; caches disabled
+before	2	JSONB	25050	7680	true	f71055f121ed4e15-be5199fea8093b82	Release; caches disabled
+before	3	ColumnVariantV2	44820	7680	true	7292d414fd064f69-8571f948a4071b91	Release; caches disabled
+before	3	JSONB	24680	7680	true	2186d0408b624ccb-b9d51d1ccfa80be7	Release; caches disabled
+single_pass	1	ColumnVariantV2	31630	7680	true	-	Removed duplicate JSON length traversal
+single_pass	1	JSONB	25410	7680	true	-	Low-load control
+single_pass	2	JSONB	27670	7680	false	-	External ninja -j192 started
+single_pass	2	ColumnVariantV2	79950	7680	false	-	External ninja -j192 saturated host
+single_pass	3	ColumnVariantV2	37660	7680	false	-	Canceled after detecting host saturation
+block_batch	1	ColumnVariantV2	25280	7680	true	585b02b334c049aa-ba14047e61818bd6	Interleaved V2 then JSONB
+block_batch	1	JSONB	25490	7680	true	5d1fe627b83d474b-a2a6d805c265313e	Interleaved V2 then JSONB
+block_batch	2	JSONB	25120	7680	true	ac2cdc5fc6824859-acaa7ffae0623547	Interleaved JSONB then V2
+block_batch	2	ColumnVariantV2	24990	7680	true	19386daf40694316-99c76dacf5c59322	Interleaved JSONB then V2
+block_batch	3a	ColumnVariantV2	25110	7680	false	c629506f1e1646c1-b739c91b641b46f5	Pair excluded after cloud-sim load appeared
+block_batch	3a	JSONB	26740	7680	false	7b683f5cc02147d5-83b5e643bf2783cc	Cloud-sim load appeared during query
+block_batch	3	ColumnVariantV2	25110	7680	true	44654945399b4dcf-87e5c2e5bf64acc2	Full query interval stayed mostly 83-90% idle
+block_batch	3b	JSONB	28710	7680	false	e7578dab5fea4329-b7b379370374f9e8	Cloud-sim burst; pair average idle 63.31%
+block_batch	3	JSONB	24930	7680	true	be8ae8fa86664613-bd7b6ae4faae47d0	Dedicated retry; full interval average idle 88.59%

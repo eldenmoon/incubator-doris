@@ -34,6 +34,7 @@
 #include <utility>
 #include <vector>
 
+#include "common/check.h"
 #include "common/consts.h"
 #include "common/status.h"
 #include "core/data_type/define_primitive_type.h"
@@ -49,6 +50,7 @@
 #include "storage/segment/options.h"
 #include "util/debug_points.h"
 #include "util/json/path_in_data.h"
+#include "util/protobuf_utils.h"
 #include "util/string_parser.hpp"
 #include "util/string_util.h"
 
@@ -423,10 +425,7 @@ public:
     template <class PbType>
     static std::string deterministic_string_serialize(const PbType& pb) {
         std::string output;
-        google::protobuf::io::StringOutputStream string_output_stream(&output);
-        google::protobuf::io::CodedOutputStream output_stream(&string_output_stream);
-        output_stream.SetSerializationDeterministic(true);
-        pb.SerializeToCodedStream(&output_stream);
+        DORIS_CHECK(serialize_protobuf_deterministically(pb, &output));
         return output;
     }
     void to_schema_pb(TabletSchemaPB* tablet_meta_pb) const;

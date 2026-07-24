@@ -44,9 +44,9 @@ suite("variant_mv_rowstore_crash", "variant_type") {
 
     // All rows have non-null array values in a single batch
     sql """INSERT INTO ${tbl} VALUES
-        (1, '{"a":1,"arr":[{"x":1},{"x":2}]}'),
-        (2, '{"a":2,"arr":[{"x":3}]}'),
-        (3, '{"a":3,"arr":[{"x":4},{"x":5},{"x":6}]}')"""
+        (1, parse_to_variant('{"a":1,"arr":[{"x":1},{"x":2}]}')),
+        (2, parse_to_variant('{"a":2,"arr":[{"x":3}]}')),
+        (3, parse_to_variant('{"a":3,"arr":[{"x":4},{"x":5},{"x":6}]}'))"""
 
     sql "DROP MATERIALIZED VIEW IF EXISTS ${mv_name}"
     sql """

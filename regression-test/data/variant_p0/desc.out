@@ -15,7 +15,7 @@ v.ddd.mxmxm	array<json>	Yes	false	\N	NONE
 k	bigint	Yes	true	\N	
 v	variant<PROPERTIES ("variant_max_subcolumns_count" = "0","variant_enable_typed_paths_to_sparse" = "false","variant_max_sparse_column_statistics_size" = "10000","variant_sparse_hash_shard_count" = "1")>	Yes	false	\N	NONE
 v.a	bigint	Yes	false	\N	NONE
-v.b	json	Yes	false	\N	NONE
+v.b	array<json>	Yes	false	\N	NONE
 v.c.c	bigint	Yes	false	\N	NONE
 v.c.e	double	Yes	false	\N	NONE
 v.xxxx	text	Yes	false	\N	NONE
@@ -24,7 +24,7 @@ v.xxxx	text	Yes	false	\N	NONE
 k	bigint	Yes	true	\N	
 v	variant<PROPERTIES ("variant_max_subcolumns_count" = "0","variant_enable_typed_paths_to_sparse" = "false","variant_max_sparse_column_statistics_size" = "10000","variant_sparse_hash_shard_count" = "1")>	Yes	false	\N	NONE
 v.a	bigint	Yes	false	\N	NONE
-v.b	json	Yes	false	\N	NONE
+v.b	array<json>	Yes	false	\N	NONE
 v.c.c	bigint	Yes	false	\N	NONE
 v.c.e	double	Yes	false	\N	NONE
 v.ddd.aaa	bigint	Yes	false	\N	NONE
@@ -36,7 +36,7 @@ v.xxxx	text	Yes	false	\N	NONE
 k	bigint	Yes	true	\N	
 v	variant<PROPERTIES ("variant_max_subcolumns_count" = "0","variant_enable_typed_paths_to_sparse" = "false","variant_max_sparse_column_statistics_size" = "10000","variant_sparse_hash_shard_count" = "1")>	Yes	false	\N	NONE
 v.a	bigint	Yes	false	\N	NONE
-v.b	json	Yes	false	\N	NONE
+v.b	array<json>	Yes	false	\N	NONE
 v.c.c	bigint	Yes	false	\N	NONE
 v.c.e	double	Yes	false	\N	NONE
 v.xxxx	text	Yes	false	\N	NONE
@@ -45,7 +45,7 @@ v.xxxx	text	Yes	false	\N	NONE
 k	bigint	Yes	true	\N	
 v	variant<PROPERTIES ("variant_max_subcolumns_count" = "0","variant_enable_typed_paths_to_sparse" = "false","variant_max_sparse_column_statistics_size" = "10000","variant_sparse_hash_shard_count" = "1")>	Yes	false	\N	NONE
 v.a	bigint	Yes	false	\N	NONE
-v.b	json	Yes	false	\N	NONE
+v.b	array<json>	Yes	false	\N	NONE
 v.c.c	bigint	Yes	false	\N	NONE
 v.c.e	double	Yes	false	\N	NONE
 
@@ -53,7 +53,7 @@ v.c.e	double	Yes	false	\N	NONE
 k	bigint	Yes	true	\N	
 v	variant<PROPERTIES ("variant_max_subcolumns_count" = "0","variant_enable_typed_paths_to_sparse" = "false","variant_max_sparse_column_statistics_size" = "10000","variant_sparse_hash_shard_count" = "1")>	Yes	false	\N	NONE
 v.a	bigint	Yes	false	\N	NONE
-v.b	json	Yes	false	\N	NONE
+v.b	array<json>	Yes	false	\N	NONE
 v.c.c	bigint	Yes	false	\N	NONE
 v.c.e	double	Yes	false	\N	NONE
 v.ddd.aaa	bigint	Yes	false	\N	NONE
@@ -65,7 +65,7 @@ v.xxxx	text	Yes	false	\N	NONE
 k	bigint	Yes	true	\N	
 v	variant<PROPERTIES ("variant_max_subcolumns_count" = "0","variant_enable_typed_paths_to_sparse" = "false","variant_max_sparse_column_statistics_size" = "10000","variant_sparse_hash_shard_count" = "1")>	Yes	false	\N	NONE
 v.a	bigint	Yes	false	\N	NONE
-v.b	json	Yes	false	\N	NONE
+v.b	array<json>	Yes	false	\N	NONE
 v.c.c	bigint	Yes	false	\N	NONE
 v.c.e	double	Yes	false	\N	NONE
 v.xxxx	text	Yes	false	\N	NONE
@@ -80,7 +80,7 @@ v.xxxx	text	Yes	false	\N	NONE
 k	bigint	Yes	true	\N	
 v	variant<PROPERTIES ("variant_max_subcolumns_count" = "0","variant_enable_typed_paths_to_sparse" = "false","variant_max_sparse_column_statistics_size" = "10000","variant_sparse_hash_shard_count" = "1")>	Yes	false	\N	NONE
 v.a	bigint	Yes	false	\N	NONE
-v.b	json	Yes	false	\N	NONE
+v.b	array<json>	Yes	false	\N	NONE
 v.c.c	bigint	Yes	false	\N	NONE
 v.c.e	double	Yes	false	\N	NONE
 
@@ -88,7 +88,7 @@ v.c.e	double	Yes	false	\N	NONE
 k	bigint	Yes	true	\N	
 v	variant<PROPERTIES ("variant_max_subcolumns_count" = "0","variant_enable_typed_paths_to_sparse" = "false","variant_max_sparse_column_statistics_size" = "10000","variant_sparse_hash_shard_count" = "1")>	Yes	false	\N	NONE
 v.a	bigint	Yes	false	\N	NONE
-v.b	json	Yes	false	\N	NONE
+v.b	array<json>	Yes	false	\N	NONE
 v.c.c	bigint	Yes	false	\N	NONE
 v.c.e	double	Yes	false	\N	NONE
 v.xxxx	text	Yes	false	\N	NONE
@@ -99,14 +99,14 @@ v1	variant<PROPERTIES ("variant_max_subcolumns_count" = "0","variant_enable_type
 v2	variant<PROPERTIES ("variant_max_subcolumns_count" = "0","variant_enable_typed_paths_to_sparse" = "false","variant_max_sparse_column_statistics_size" = "10000","variant_sparse_hash_shard_count" = "1")>	Yes	false	\N	NONE
 v3	variant<PROPERTIES ("variant_max_subcolumns_count" = "0","variant_enable_typed_paths_to_sparse" = "false","variant_max_sparse_column_statistics_size" = "10000","variant_sparse_hash_shard_count" = "1")>	Yes	false	\N	NONE
 v1.a	bigint	Yes	false	\N	NONE
-v1.b	json	Yes	false	\N	NONE
+v1.b	array<json>	Yes	false	\N	NONE
 v1.c.c	bigint	Yes	false	\N	NONE
 v1.c.e	double	Yes	false	\N	NONE
 v1.oooo.xxxx.xxx	bigint	Yes	false	\N	NONE
 v2.a	bigint	Yes	false	\N	NONE
 v2.xxxx	text	Yes	false	\N	NONE
 v3.a	bigint	Yes	false	\N	NONE
-v3.b	json	Yes	false	\N	NONE
+v3.b	array<json>	Yes	false	\N	NONE
 v3.c.c	bigint	Yes	false	\N	NONE
 v3.c.e	double	Yes	false	\N	NONE
 
@@ -118,7 +118,7 @@ v	variant<PROPERTIES ("variant_max_subcolumns_count" = "0","variant_enable_typed
 k	bigint	Yes	true	\N	
 v	variant<PROPERTIES ("variant_max_subcolumns_count" = "0","variant_enable_typed_paths_to_sparse" = "false","variant_max_sparse_column_statistics_size" = "10000","variant_sparse_hash_shard_count" = "1")>	Yes	false	\N	NONE
 v.a	bigint	Yes	false	\N	NONE
-v.b	json	Yes	false	\N	NONE
+v.b	array<json>	Yes	false	\N	NONE
 v.c.c	bigint	Yes	false	\N	NONE
 v.c.e	double	Yes	false	\N	NONE
 v.oooo.xxxx.xxx	bigint	Yes	false	\N	NONE
@@ -130,24 +130,24 @@ v.k1	bigint	Yes	false	\N	NONE
 v.k2	text	Yes	false	\N	NONE
 v.k3	array<bigint>	Yes	false	\N	NONE
 v.k4	double	Yes	false	\N	NONE
-v.k5	json	Yes	false	\N	NONE
+v.k5	array<array<bigint>>	Yes	false	\N	NONE
 
 -- !sql_10_1 --
 k	bigint	Yes	true	\N	
 v	variant<PROPERTIES ("variant_max_subcolumns_count" = "0","variant_enable_typed_paths_to_sparse" = "false","variant_max_sparse_column_statistics_size" = "10000","variant_sparse_hash_shard_count" = "1")>	Yes	false	\N	NONE
 v2	variant<PROPERTIES ("variant_max_subcolumns_count" = "0","variant_enable_typed_paths_to_sparse" = "false","variant_max_sparse_column_statistics_size" = "10000","variant_sparse_hash_shard_count" = "1")>	Yes	false	\N	NONE
 v.a	bigint	Yes	false	\N	NONE
-v.b	json	Yes	false	\N	NONE
+v.b	array<json>	Yes	false	\N	NONE
 v.c.c	bigint	Yes	false	\N	NONE
 v.c.e	double	Yes	false	\N	NONE
 v.k1	bigint	Yes	false	\N	NONE
 v.k2	text	Yes	false	\N	NONE
 v.k3	array<bigint>	Yes	false	\N	NONE
 v.k4	double	Yes	false	\N	NONE
-v.k5	json	Yes	false	\N	NONE
+v.k5	array<array<bigint>>	Yes	false	\N	NONE
 v.oooo.xxxx.xxx	bigint	Yes	false	\N	NONE
 v2.a	bigint	Yes	false	\N	NONE
-v2.b	json	Yes	false	\N	NONE
+v2.b	array<json>	Yes	false	\N	NONE
 v2.c.c	bigint	Yes	false	\N	NONE
 v2.c.e	double	Yes	false	\N	NONE
 v2.oooo.xxxx.xxx	bigint	Yes	false	\N	NONE
@@ -156,17 +156,17 @@ v2.oooo.xxxx.xxx	bigint	Yes	false	\N	NONE
 k	bigint	Yes	true	\N	
 v	variant<PROPERTIES ("variant_max_subcolumns_count" = "0","variant_enable_typed_paths_to_sparse" = "false","variant_max_sparse_column_statistics_size" = "10000","variant_sparse_hash_shard_count" = "1")>	Yes	false	\N	NONE
 v.a	bigint	Yes	false	\N	NONE
-v.b	json	Yes	false	\N	NONE
+v.b	array<json>	Yes	false	\N	NONE
 v.c.c	bigint	Yes	false	\N	NONE
 v.c.e	double	Yes	false	\N	NONE
 v.k1	bigint	Yes	false	\N	NONE
 v.k2	text	Yes	false	\N	NONE
 v.k3	array<bigint>	Yes	false	\N	NONE
 v.k4	double	Yes	false	\N	NONE
-v.k5	json	Yes	false	\N	NONE
+v.k5	array<array<bigint>>	Yes	false	\N	NONE
 v.oooo.xxxx.xxx	bigint	Yes	false	\N	NONE
 v2.a	bigint	Yes	false	\N	NONE
-v2.b	json	Yes	false	\N	NONE
+v2.b	array<json>	Yes	false	\N	NONE
 v2.c.c	bigint	Yes	false	\N	NONE
 v2.c.e	double	Yes	false	\N	NONE
 v2.oooo.xxxx.xxx	bigint	Yes	false	\N	NONE
@@ -176,17 +176,17 @@ k	bigint	Yes	true	\N
 v	variant<PROPERTIES ("variant_max_subcolumns_count" = "0","variant_enable_typed_paths_to_sparse" = "false","variant_max_sparse_column_statistics_size" = "10000","variant_sparse_hash_shard_count" = "1")>	Yes	false	\N	NONE
 v3	variant<PROPERTIES ("variant_max_subcolumns_count" = "0","variant_enable_typed_paths_to_sparse" = "false","variant_max_sparse_column_statistics_size" = "10000","variant_sparse_hash_shard_count" = "1")>	Yes	false	\N	NONE
 v.a	bigint	Yes	false	\N	NONE
-v.b	json	Yes	false	\N	NONE
+v.b	array<json>	Yes	false	\N	NONE
 v.c.c	bigint	Yes	false	\N	NONE
 v.c.e	double	Yes	false	\N	NONE
 v.k1	bigint	Yes	false	\N	NONE
 v.k2	text	Yes	false	\N	NONE
 v.k3	array<bigint>	Yes	false	\N	NONE
 v.k4	double	Yes	false	\N	NONE
-v.k5	json	Yes	false	\N	NONE
+v.k5	array<array<bigint>>	Yes	false	\N	NONE
 v.oooo.xxxx.xxx	bigint	Yes	false	\N	NONE
 v3.a	bigint	Yes	false	\N	NONE
-v3.b	json	Yes	false	\N	NONE
+v3.b	array<json>	Yes	false	\N	NONE
 v3.c.c	bigint	Yes	false	\N	NONE
 v3.c.e	double	Yes	false	\N	NONE
 v3.oooo.xxxx.xxx	bigint	Yes	false	\N	NONE

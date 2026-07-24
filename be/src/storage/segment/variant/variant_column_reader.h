@@ -28,7 +28,6 @@
 #include <unordered_map>
 #include <vector>
 
-#include "core/column/column_variant.h"
 #include "core/column/subcolumn_tree.h"
 #include "nested_group_provider.h"
 #include "nested_group_reader.h"
@@ -318,6 +317,7 @@ private:
         // Some root reads still need a final merge with NestedGroup readers even after the actual
         // source iterator kind has been chosen by the planner.
         bool needs_root_merge = false;
+        bool null_on_no_match = false;
 
         // path & meta context
         PathInData relative_path;
@@ -395,7 +395,8 @@ private:
                                        const SubcolumnColumnMetaInfo::Node* root,
                                        ColumnReaderCache* column_reader_cache,
                                        OlapReaderStatistics* stats,
-                                       HierarchicalDataIterator::ReadType read_type);
+                                       HierarchicalDataIterator::ReadType read_type,
+                                       bool null_on_no_match = false);
     // Create a reader that merges subcolumns into the destination sparse column.
     // If bucket_index is set, only subcolumns whose path belongs to this bucket will be merged.
     Status _create_sparse_merge_reader(ColumnIteratorUPtr* iterator, const StorageReadOptions* opts,
@@ -444,7 +445,7 @@ public:
 
     ~VariantRootColumnIterator() override = default;
 
-    Status init(const ColumnIteratorOptions& opts) override { return _inner_iter->init(opts); }
+    Status init(const ColumnIteratorOptions& opts) override;
 
     Status seek_to_ordinal(ordinal_t ord_idx) override {
         return _inner_iter->seek_to_ordinal(ord_idx);
@@ -468,9 +469,9 @@ public:
             PrefetcherInitMethod init_method) override;
 
 private:
-    Status _process_root_column(MutableColumnPtr& dst, MutableColumnPtr& root_column,
-                                const DataTypePtr& most_common_type);
+    Status _process_root_column(MutableColumnPtr& dst, MutableColumnPtr& root_column);
     std::unique_ptr<FileColumnIterator> _inner_iter;
+    std::unique_ptr<VariantAssembler> _assembler;
 };
 
 class DefaultNestedColumnIterator : public ColumnIterator {

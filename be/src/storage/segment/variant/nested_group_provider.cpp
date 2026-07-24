@@ -118,54 +118,6 @@ NestedGroupPathMatch find_in_nested_groups_impl(const NestedGroupReaders& reader
     return {};
 }
 
-class DefaultNestedGroupWriteProvider final : public NestedGroupWriteProvider {
-public:
-    Status prepare(const ColumnVariant& /*variant*/, const TabletColumn* tablet_column,
-                   const ColumnWriterOptions& /*opts*/, OlapBlockDataConvertor* converter,
-                   int* column_id, VariantStatistics* statistics) override {
-        if (tablet_column == nullptr || converter == nullptr || column_id == nullptr ||
-            statistics == nullptr) {
-            return Status::InvalidArgument("NestedGroup provider input is null");
-        }
-        return Status::NotSupported("NestedGroup write path is not available in this build");
-    }
-
-    Status prepare_with_built_groups(const NestedGroupsMap& /*nested_groups*/,
-                                     const TabletColumn* tablet_column,
-                                     const ColumnWriterOptions& /*opts*/,
-                                     OlapBlockDataConvertor* converter, int* column_id,
-                                     VariantStatistics* statistics) override {
-        if (tablet_column == nullptr || converter == nullptr || column_id == nullptr ||
-            statistics == nullptr) {
-            return Status::InvalidArgument("NestedGroup provider input is null");
-        }
-        return Status::NotSupported("NestedGroup write path is not available in this build");
-    }
-
-    Status init_with_plan(const NestedGroupStreamingWritePlan& /*plan*/,
-                          const TabletColumn* tablet_column, const ColumnWriterOptions& /*opts*/,
-                          int* column_id, VariantStatistics* statistics) override {
-        if (tablet_column == nullptr || column_id == nullptr || statistics == nullptr) {
-            return Status::InvalidArgument("NestedGroup streaming init input is null");
-        }
-        return Status::NotSupported("NestedGroup write path is not available in this build");
-    }
-
-    Status append_chunk(const NestedGroupStreamingWritePlan& /*plan*/,
-                        const ColumnVariant& /*variant*/) override {
-        return Status::NotSupported("NestedGroup write path is not available in this build");
-    }
-
-    uint64_t estimate_buffer_size() const override { return 0; }
-
-    Status finish() override { return Status::OK(); }
-    Status write_data() override { return Status::OK(); }
-    Status write_ordinal_index() override { return Status::OK(); }
-    Status write_zone_map() override { return Status::OK(); }
-    Status write_inverted_index() override { return Status::OK(); }
-    Status write_bloom_filter_index() override { return Status::OK(); }
-};
-
 class DefaultNestedGroupReadProvider final : public NestedGroupReadProvider {
 public:
     bool should_enable_nested_group_read_path() const override { return false; }
@@ -230,38 +182,6 @@ public:
 NestedGroupPathMatch find_in_nested_groups(const NestedGroupReaders& readers,
                                            const std::string& path, bool collect_chain) {
     return find_in_nested_groups_impl(readers, path, collect_chain);
-}
-
-Status build_nested_groups_from_variant_jsonb(const ColumnVariant& /*variant*/,
-                                              NestedGroupsMap* nested_groups,
-                                              std::vector<std::string>* out_ng_paths,
-                                              std::vector<std::string>* out_conflict_paths) {
-    if (nested_groups == nullptr) {
-        return Status::InvalidArgument("nested_groups is null");
-    }
-    nested_groups->clear();
-    if (out_ng_paths != nullptr) {
-        out_ng_paths->clear();
-    }
-    if (out_conflict_paths != nullptr) {
-        out_conflict_paths->clear();
-    }
-    return Status::OK();
-}
-
-Status collect_nested_group_routing_paths_from_variant_jsonb(
-        const ColumnVariant& variant, std::vector<std::string>* out_ng_paths,
-        std::vector<std::string>* out_conflict_paths) {
-    if (out_ng_paths == nullptr || out_conflict_paths == nullptr) {
-        return Status::InvalidArgument("out_ng_paths or out_conflict_paths is null");
-    }
-    NestedGroupsMap nested_groups;
-    return build_nested_groups_from_variant_jsonb(variant, &nested_groups, out_ng_paths,
-                                                  out_conflict_paths);
-}
-
-std::unique_ptr<NestedGroupWriteProvider> create_nested_group_write_provider() {
-    return std::make_unique<DefaultNestedGroupWriteProvider>();
 }
 
 std::unique_ptr<NestedGroupReadProvider> create_nested_group_read_provider() {

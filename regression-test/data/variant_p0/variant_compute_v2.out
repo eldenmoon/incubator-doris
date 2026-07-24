@@ -58,6 +58,9 @@ true	-7	123.45	2024-02-29	2024-02-29T12:34:56.123456	true	true	true	1	0	true	tru
 -- !variant_selector_semantics --
 object-key	true
 
+-- !dynamic_variant_type --
+object
+
 -- !parse_error_to_null --
 0	{"ok":1}	false
 1	\N	true

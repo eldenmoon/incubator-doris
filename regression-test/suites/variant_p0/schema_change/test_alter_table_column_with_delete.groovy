@@ -32,11 +32,11 @@ suite("test_alter_variant_table_column_with_delete") {
             DISTRIBUTED BY HASH(k1) BUCKETS 1 properties("replication_num" = "1", "enable_unique_key_merge_on_write" = "true");
         """
 
-    sql """insert into ${tbName1} values(1,'{"a":1, "b":2, "c":3}',1);"""
-    sql """insert into ${tbName1} values(2,'{"d":4, "e":5, "f":6}',2);"""
+    sql """insert into ${tbName1} values(1,parse_to_variant('{"a":1, "b":2, "c":3}'),1);"""
+    sql """insert into ${tbName1} values(2,parse_to_variant('{"d":4, "e":5, "f":6}'),2);"""
     sql """delete from ${tbName1} where k1 = 2;"""
-    sql """insert into ${tbName1} values(3,'{"g":7, "h":8, "i":9}',3);"""
-    sql """insert into ${tbName1} values(4,'{"j":10, "k":11, "l":12}',4);"""
+    sql """insert into ${tbName1} values(3,parse_to_variant('{"g":7, "h":8, "i":9}'),3);"""
+    sql """insert into ${tbName1} values(4,parse_to_variant('{"j":10, "k":11, "l":12}'),4);"""
     qt_sql """select * from ${tbName1} order by k1;"""
 
 
@@ -59,7 +59,7 @@ suite("test_alter_variant_table_column_with_delete") {
         }
     }
 
-    sql """insert into ${tbName1} values(2,'{"x":4, "y":5, "f":3}',2);"""
+    sql """insert into ${tbName1} values(2,parse_to_variant('{"x":4, "y":5, "f":3}'),2);"""
     qt_sql "select * from ${tbName1} order by k1;"
     //sql "DROP TABLE ${tbName1} FORCE;"
 }

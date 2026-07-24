@@ -34,6 +34,7 @@
 #include "exprs/table_function/vexplode_map.h"
 #include "exprs/table_function/vexplode_numbers.h"
 #include "exprs/table_function/vexplode_v2.h"
+#include "exprs/table_function/vexplode_variant_object.h"
 #include "exprs/table_function/vjson_each.h"
 
 namespace doris {
@@ -50,6 +51,8 @@ const std::unordered_map<std::string, std::function<std::unique_ptr<TableFunctio
                 {"explode_bitmap", TableFunctionCreator<VExplodeBitmapTableFunction>()},
                 {"explode_map", TableFunctionCreator<VExplodeMapTableFunction> {}},
                 {"explode_json_object", TableFunctionCreator<VExplodeJsonObjectTableFunction> {}},
+                {"explode_variant_object",
+                 TableFunctionCreator<VExplodeVariantObjectTableFunction> {}},
                 {"json_each", TableFunctionCreator<VJsonEachTableFn> {}},
                 {"json_each_text", TableFunctionCreator<VJsonEachTextTableFn> {}},
                 {"posexplode", TableFunctionCreator<VExplodeV2TableFunction> {}},

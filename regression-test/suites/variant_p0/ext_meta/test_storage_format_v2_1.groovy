@@ -34,15 +34,15 @@ suite("test_storage_format_v2_1") {
     """
     
     // Insert some data
-    sql """insert into ${tableName} values (1, '{"a": 1, "b": 2, "c": 3}')"""
-    sql """insert into ${tableName} values (2, '{"a": 10, "b": 20, "d": 40}')"""
-    sql """insert into ${tableName} values (3, '{"e": 500, "f": 600}')"""
+    sql """insert into ${tableName} values (1, parse_to_variant('{"a": 1, "b": 2, "c": 3}'))"""
+    sql """insert into ${tableName} values (2, parse_to_variant('{"a": 10, "b": 20, "d": 40}'))"""
+    sql """insert into ${tableName} values (3, parse_to_variant('{"e": 500, "f": 600}'))"""
     
     // Query to verify data is correct
-    qt_sql1 "select k, v['a'] from ${tableName} where cast(v['a'] as int) is not null order by k"
-    qt_sql2 "select k, v['b'] from ${tableName} where cast(v['b'] as int) is not null order by k"
-    qt_sql3 "select k, v['d'] from ${tableName} where cast(v['d'] as int) is not null order by k"
-    qt_sql4 "select k, v['e'] from ${tableName} where cast(v['e'] as int) is not null order by k"
+    qt_sql1 "select k, cast(v['a'] as int) from ${tableName} where cast(v['a'] as int) is not null order by k"
+    qt_sql2 "select k, cast(v['b'] as int) from ${tableName} where cast(v['b'] as int) is not null order by k"
+    qt_sql3 "select k, cast(v['d'] as int) from ${tableName} where cast(v['d'] as int) is not null order by k"
+    qt_sql4 "select k, cast(v['e'] as int) from ${tableName} where cast(v['e'] as int) is not null order by k"
     
     // Verify table properties
     def result = sql "SHOW CREATE TABLE ${tableName}"
@@ -68,8 +68,8 @@ suite("test_storage_format_v2_1") {
         );
     """
     
-    sql """insert into ${tableName2} values (1, '{"x": 100}')"""
-    qt_sql5 "select k, v['x'] from ${tableName2} order by k"
+    sql """insert into ${tableName2} values (1, parse_to_variant('{"x": 100}'))"""
+    qt_sql5 "select k, cast(v['x'] as int) from ${tableName2} order by k"
     
     sql "DROP TABLE IF EXISTS ${tableName2}"
     
@@ -89,10 +89,9 @@ suite("test_storage_format_v2_1") {
         );
     """
     
-    sql """insert into ${tableName3} values (1, '{"test": "value"}')"""
-    qt_sql6 "select k, v['test'] from ${tableName3} order by k"
+    sql """insert into ${tableName3} values (1, parse_to_variant('{"test": "value"}'))"""
+    qt_sql6 "select k, cast(v['test'] as string) from ${tableName3} order by k"
     
     sql "DROP TABLE IF EXISTS ${tableName3}"
 }
-
 

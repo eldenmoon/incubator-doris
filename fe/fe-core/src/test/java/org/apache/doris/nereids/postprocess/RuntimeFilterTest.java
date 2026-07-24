@@ -22,6 +22,7 @@ import org.apache.doris.nereids.NereidsPlanner;
 import org.apache.doris.nereids.StatementContext;
 import org.apache.doris.nereids.datasets.ssb.SSBTestBase;
 import org.apache.doris.nereids.datasets.ssb.SSBUtils;
+import org.apache.doris.nereids.exceptions.AnalysisException;
 import org.apache.doris.nereids.glue.translator.PhysicalPlanTranslator;
 import org.apache.doris.nereids.glue.translator.PlanTranslatorContext;
 import org.apache.doris.nereids.hint.DistributeHint;
@@ -84,6 +85,14 @@ public class RuntimeFilterTest extends SSBTestBase {
         connectContext.getSessionVariable().setEnableRuntimeFilterPrune(false);
         connectContext.getSessionVariable().expandRuntimeFilterByInnerJoin = false;
         connectContext.getSessionVariable().setDisableJoinReorder(true);
+        createTables(
+                "CREATE TABLE rf_variant_a (k INT, v VARIANT) DUPLICATE KEY(k) "
+                        + "DISTRIBUTED BY HASH(k) BUCKETS 1 PROPERTIES(\"replication_num\"=\"1\")",
+                "CREATE TABLE rf_variant_b (k INT, v VARIANT) DUPLICATE KEY(k) "
+                        + "DISTRIBUTED BY HASH(k) BUCKETS 1 PROPERTIES(\"replication_num\"=\"1\")",
+                "CREATE TABLE rf_variant_c (k INT, v VARIANT) DUPLICATE KEY(k) "
+                        + "DISTRIBUTED BY HASH(k) BUCKETS 1 PROPERTIES(\"replication_num\"=\"1\")"
+        );
     }
 
     @Test
@@ -99,6 +108,34 @@ public class RuntimeFilterTest extends SSBTestBase {
     public void testGenerateRuntimeFilterByIllegalSrcExpr() {
         String sql = "SELECT * FROM lineorder JOIN customer on c_custkey = c_custkey";
         List<RuntimeFilter> filters = getRuntimeFilters(sql).get();
+        Assertions.assertEquals(0, filters.size());
+    }
+
+    @Test
+    public void testVariantHashJoinRejectedBeforeRuntimeFilter() {
+        AnalysisException exception = Assertions.assertThrows(AnalysisException.class,
+                () -> getRuntimeFilters("SELECT * FROM rf_variant_a a JOIN rf_variant_b b ON a.v = b.v"));
+        Assertions.assertTrue(exception.getMessage().contains("could not used in ComparisonPredicate"));
+    }
+
+    @Test
+    public void testVariantHashJoinRejectedBeforeDecoupledRuntimeFilter() {
+        connectContext.getSessionVariable().enableDecoupledRuntimeFilter = true;
+        try {
+            AnalysisException exception = Assertions.assertThrows(AnalysisException.class,
+                    () -> getRuntimeFilters(
+                            "SELECT * FROM rf_variant_a a JOIN rf_variant_b b ON a.v = b.v "
+                                    + "JOIN rf_variant_c c ON b.v = c.v WHERE b.k = 1"));
+            Assertions.assertTrue(exception.getMessage().contains("could not used in ComparisonPredicate"));
+        } finally {
+            connectContext.getSessionVariable().enableDecoupledRuntimeFilter = false;
+        }
+    }
+
+    @Test
+    public void testVariantSetOperationDoesNotGenerateRuntimeFilter() {
+        List<RuntimeFilter> filters = getRuntimeFilters(
+                "SELECT v FROM rf_variant_a INTERSECT SELECT v FROM rf_variant_b").get();
         Assertions.assertEquals(0, filters.size());
     }
 

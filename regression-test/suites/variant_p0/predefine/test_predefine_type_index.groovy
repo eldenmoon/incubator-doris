@@ -37,11 +37,11 @@ suite("test_variant_predefine_index_type", "p0"){
         INDEX idx_a_d (var) USING INVERTED PROPERTIES("field_pattern"="path.string", "parser"="unicode", "support_phrase" = "true") COMMENT ''
     ) ENGINE=OLAP DUPLICATE KEY(`id`) DISTRIBUTED BY HASH(`id`) BUCKETS 1 PROPERTIES ( "replication_allocation" = "tag.location.default: 1", "disable_auto_compaction" = "true")"""
 
-    sql """insert into ${tableName} values(1, '{"path" : {"int" : 123, "decimal" : 123.123456789012, "string" : "hello"}}'),
-                                          (2, '{"path" : {"int" : 456, "decimal" : 456.456789123456, "string" : "world"}}'),
-                                          (3, '{"path" : {"int" : 789, "decimal" : 789.789123456789, "string" : "hello"}}'),
-                                          (4, '{"path" : {"int" : 100, "decimal" : 100.100123456789, "string" : "world"}}'),
-                                          (5, '{"path" : {"int" : 111, "decimal" : 111.111111111111, "string" : "hello"}}')"""
+    sql """insert into ${tableName} values(1, parse_to_variant('{"path" : {"int" : 123, "decimal" : 123.123456789012, "string" : "hello"}}')),
+                                          (2, parse_to_variant('{"path" : {"int" : 456, "decimal" : 456.456789123456, "string" : "world"}}')),
+                                          (3, parse_to_variant('{"path" : {"int" : 789, "decimal" : 789.789123456789, "string" : "hello"}}')),
+                                          (4, parse_to_variant('{"path" : {"int" : 100, "decimal" : 100.100123456789, "string" : "world"}}')),
+                                          (5, parse_to_variant('{"path" : {"int" : 111, "decimal" : 111.111111111111, "string" : "hello"}}'))"""
 
     qt_sql """ select variant_type(var) from ${tableName} """
     qt_sql """select * from ${tableName} order by id"""
@@ -66,7 +66,7 @@ suite("test_variant_predefine_index_type", "p0"){
     qt_sql """ select count() from ${tableName} where var['path']['string'] match 'hello' """
 
     for (int i = 0; i < 10; i++) {
-        sql """ insert into ${tableName} values(1, '{"path" : {"int" : 123, "decimal" : 123.123456789012, "string" : "hello"}}') """
+        sql """ insert into ${tableName} values(1, parse_to_variant('{"path" : {"int" : 123, "decimal" : 123.123456789012, "string" : "hello"}}')) """
     }
 
     trigger_and_wait_compaction(tableName, "cumulative", 1800)
@@ -109,11 +109,11 @@ suite("test_variant_predefine_index_type", "p0"){
         sql """
             INSERT INTO objects (id, overflow_properties)
             VALUES
-        (6, '{"color":"Bright Red","description":"A bright red circular object with a metallic shine","shape":"Large Circle","tags":["metallic","reflective"]}'),
-        (7, '{"color":"Deep Blue","description":"Opaque square made of plastic in deep blue","shape":"Small Square","tags":["opaque","plastic"]}'),
-        (8, '{"color":"Green","description":"Tall green triangle carved from wood","shape":"Tall Triangle","tags":["matte","wood"]}'),
-        (9, '{"color":"Reddish Orange","description":"Glossy ceramic hexagon with reddish orange tint","shape":"Flat Hexagon","tags":["glossy","ceramic"]}'),
-            (10, '{"color":"Yellow","description":"Shiny yellow circular badge","shape":"Wide Circle","tags":["shiny","plastic"]}');
+        (6, parse_to_variant('{"color":"Bright Red","description":"A bright red circular object with a metallic shine","shape":"Large Circle","tags":["metallic","reflective"]}')),
+        (7, parse_to_variant('{"color":"Deep Blue","description":"Opaque square made of plastic in deep blue","shape":"Small Square","tags":["opaque","plastic"]}')),
+        (8, parse_to_variant('{"color":"Green","description":"Tall green triangle carved from wood","shape":"Tall Triangle","tags":["matte","wood"]}')),
+        (9, parse_to_variant('{"color":"Reddish Orange","description":"Glossy ceramic hexagon with reddish orange tint","shape":"Flat Hexagon","tags":["glossy","ceramic"]}')),
+            (10, parse_to_variant('{"color":"Yellow","description":"Shiny yellow circular badge","shape":"Wide Circle","tags":["shiny","plastic"]}'));
         """
     }
     trigger_and_wait_compaction(tableName, "cumulative", 1800)
@@ -121,5 +121,5 @@ suite("test_variant_predefine_index_type", "p0"){
     qt_sql "select count() from objects where (overflow_properties['color'] MATCH_PHRASE 'Blue')"
     qt_sql "select count() from objects where (array_contains(cast(overflow_properties['tags'] as array<string>), 'plastic'))"
     qt_sql "select cast(overflow_properties['color'] as string) from objects where overflow_properties['color'] IS NOT NULL and id = 6 limit 1"
-    qt_sql "select overflow_properties['color'] from objects where overflow_properties['color'] IS NOT NULL and id = 6 limit 1"
+    qt_sql "select cast(overflow_properties['color'] as string) from objects where overflow_properties['color'] IS NOT NULL and id = 6 limit 1"
 }

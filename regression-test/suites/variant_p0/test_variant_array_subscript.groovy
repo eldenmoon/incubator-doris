@@ -37,7 +37,7 @@ suite("test_variant_array_subscript", "p0") {
 
     sql """
         INSERT INTO test_variant_array_subscript VALUES
-        (1, '{"items":{"type":["e2e_QC","platform_QC"]}}')
+        (1, parse_to_variant('{"items":{"type":["e2e_QC","platform_QC"]}}'))
     """
     sql "sync"
 
@@ -47,8 +47,83 @@ suite("test_variant_array_subscript", "p0") {
             SELECT CAST(v['items']['type'] AS ARRAY<STRING>)[1]
             FROM test_variant_array_subscript
         """
+        contains "all access paths: [v.items.type]"
+        contains "element_at(CAST(v[#"
+        contains "col=v"
         contains "subColPath=[items, type]"
-        contains "element_at(CAST(v"
-        notContains "element_at(CAST(element_at(element_at("
+        notContains "element_at(CAST(element_at(element_at(v"
+    }
+
+    test {
+        sql """
+            SELECT
+                CAST(element_at(parse_to_variant('[10,20,30]'), 1) AS INT),
+                CAST(element_at(parse_to_variant('[10,20,30]'), 2) AS INT),
+                CAST(element_at(parse_to_variant('[10,20,30]'), -1) AS INT),
+                CAST(element_at(parse_to_variant('[10,20,30]'), -2) AS INT),
+                element_at(parse_to_variant('[10,20,30]'), 0) IS NULL,
+                element_at(parse_to_variant('[10,20,30]'), -4) IS NULL
+        """
+        result([[10, 20, 30, 20, true, true]])
+    }
+
+    // A present JSON null is a VARIANT value, not a missing path or outer SQL NULL.
+    test {
+        sql """
+            SELECT
+                element_at(parse_to_variant('[1,null,3]'), 2) IS NULL,
+                variant_is_null(element_at(parse_to_variant('[1,null,3]'), 2))
+        """
+        result([[false, true]])
+    }
+
+    // Array conversion keeps positions. A bad element only becomes NULL at that position.
+    test {
+        sql """
+            WITH converted AS (
+                SELECT CAST(parse_to_variant('[1,"bad",3]') AS ARRAY<INT>) AS a
+            )
+            SELECT size(a), a[1], a[2] IS NULL, a[3] FROM converted
+        """
+        result([[3L, 1, true, 3]])
+    }
+
+    // Numeric elements keep their Variant numeric types.
+    test {
+        sql """
+            SELECT
+                variant_type(element_at(parse_to_variant('[1,1.5]'), 1)),
+                variant_type(element_at(parse_to_variant('[1,1.5]'), 2))
+        """
+        result([["tinyint", "double"]])
+    }
+
+    // VARIANT null follows the requested array element type.
+    test {
+        sql """
+            WITH converted AS (
+                SELECT
+                    CAST(parse_to_variant('[null]') AS ARRAY<INT>) AS ints,
+                    CAST(parse_to_variant('[null]') AS ARRAY<STRING>) AS strings,
+                    CAST(parse_to_variant('[null]') AS ARRAY<JSON>) AS json_values
+            )
+            SELECT
+                ints[1] IS NULL,
+                strings[1] IS NULL,
+                strings[1],
+                json_values[1] IS NULL,
+                json_type(json_values[1], '\$')
+            FROM converted
+        """
+        result([[true, false, "null", false, "null"]])
+    }
+
+    test {
+        sql """
+            SELECT
+                CAST(element_at(CAST(parse_to_variant('[1]') AS ARRAY<VARIANT>), 1) AS STRING),
+                variant_type(element_at(CAST(parse_to_variant('[1]') AS ARRAY<VARIANT>), 1))
+        """
+        result([["1", "tinyint"]])
     }
 }

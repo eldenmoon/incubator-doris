@@ -40,7 +40,7 @@ suite("variant_rqg_fix1", "p0") {
         );
         """
 
-     sql """ insert into table_200_undef_partitions2_keys3_properties4_distributed_by5 values(20, '{"k1" : 1, "k2" : "str", "k3" : 3, "k4" : "str2"}') """
+     sql """ insert into table_200_undef_partitions2_keys3_properties4_distributed_by5 values(20, parse_to_variant('{"k1" : 1, "k2" : "str", "k3" : 3, "k4" : "str2"}')) """
 
      qt_sql """ select count() from table_200_undef_partitions2_keys3_properties4_distributed_by5 where cast(var['k2'] as string) > 'bea' """
 }

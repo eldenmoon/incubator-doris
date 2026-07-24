@@ -24,6 +24,7 @@ import org.apache.doris.nereids.trees.expressions.Cast;
 import org.apache.doris.nereids.trees.expressions.Expression;
 import org.apache.doris.nereids.trees.expressions.MatchAny;
 import org.apache.doris.nereids.trees.expressions.SlotReference;
+import org.apache.doris.nereids.trees.expressions.functions.scalar.ElementAt;
 import org.apache.doris.nereids.trees.expressions.literal.IntegerLiteral;
 import org.apache.doris.nereids.trees.expressions.literal.StringLiteral;
 import org.apache.doris.nereids.trees.plans.logical.LogicalFilter;
@@ -121,6 +122,40 @@ class CheckMatchExpressionTest {
         MatchAny match = new MatchAny(left, new StringLiteral("doris"));
 
         Assertions.assertDoesNotThrow(() -> invokeCheck(match));
+    }
+
+    @Test
+    void testRejectsCastOnVariantElementAtMatch() {
+        SlotReference rootVariantSlot = new SlotReference("response", VariantType.INSTANCE, true, Arrays.asList());
+        ElementAt elementAt = new ElementAt(rootVariantSlot, new StringLiteral("trace_id"));
+        MatchAny match = new MatchAny(new Cast(elementAt, StringType.INSTANCE), new StringLiteral("doris"));
+
+        AnalysisException exception = Assertions.assertThrows(AnalysisException.class, () -> invokeCheck(match));
+        Assertions.assertTrue(exception.getMessage().contains("Only support match left operand is SlotRef"),
+                exception.getMessage());
+    }
+
+    @Test
+    void testRejectsVariantElementAtWithoutCast() {
+        SlotReference rootVariantSlot = new SlotReference("response", VariantType.INSTANCE, true, Arrays.asList());
+        ElementAt elementAt = new ElementAt(rootVariantSlot, new StringLiteral("trace_id"));
+        MatchAny match = new MatchAny(elementAt, new StringLiteral("doris"));
+
+        AnalysisException exception = Assertions.assertThrows(AnalysisException.class, () -> invokeCheck(match));
+        Assertions.assertTrue(exception.getMessage().contains("Only support match left operand is SlotRef"),
+                exception.getMessage());
+    }
+
+    @Test
+    void testRejectsCastOnVariantElementAtWithDynamicPath() {
+        SlotReference rootVariantSlot = new SlotReference("response", VariantType.INSTANCE, true, Arrays.asList());
+        SlotReference dynamicPath = new SlotReference("path", StringType.INSTANCE, true, Arrays.asList());
+        ElementAt elementAt = new ElementAt(rootVariantSlot, dynamicPath);
+        MatchAny match = new MatchAny(new Cast(elementAt, StringType.INSTANCE), new StringLiteral("doris"));
+
+        AnalysisException exception = Assertions.assertThrows(AnalysisException.class, () -> invokeCheck(match));
+        Assertions.assertTrue(exception.getMessage().contains("Only support match left operand is SlotRef"),
+                exception.getMessage());
     }
 
     @Test

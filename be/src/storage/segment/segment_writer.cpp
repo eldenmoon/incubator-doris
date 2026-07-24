@@ -39,7 +39,6 @@
 #include "core/field.h"
 #include "core/types.h"
 #include "core/value/vdatetime_value.h"
-#include "exec/common/variant_util.h"
 #include "io/cache/block_file_cache.h"
 #include "io/cache/block_file_cache_factory.h"
 #include "io/fs/file_system.h"
@@ -76,6 +75,7 @@
 #include "util/coding.h"
 #include "util/faststring.h"
 #include "util/jsonb/serialize.h"
+#include "util/protobuf_utils.h"
 #include "util/simd/bits.h"
 namespace doris {
 namespace segment_v2 {
@@ -335,6 +335,10 @@ Status SegmentWriter::init(const std::vector<uint32_t>& col_ids, bool has_key) {
     // Initialize variant statistics calculator
     _variant_stats_calculator = std::make_unique<VariantStatsCaculator>(
             &_footer, _tablet_schema, col_ids, variant_stats_footer_offset);
+    _should_calculate_variant_stats = std::ranges::any_of(col_ids, [this](uint32_t cid) {
+        const TabletColumn& column = _tablet_schema->column(cid);
+        return column.is_extracted_column() && column.path_info_ptr()->need_record_stats();
+    });
 
     // we don't need the short key index for unique key merge on write table.
     if (_has_key) {
@@ -531,11 +535,6 @@ Status SegmentWriter::append_block_with_partial_content(const Block* block, size
         full_block.replace_by_position(i, block->get_by_position(input_id++).column);
     }
 
-    if (_opts.rowset_ctx->write_type != DataWriteType::TYPE_COMPACTION &&
-        _tablet_schema->num_variant_columns() > 0) {
-        RETURN_IF_ERROR(variant_util::parse_and_materialize_variant_columns(
-                full_block, *_tablet_schema, including_cids));
-    }
     RETURN_IF_ERROR(_olap_data_convertor->set_source_content_with_specifid_columns(
             &full_block, row_pos, num_rows, including_cids));
 
@@ -630,11 +629,6 @@ Status SegmentWriter::append_block_with_partial_content(const Block* block, size
             *_tablet_schema, full_block, use_default_or_null_flag, has_default_or_nullable,
             cast_set<uint32_t>(segment_start_pos), block));
 
-    if (_tablet_schema->num_variant_columns() > 0) {
-        RETURN_IF_ERROR(variant_util::parse_and_materialize_variant_columns(
-                full_block, *_tablet_schema, missing_cids));
-    }
-
     // convert block to row store format
     _serialize_block_to_row_column(full_block);
 
@@ -714,12 +708,6 @@ Status SegmentWriter::append_block(const Block* block, size_t row_pos, size_t nu
         _serialize_block_to_row_column(*const_cast<Block*>(block));
     }
 
-    if (_opts.rowset_ctx->write_type != DataWriteType::TYPE_COMPACTION &&
-        _tablet_schema->num_variant_columns() > 0) {
-        RETURN_IF_ERROR(variant_util::parse_and_materialize_variant_columns(
-                const_cast<Block&>(*block), *_tablet_schema, _column_ids));
-    }
-
     _olap_data_convertor->set_source_content(block, row_pos, num_rows);
 
     // convert column data from engine format to storage layer format
@@ -741,7 +729,7 @@ Status SegmentWriter::append_block(const Block* block, size_t row_pos, size_t nu
         RETURN_IF_ERROR(_column_writers[id]->append(converted_result.second->get_nullmap(),
                                                     converted_result.second->get_data(), num_rows));
     }
-    if (_opts.write_type == DataWriteType::TYPE_COMPACTION) {
+    if (_should_calculate_variant_stats) {
         RETURN_IF_ERROR(
                 _variant_stats_calculator->calculate_variant_stats(block, row_pos, num_rows));
     }
@@ -1143,7 +1131,7 @@ Status SegmentWriter::_write_footer() {
     // Footer := SegmentFooterPB, FooterPBSize(4), FooterPBChecksum(4), MagicNumber(4)
     std::string footer_buf;
     VLOG_DEBUG << "footer " << _footer.DebugString();
-    if (!_footer.SerializeToString(&footer_buf)) {
+    if (!serialize_protobuf_deterministically(_footer, &footer_buf)) {
         return Status::InternalError("failed to serialize segment footer");
     }
 

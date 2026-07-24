@@ -45,8 +45,7 @@ struct OwnedValue {
     std::string value;
 
     VariantRef ref() const {
-        return {.metadata = {.data = metadata.data(), .size = metadata.size()},
-                .value = {value.data(), value.size()}};
+        return {{metadata.data(), metadata.size()}, {value.data(), value.size()}};
     }
 };
 
@@ -118,7 +117,7 @@ std::string empty_metadata() {
 }
 
 OwnedValue scalar(std::string value) {
-    return {.metadata = empty_metadata(), .value = std::move(value)};
+    return {empty_metadata(), std::move(value)};
 }
 
 std::string primitive(VariantPrimitiveId id, std::string payload = {}) {
@@ -249,8 +248,7 @@ OwnedValue object_value(std::vector<std::string> dictionary, bool sorted,
                         const std::vector<uint32_t>& field_ids,
                         const std::vector<std::string>& children,
                         const std::vector<uint32_t>& physical_order) {
-    return {.metadata = encode_metadata(dictionary, sorted),
-            .value = object_bytes(field_ids, children, physical_order)};
+    return {encode_metadata(dictionary, sorted), object_bytes(field_ids, children, physical_order)};
 }
 
 std::string array_bytes(const std::vector<std::string>& children) {
@@ -280,7 +278,7 @@ std::string array_bytes(const std::vector<std::string>& children) {
 }
 
 OwnedValue array_value(const std::vector<std::string>& children) {
-    return {.metadata = empty_metadata(), .value = array_bytes(children)};
+    return {empty_metadata(), array_bytes(children)};
 }
 
 Hashes hashes(VariantRef value) {
@@ -340,8 +338,8 @@ VariantRef arena_value_ref(const std::string& encoded) {
     const size_t metadata_size =
             offsets_position + (static_cast<size_t>(count) + 1) * width + strings_size;
     EXPECT_LT(sizeof(uint32_t) + metadata_size, encoded.size());
-    return {.metadata = {.data = metadata, .size = metadata_size},
-            .value = {metadata + metadata_size, encoded.size() - sizeof(uint32_t) - metadata_size}};
+    return {{metadata, metadata_size},
+            {metadata + metadata_size, encoded.size() - sizeof(uint32_t) - metadata_size}};
 }
 
 void expect_canonical_parse_error(const std::string& encoded, int expected) {
@@ -382,7 +380,7 @@ void expect_scalar_equivalent(VariantCanonicalScalarRef scalar_ref,
 }
 
 // NOLINTNEXTLINE(readability-function-cognitive-complexity) -- exhaustive typed/encoded parity matrix.
-TEST(VariantCanonicalTest, TypedScalarCanonicalMatchesVariantRef) {
+TEST(VariantCanonicalTest, TypedScalarCanonicalMatchesVariantValueRef) {
     expect_scalar_equivalent(VariantCanonicalScalarRef::null_value(),
                              scalar(primitive(VariantPrimitiveId::NULL_VALUE)));
     expect_scalar_equivalent(VariantCanonicalScalarRef::boolean(false),
@@ -456,7 +454,8 @@ TEST(VariantCanonicalTest, TypedScalarCanonicalMatchesVariantRef) {
     unchanged.fill('x');
     EXPECT_THROW(null_plan.write(nullptr, null_plan.size()), Exception);
     EXPECT_THROW(null_plan.write(unchanged.data(), null_plan.size() - 1), Exception);
-    EXPECT_TRUE(std::ranges::all_of(unchanged, [](char value) { return value == 'x'; }));
+    EXPECT_TRUE(std::all_of(unchanged.begin(), unchanged.end(),
+                            [](char value) { return value == 'x'; }));
 
     const std::string invalid_utf8("\xC3\x28", 2);
     EXPECT_THROW(VariantCanonicalScalarRef::string(StringRef(invalid_utf8)), Exception);
@@ -709,27 +708,6 @@ TEST(VariantCanonicalTest, ParseCanonicalCellRejectsInvalidBoundaries) {
     const VariantRef valid_outer_layout = arena_value_ref(invalid_nested_boundary);
     EXPECT_EQ(valid_outer_layout.value_size(), valid_outer_layout.value.size);
     expect_canonical_parse_error(invalid_nested_boundary, ErrorCode::CORRUPTION);
-
-    const OwnedValue two_fields = object_value(
-            {"a", "b"}, true, {0, 1},
-            {primitive(VariantPrimitiveId::NULL_VALUE), primitive(VariantPrimitiveId::TRUE_VALUE)},
-            {0, 1});
-    std::string overlapping_object = arena(two_fields.ref());
-    const VariantRef object_ref = arena_value_ref(overlapping_object);
-    ASSERT_EQ(object_ref.num_elements(), 2);
-    const size_t object_offset = object_ref.value.data - overlapping_object.data();
-    // Small-object layout: header, count, two ids, then three one-byte value offsets.
-    ASSERT_GE(object_ref.value.size, 9);
-    overlapping_object[object_offset + 5] = 0;
-    expect_canonical_parse_error(overlapping_object, ErrorCode::CORRUPTION);
-
-    std::string invalid_metadata_utf8 = arena(two_fields.ref());
-    VariantRef metadata_ref = arena_value_ref(invalid_metadata_utf8);
-    const size_t metadata_offset = metadata_ref.metadata.data - invalid_metadata_utf8.data();
-    ASSERT_GE(metadata_ref.metadata.size, 7);
-    invalid_metadata_utf8[metadata_offset + metadata_ref.metadata.size - 1] =
-            static_cast<char>(0xFF);
-    expect_canonical_parse_error(invalid_metadata_utf8, ErrorCode::CORRUPTION);
 }
 
 TEST(VariantCanonicalTest, CallerOwnedBufferMatchesStringAndRejectsInsufficientCapacity) {

@@ -21,6 +21,8 @@
 
 #include <memory>
 #include <string>
+#include <type_traits>
+#include <utility>
 
 #include "core/data_type/data_type.h"
 #include "core/data_type/data_type_array.h"
@@ -29,7 +31,10 @@
 #include "core/field.h"
 #include "core/types.h"
 #include "core/value/jsonb_value.h"
+#include "core/value/variant/variant_field.h"
+#include "exprs/function/parse/variant_string_parse.h"
 #include "util/jsonb_document.h"
+#include "util/jsonb_utils.h"
 #include "util/jsonb_writer.h"
 
 namespace doris {
@@ -38,6 +43,28 @@ class ConvertFieldToTypeTest : public ::testing::Test {
 protected:
     void SetUp() override {}
 };
+
+template <typename VariantCppType>
+void expect_variant_field_to_jsonb_conversion() {
+    ASSERT_TRUE((std::is_same_v<VariantCppType, VariantField>));
+    if constexpr (std::is_same_v<VariantCppType, VariantField>) {
+        JsonStringToVariantEncoder encoder;
+        encoder.add_json({R"({"a":[1,true]})", 14});
+        VariantBatchBuilder block = encoder.finish_batch();
+        VariantCppType value(VariantField::from_ref(block.value_at(0)));
+        Field source = Field::create_field<TYPE_VARIANT>(std::move(value));
+        Field result;
+        convert_field_to_type(source, DataTypeJsonb(), &result);
+        ASSERT_EQ(result.get_type(), TYPE_JSONB);
+        const JsonbField& jsonb = result.get<TYPE_JSONB>();
+        EXPECT_EQ(JsonbToJson::jsonb_to_json_string(jsonb.get_value(), jsonb.get_size()),
+                  R"({"a":[1,true]})");
+    }
+}
+
+TEST_F(ConvertFieldToTypeTest, VariantFieldToJsonbUsesEncodedValue) {
+    expect_variant_field_to_jsonb_conversion<PrimitiveTypeTraits<TYPE_VARIANT>::CppType>();
+}
 
 // Test FieldVisitorToJsonb with different field types using the same pattern as convert_field_to_typeImpl
 TEST_F(ConvertFieldToTypeTest, FieldVisitorToJsonb_Null) {

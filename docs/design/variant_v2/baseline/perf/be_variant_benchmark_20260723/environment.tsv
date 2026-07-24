@@ -1,0 +1,27 @@
+key	value
+start_time	2026-07-23T13:39:11+08:00
+git_head	e484e0db42d4b0e10a8f14f72d62560c0dd004d0
+binary	/mnt/disk1/claude-max/.codex/worktrees/b441/doris/be/build_RELEASE/bin/benchmark_test
+binary_sha256	7e592420daff3fb401adbc5bc6d59ad1728feeb9c9e5cec63fdcfca6a2393e77
+build_dir	/mnt/disk1/claude-max/.codex/worktrees/b441/doris/be/build_RELEASE
+cmake_build_type	RELEASE
+build_benchmark	ON
+java_home	/mnt/disk6/common/jdk-17.0.16
+kernel	Linux 5.14.0-694.el9.x86_64 x86_64 GNU/Linux
+cpu_model	Intel(R) Xeon(R) Platinum 8457C
+logical_cpus	192
+cpu_scaling_governor	powersave
+loadavg_before	38.88 127.12 169.11 24/203150 2424853
+pre_sample_seconds	5
+pre_cpu_idle_pct	84.29
+minimum_cpu_idle_pct	80
+repetitions	5
+benchmark_min_time	0.5s
+benchmark_filter	^BM_Variant
+accepted_pre_run	true
+end_time	2026-07-23T13:40:27+08:00
+loadavg_after	30.64 106.22 158.80 26/202946 2448872
+whole_run_cpu_idle_pct	83.29
+per_second_cpu_idle_summary	average=83.31,min=70.22,count=68
+benchmark_exit_status	0
+accepted_run	true

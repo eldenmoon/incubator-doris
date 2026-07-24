@@ -47,7 +47,6 @@
 #include "core/data_type/data_type_factory.hpp"
 #include "core/data_type/data_type_number.h" // IWYU pragma: keep
 #include "core/types.h"
-#include "exec/common/variant_util.h"
 #include "io/fs/file_writer.h"
 #include "io/fs/local_file_system.h"
 #include "runtime/exec_env.h"
@@ -75,6 +74,7 @@
 #include "storage/segment/page_pointer.h"
 #include "storage/segment/segment_loader.h"
 #include "storage/segment/variant/variant_ext_meta_writer.h"
+#include "storage/segment/variant_stats_calculator.h"
 #include "storage/tablet/base_tablet.h"
 #include "storage/tablet/tablet_schema.h"
 #include "storage/utils.h"
@@ -83,6 +83,7 @@
 #include "util/faststring.h"
 #include "util/json/path_in_data.h"
 #include "util/jsonb/serialize.h"
+#include "util/protobuf_utils.h"
 namespace doris::segment_v2 {
 
 using namespace ErrorCode;
@@ -557,11 +558,6 @@ Status VerticalSegmentWriter::_append_block_with_partial_content(RowsInBlock& da
         full_block.replace_by_position(i, data.block->get_by_position(input_id++).column);
     }
 
-    if (_opts.rowset_ctx->write_type != DataWriteType::TYPE_COMPACTION &&
-        _tablet_schema->num_variant_columns() > 0) {
-        RETURN_IF_ERROR(variant_util::parse_and_materialize_variant_columns(
-                full_block, *_tablet_schema, including_cids));
-    }
     bool have_input_seq_column = false;
     // write including columns
     std::vector<IOlapColumnDataAccessor*> key_columns;
@@ -666,11 +662,6 @@ Status VerticalSegmentWriter::_append_block_with_partial_content(RowsInBlock& da
             _opts.rowset_ctx->make_historical_row_retriever_context(), _rsid_to_rowset,
             *_tablet_schema, full_block, use_default_or_null_flag, has_default_or_nullable,
             segment_start_pos, data.block));
-
-    if (_tablet_schema->num_variant_columns() > 0) {
-        RETURN_IF_ERROR(variant_util::parse_and_materialize_variant_columns(
-                full_block, *_tablet_schema, _opts.rowset_ctx->partial_update_info->missing_cids));
-    }
 
     // convert missing columns and send to column writer
     const auto& missing_cids = _opts.rowset_ctx->partial_update_info->missing_cids;
@@ -846,16 +837,6 @@ Status VerticalSegmentWriter::_append_block_with_flexible_partial_content(RowsIn
         RETURN_IF_ERROR(_append_row_store_column(full_block, data.row_pos, data.num_rows,
                                                  cast_set<uint32_t>(cid)));
         RETURN_IF_ERROR(_finalize_column_writer_and_update_meta(cid));
-    }
-
-    std::vector<uint32_t> column_ids;
-    for (uint32_t i = 0; i < _tablet_schema->num_columns(); ++i) {
-        column_ids.emplace_back(i);
-    }
-    if (_opts.rowset_ctx->write_type != DataWriteType::TYPE_COMPACTION &&
-        _tablet_schema->num_variant_columns() > 0) {
-        RETURN_IF_ERROR(variant_util::parse_and_materialize_variant_columns(
-                full_block, *_tablet_schema, column_ids));
     }
 
     // 8. encode and write all non-primary key columns(including sequence column if exists)
@@ -1061,18 +1042,6 @@ Status VerticalSegmentWriter::write_batch() {
         }
     }
 
-    std::vector<uint32_t> column_ids;
-    for (uint32_t i = 0; i < _tablet_schema->num_columns(); ++i) {
-        column_ids.emplace_back(i);
-    }
-    if (_opts.rowset_ctx->write_type != DataWriteType::TYPE_COMPACTION &&
-        _tablet_schema->num_variant_columns() > 0) {
-        for (auto& data : _batched_blocks) {
-            RETURN_IF_ERROR(variant_util::parse_and_materialize_variant_columns(
-                    const_cast<Block&>(*data.block), *_tablet_schema, column_ids));
-        }
-    }
-
     std::vector<IOlapColumnDataAccessor*> key_columns;
     IOlapColumnDataAccessor* seq_column = nullptr;
     // the key is cluster key column unique id
@@ -1110,6 +1079,23 @@ Status VerticalSegmentWriter::write_batch() {
         }
         RETURN_IF_ERROR(_check_column_writer_disk_capacity(cid));
         RETURN_IF_ERROR(_finalize_column_writer_and_update_meta(cid));
+    }
+
+    std::vector<uint32_t> column_ids;
+    column_ids.reserve(_tablet_schema->num_columns());
+    bool should_calculate_variant_stats = false;
+    for (uint32_t cid = 0; cid < _tablet_schema->num_columns(); ++cid) {
+        column_ids.push_back(cid);
+        const TabletColumn& column = _tablet_schema->column(cid);
+        should_calculate_variant_stats |=
+                column.is_extracted_column() && column.path_info_ptr()->need_record_stats();
+    }
+    if (should_calculate_variant_stats) {
+        VariantStatsCaculator calculator(&_footer, _tablet_schema, column_ids);
+        for (const auto& data : _batched_blocks) {
+            RETURN_IF_ERROR(
+                    calculator.calculate_variant_stats(data.block, data.row_pos, data.num_rows));
+        }
     }
 
     for (auto& data : _batched_blocks) {
@@ -1476,7 +1462,7 @@ Status VerticalSegmentWriter::_write_footer() {
     // Footer := SegmentFooterPB, FooterPBSize(4), FooterPBChecksum(4), MagicNumber(4)
     VLOG_DEBUG << "footer " << _footer.DebugString();
     std::string footer_buf;
-    if (!_footer.SerializeToString(&footer_buf)) {
+    if (!serialize_protobuf_deterministically(_footer, &footer_buf)) {
         return Status::InternalError("failed to serialize segment footer");
     }
 

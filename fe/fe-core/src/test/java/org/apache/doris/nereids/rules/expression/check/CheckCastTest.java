@@ -42,6 +42,7 @@ import org.apache.doris.nereids.types.SmallIntType;
 import org.apache.doris.nereids.types.StringType;
 import org.apache.doris.nereids.types.StructField;
 import org.apache.doris.nereids.types.StructType;
+import org.apache.doris.nereids.types.TimeStampTzType;
 import org.apache.doris.nereids.types.TimeV2Type;
 import org.apache.doris.nereids.types.TinyIntType;
 import org.apache.doris.nereids.types.VarcharType;
@@ -939,7 +940,7 @@ public class CheckCastTest {
         Assertions.assertTrue(CheckCast.check(TimeV2Type.SYSTEM_DEFAULT, VarcharType.SYSTEM_DEFAULT, true));
         Assertions.assertTrue(CheckCast.check(TimeV2Type.SYSTEM_DEFAULT, StringType.INSTANCE, true));
         Assertions.assertFalse(CheckCast.check(TimeV2Type.SYSTEM_DEFAULT, JsonType.INSTANCE, true));
-        Assertions.assertTrue(CheckCast.check(TimeV2Type.SYSTEM_DEFAULT, VariantType.INSTANCE, true));
+        Assertions.assertFalse(CheckCast.check(TimeV2Type.SYSTEM_DEFAULT, VariantType.INSTANCE, true));
         Assertions.assertFalse(CheckCast.check(TimeV2Type.SYSTEM_DEFAULT, ArrayType.SYSTEM_DEFAULT, true));
         Assertions.assertFalse(CheckCast.check(TimeV2Type.SYSTEM_DEFAULT, MapType.SYSTEM_DEFAULT, true));
         Assertions.assertFalse(CheckCast.check(TimeV2Type.SYSTEM_DEFAULT, StructType.SYSTEM_DEFAULT, true));
@@ -969,7 +970,7 @@ public class CheckCastTest {
         Assertions.assertTrue(CheckCast.check(TimeV2Type.SYSTEM_DEFAULT, VarcharType.SYSTEM_DEFAULT, false));
         Assertions.assertTrue(CheckCast.check(TimeV2Type.SYSTEM_DEFAULT, StringType.INSTANCE, false));
         Assertions.assertFalse(CheckCast.check(TimeV2Type.SYSTEM_DEFAULT, JsonType.INSTANCE, false));
-        Assertions.assertTrue(CheckCast.check(TimeV2Type.SYSTEM_DEFAULT, VariantType.INSTANCE, false));
+        Assertions.assertFalse(CheckCast.check(TimeV2Type.SYSTEM_DEFAULT, VariantType.INSTANCE, false));
         Assertions.assertFalse(CheckCast.check(TimeV2Type.SYSTEM_DEFAULT, ArrayType.SYSTEM_DEFAULT, false));
         Assertions.assertFalse(CheckCast.check(TimeV2Type.SYSTEM_DEFAULT, MapType.SYSTEM_DEFAULT, false));
         Assertions.assertFalse(CheckCast.check(TimeV2Type.SYSTEM_DEFAULT, StructType.SYSTEM_DEFAULT, false));
@@ -1618,6 +1619,8 @@ public class CheckCastTest {
         Assertions.assertTrue(CheckCast.check(ArrayType.SYSTEM_DEFAULT, StringType.INSTANCE, true));
         Assertions.assertTrue(CheckCast.check(ArrayType.SYSTEM_DEFAULT, JsonType.INSTANCE, true));
         Assertions.assertTrue(CheckCast.check(ArrayType.SYSTEM_DEFAULT, VariantType.INSTANCE, true));
+        Assertions.assertTrue(CheckCast.check(
+                ArrayType.of(VariantType.INSTANCE), VariantType.INSTANCE, true));
         Assertions.assertTrue(CheckCast.check(ArrayType.SYSTEM_DEFAULT, ArrayType.SYSTEM_DEFAULT, true));
         Assertions.assertFalse(CheckCast.check(ArrayType.SYSTEM_DEFAULT, MapType.SYSTEM_DEFAULT, true));
         Assertions.assertFalse(CheckCast.check(ArrayType.SYSTEM_DEFAULT, StructType.SYSTEM_DEFAULT, true));
@@ -1650,6 +1653,8 @@ public class CheckCastTest {
         Assertions.assertTrue(CheckCast.check(ArrayType.SYSTEM_DEFAULT, StringType.INSTANCE, false));
         Assertions.assertTrue(CheckCast.check(ArrayType.SYSTEM_DEFAULT, JsonType.INSTANCE, false));
         Assertions.assertTrue(CheckCast.check(ArrayType.SYSTEM_DEFAULT, VariantType.INSTANCE, false));
+        Assertions.assertTrue(CheckCast.check(
+                ArrayType.of(VariantType.INSTANCE), VariantType.INSTANCE, false));
         Assertions.assertTrue(CheckCast.check(ArrayType.SYSTEM_DEFAULT, ArrayType.SYSTEM_DEFAULT, false));
         Assertions.assertFalse(CheckCast.check(ArrayType.SYSTEM_DEFAULT, MapType.SYSTEM_DEFAULT, false));
         Assertions.assertFalse(CheckCast.check(ArrayType.SYSTEM_DEFAULT, StructType.SYSTEM_DEFAULT, false));
@@ -1683,7 +1688,7 @@ public class CheckCastTest {
         Assertions.assertTrue(CheckCast.check(MapType.SYSTEM_DEFAULT, VarcharType.SYSTEM_DEFAULT, true));
         Assertions.assertTrue(CheckCast.check(MapType.SYSTEM_DEFAULT, StringType.INSTANCE, true));
         Assertions.assertFalse(CheckCast.check(MapType.SYSTEM_DEFAULT, JsonType.INSTANCE, true));
-        Assertions.assertTrue(CheckCast.check(MapType.SYSTEM_DEFAULT, VariantType.INSTANCE, true));
+        Assertions.assertFalse(CheckCast.check(MapType.SYSTEM_DEFAULT, VariantType.INSTANCE, true));
         Assertions.assertFalse(CheckCast.check(MapType.SYSTEM_DEFAULT, ArrayType.SYSTEM_DEFAULT, true));
         Assertions.assertTrue(CheckCast.check(MapType.SYSTEM_DEFAULT, MapType.SYSTEM_DEFAULT, true));
         Assertions.assertFalse(CheckCast.check(MapType.SYSTEM_DEFAULT, StructType.SYSTEM_DEFAULT, true));
@@ -1716,7 +1721,7 @@ public class CheckCastTest {
         Assertions.assertTrue(CheckCast.check(MapType.SYSTEM_DEFAULT, VarcharType.SYSTEM_DEFAULT, false));
         Assertions.assertTrue(CheckCast.check(MapType.SYSTEM_DEFAULT, StringType.INSTANCE, false));
         Assertions.assertFalse(CheckCast.check(MapType.SYSTEM_DEFAULT, JsonType.INSTANCE, false));
-        Assertions.assertTrue(CheckCast.check(MapType.SYSTEM_DEFAULT, VariantType.INSTANCE, false));
+        Assertions.assertFalse(CheckCast.check(MapType.SYSTEM_DEFAULT, VariantType.INSTANCE, false));
         Assertions.assertFalse(CheckCast.check(MapType.SYSTEM_DEFAULT, ArrayType.SYSTEM_DEFAULT, false));
         Assertions.assertTrue(CheckCast.check(MapType.SYSTEM_DEFAULT, MapType.SYSTEM_DEFAULT, false));
         Assertions.assertFalse(CheckCast.check(MapType.SYSTEM_DEFAULT, StructType.SYSTEM_DEFAULT, false));
@@ -1751,7 +1756,7 @@ public class CheckCastTest {
         Assertions.assertTrue(CheckCast.check(StructType.SYSTEM_DEFAULT, VarcharType.SYSTEM_DEFAULT, true));
         Assertions.assertTrue(CheckCast.check(StructType.SYSTEM_DEFAULT, StringType.INSTANCE, true));
         Assertions.assertTrue(CheckCast.check(StructType.SYSTEM_DEFAULT, JsonType.INSTANCE, true));
-        Assertions.assertTrue(CheckCast.check(StructType.SYSTEM_DEFAULT, VariantType.INSTANCE, true));
+        Assertions.assertFalse(CheckCast.check(StructType.SYSTEM_DEFAULT, VariantType.INSTANCE, true));
         Assertions.assertFalse(CheckCast.check(StructType.SYSTEM_DEFAULT, ArrayType.SYSTEM_DEFAULT, true));
         Assertions.assertFalse(CheckCast.check(StructType.SYSTEM_DEFAULT, MapType.SYSTEM_DEFAULT, true));
         Assertions.assertTrue(CheckCast.check(StructType.SYSTEM_DEFAULT, StructType.SYSTEM_DEFAULT, true));
@@ -1799,7 +1804,7 @@ public class CheckCastTest {
         Assertions.assertTrue(CheckCast.check(StructType.SYSTEM_DEFAULT, VarcharType.SYSTEM_DEFAULT, false));
         Assertions.assertTrue(CheckCast.check(StructType.SYSTEM_DEFAULT, StringType.INSTANCE, false));
         Assertions.assertTrue(CheckCast.check(StructType.SYSTEM_DEFAULT, JsonType.INSTANCE, false));
-        Assertions.assertTrue(CheckCast.check(StructType.SYSTEM_DEFAULT, VariantType.INSTANCE, false));
+        Assertions.assertFalse(CheckCast.check(StructType.SYSTEM_DEFAULT, VariantType.INSTANCE, false));
         Assertions.assertFalse(CheckCast.check(StructType.SYSTEM_DEFAULT, ArrayType.SYSTEM_DEFAULT, false));
         Assertions.assertFalse(CheckCast.check(StructType.SYSTEM_DEFAULT, MapType.SYSTEM_DEFAULT, false));
         Assertions.assertTrue(CheckCast.check(StructType.SYSTEM_DEFAULT, StructType.SYSTEM_DEFAULT, false));
@@ -1809,6 +1814,53 @@ public class CheckCastTest {
         Assertions.assertFalse(CheckCast.check(structType1, structType2, false));
         Assertions.assertFalse(CheckCast.check(structType1, structType3, false));
         Assertions.assertTrue(CheckCast.check(structType1, structType4, false));
+    }
+
+    @Test
+    public void testVariantExplicitCastTargets() {
+        Assertions.assertTrue(CheckCast.check(VariantType.INSTANCE, JsonType.INSTANCE, true));
+        Assertions.assertTrue(CheckCast.check(VariantType.INSTANCE, JsonType.INSTANCE, false));
+        Assertions.assertTrue(CheckCast.check(VariantType.INSTANCE, IntegerType.INSTANCE, true));
+        Assertions.assertTrue(CheckCast.check(VariantType.INSTANCE, StringType.INSTANCE, true));
+        Assertions.assertTrue(CheckCast.check(VariantType.INSTANCE, ArrayType.SYSTEM_DEFAULT, true));
+        Assertions.assertTrue(CheckCast.check(VariantType.INSTANCE,
+                ArrayType.of(VariantType.INSTANCE), true));
+        Assertions.assertTrue(CheckCast.check(VariantType.INSTANCE, IPv4Type.INSTANCE, true));
+        Assertions.assertTrue(CheckCast.check(VariantType.INSTANCE, IPv6Type.INSTANCE, true));
+        Assertions.assertTrue(CheckCast.check(VariantType.INSTANCE, TimeStampTzType.MAX, true));
+        Assertions.assertTrue(CheckCast.check(VariantType.INSTANCE,
+                DecimalV3Type.createDecimalV3Type(38, 10), true));
+        Assertions.assertTrue(CheckCast.check(VariantType.INSTANCE,
+                DecimalV3Type.createDecimalV3TypeNotCheck256(39, 10), true));
+        Assertions.assertTrue(CheckCast.check(VariantType.INSTANCE,
+                DecimalV3Type.createDecimalV3TypeNotCheck256(76, 56), true));
+        Assertions.assertFalse(CheckCast.check(VariantType.INSTANCE, TimeV2Type.MAX, true));
+        Assertions.assertFalse(CheckCast.check(VariantType.INSTANCE, MapType.SYSTEM_DEFAULT, true));
+        Assertions.assertFalse(CheckCast.check(VariantType.INSTANCE, StructType.SYSTEM_DEFAULT, true));
+        Assertions.assertFalse(CheckCast.check(VariantType.INSTANCE,
+                ArrayType.of(MapType.SYSTEM_DEFAULT), true));
+    }
+
+    @Test
+    public void testVariantExplicitCastSources() {
+        Assertions.assertTrue(CheckCast.check(StringType.INSTANCE, VariantType.INSTANCE, true));
+        Assertions.assertTrue(CheckCast.check(JsonType.INSTANCE, VariantType.INSTANCE, true));
+        Assertions.assertTrue(CheckCast.check(IPv4Type.INSTANCE, VariantType.INSTANCE, true));
+        Assertions.assertTrue(CheckCast.check(IPv6Type.INSTANCE, VariantType.INSTANCE, true));
+        Assertions.assertTrue(CheckCast.check(TimeStampTzType.MAX, VariantType.INSTANCE, true));
+        Assertions.assertTrue(CheckCast.check(
+                DecimalV3Type.createDecimalV3Type(38, 10), VariantType.INSTANCE, true));
+        Assertions.assertFalse(CheckCast.check(
+                DecimalV3Type.createDecimalV3TypeNotCheck256(39, 10), VariantType.INSTANCE, true));
+        Assertions.assertTrue(CheckCast.check(
+                ArrayType.of(DecimalV3Type.createDecimalV3Type(38, 10)),
+                VariantType.INSTANCE, true));
+        Assertions.assertFalse(CheckCast.check(
+                ArrayType.of(DecimalV3Type.createDecimalV3TypeNotCheck256(39, 10)),
+                VariantType.INSTANCE, true));
+        Assertions.assertFalse(CheckCast.check(TimeV2Type.MAX, VariantType.INSTANCE, true));
+        Assertions.assertFalse(CheckCast.check(MapType.SYSTEM_DEFAULT, VariantType.INSTANCE, true));
+        Assertions.assertFalse(CheckCast.check(StructType.SYSTEM_DEFAULT, VariantType.INSTANCE, true));
     }
 
     @Test

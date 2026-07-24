@@ -16,13 +16,17 @@
 // under the License.
 
 #include <array>
+#include <limits>
 #include <string>
 #include <string_view>
 #include <vector>
 
+#include "common/exception.h"
 #include "core/assert_cast.h"
 #include "core/column/column_nullable.h"
+#include "core/column/column_string.h"
 #include "core/column/variant_v2/column_variant_v2.h"
+#include "core/value/variant/variant_batch_builder.h"
 #include "core/value/variant/variant_field.h"
 #include "core/value/variant/variant_parquet_encoding.h"
 #include "exprs/function/function_variant_element_v2.h"
@@ -46,6 +50,15 @@ VariantField encode_json(std::string_view json) {
 void append_json(ColumnVariantV2& column, std::string_view json) {
     const VariantField field = encode_json(json);
     insert_encoded_field(column, field);
+}
+
+void append_string(ColumnVariantV2& column, std::string_view text) {
+    VariantBatchBuilder builder(VariantBatchBuilder::ReserveHint {.rows = 1});
+    auto row = builder.begin_row();
+    row.add_string({text.data(), text.size()});
+    row.finish();
+    const VariantBatchBuilder block = builder.finish_batch();
+    column.insert_encoded_batch(block);
 }
 
 std::unique_ptr<ResolvedVariantElementV2Path> resolve(std::vector<Segment> segments) {
@@ -109,6 +122,18 @@ VariantField legal_noncanonical_object() {
     field.append(metadata);
     field.append(value);
     return VariantField::from_bytes({field.data(), field.size()});
+}
+
+ColumnVariantV2::MutablePtr raw_column(StringRef metadata, StringRef value) {
+    const std::array<uint32_t, 2> metadata_offsets {0, static_cast<uint32_t>(metadata.size)};
+    const std::array<uint32_t, 2> value_offsets {0, static_cast<uint32_t>(value.size)};
+    auto result = ColumnVariantV2::create();
+    result->insert_encoded_rows({.metadata_bytes = metadata,
+                                 .metadata_offsets = metadata_offsets,
+                                 .meta_ids = {},
+                                 .value_bytes = value,
+                                 .value_offsets = value_offsets});
+    return result;
 }
 
 } // namespace
@@ -179,18 +204,24 @@ TEST(VariantElementV2EncodedTest, ExplicitSegmentsCoverDeepDotAndArrayBounds) {
     auto last = resolve({Segment::object_key(StringRef("items")), Segment::array_index(1),
                          Segment::object_key(StringRef("v"))});
     EXPECT_EQ(variant_result(extract(*source, *last)).get_value_ref(0).get_int(), 33);
+    auto negative_last = resolve({Segment::object_key(StringRef("items")), Segment::array_index(-1),
+                                  Segment::object_key(StringRef("v"))});
+    EXPECT_EQ(variant_result(extract(*source, *negative_last)).get_value_ref(0).get_int(), 33);
+    auto negative_first =
+            resolve({Segment::object_key(StringRef("items")), Segment::array_index(-2)});
+    EXPECT_EQ(variant_result(extract(*source, *negative_first)).get_value_ref(0).get_int(), 0);
     auto out_of_bounds =
             resolve({Segment::object_key(StringRef("items")), Segment::array_index(2)});
     EXPECT_EQ(nullable_result(extract(*source, *out_of_bounds)).get_null_map_data()[0], 1);
-    auto from_end = resolve({Segment::object_key(StringRef("items")), Segment::array_index(-1),
-                             Segment::object_key(StringRef("v"))});
-    EXPECT_EQ(variant_result(extract(*source, *from_end)).get_value_ref(0).get_int(), 33);
-    auto before_begin =
+    auto negative_out_of_bounds =
             resolve({Segment::object_key(StringRef("items")), Segment::array_index(-3)});
-    EXPECT_EQ(nullable_result(extract(*source, *before_begin)).get_null_map_data()[0], 1);
+    EXPECT_EQ(nullable_result(extract(*source, *negative_out_of_bounds)).get_null_map_data()[0], 1);
+    auto minimum_index = resolve({Segment::object_key(StringRef("items")),
+                                  Segment::array_index(std::numeric_limits<int64_t>::min())});
+    EXPECT_EQ(nullable_result(extract(*source, *minimum_index)).get_null_map_data()[0], 1);
 }
 
-TEST(VariantElementV2EncodedTest, OuterMissingAndPrimitiveNullAreDistinct) {
+TEST(VariantElementV2EncodedTest, OuterAndMissingUseSqlNullButVariantNullRemainsAValue) {
     auto source = ColumnVariantV2::create();
     append_json(*source, R"({"present":null})");
     append_json(*source, R"({"present":1})");
@@ -221,6 +252,35 @@ TEST(VariantElementV2EncodedTest, LegalNoncanonicalMetadataIsCopiedWithoutCanoni
     EXPECT_EQ(bytes(value.metadata), bytes(source->get_value_ref(0).metadata));
 }
 
+TEST(VariantElementV2EncodedTest, BadMetadataAndValueAreRejectedBeforeExtraction) {
+    auto sentinel = ColumnString::create();
+    sentinel->insert_data("sentinel", 8);
+    ColumnPtr result = sentinel->get_ptr();
+    const IColumn* sentinel_identity = result.get();
+
+    const std::string bad_metadata(1, static_cast<char>(0x11));
+    const std::string null_value(1, 0);
+    EXPECT_THROW(raw_column({bad_metadata.data(), bad_metadata.size()},
+                            {null_value.data(), null_value.size()}),
+                 Exception);
+    EXPECT_EQ(result.get(), sentinel_identity);
+
+    const VariantField valid = encode_json(R"({"a":1})");
+    const std::string truncated_object(1, static_cast<char>(VariantBasicType::OBJECT));
+    EXPECT_THROW(raw_column({valid.ref().metadata.data, valid.ref().metadata.size},
+                            {truncated_object.data(), truncated_object.size()}),
+                 Exception);
+    EXPECT_EQ(result.get(), sentinel_identity);
+
+    const VariantRef valid_ref = valid.ref();
+    std::string trailing_value(valid_ref.value.data, valid_ref.value.size);
+    trailing_value.push_back('\0');
+    EXPECT_THROW(raw_column({valid_ref.metadata.data, valid_ref.metadata.size},
+                            {trailing_value.data(), trailing_value.size()}),
+                 Exception);
+    EXPECT_EQ(result.get(), sentinel_identity);
+}
+
 TEST(VariantElementV2EncodedTest, SourceCowBytesRemainUnchanged) {
     auto source = ColumnVariantV2::create();
     append_json(*source, R"({"a":{"b":42}})");
@@ -234,6 +294,37 @@ TEST(VariantElementV2EncodedTest, SourceCowBytesRemainUnchanged) {
     EXPECT_EQ(std::string_view(before.bytes().data, before.bytes().size),
               std::string_view(after.bytes().data, after.bytes().size));
     EXPECT_EQ(shared.get(), source.get());
+}
+
+TEST(VariantElementV2EncodedTest, StringScalarRootsReturnSqlNullAndPreserveStructuredRows) {
+    auto source = ColumnVariantV2::create();
+    append_string(*source, R"({"a":{"b":1}})");
+    append_json(*source, R"({"a":{"b":2}})");
+    const std::string long_document =
+            R"({"padding":"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx","a":{"b":3}})";
+    ASSERT_GT(long_document.size(), VARIANT_MAX_SHORT_STRING_SIZE);
+    append_string(*source, long_document);
+    append_string(*source, "not json");
+    append_string(*source, R"({"missing":4})");
+    append_string(*source, R"({"a":{"b":null}})");
+    append_string(*source, R"({"a":{"b":7}})");
+    const std::array<uint8_t, 7> outer_nulls {0, 0, 0, 0, 0, 0, 1};
+    auto path = resolve({Segment::object_key(StringRef("a")), Segment::object_key(StringRef("b"))});
+
+    ColumnPtr result = extract(*source, *path, outer_nulls);
+    const auto& nullable = nullable_result(result);
+    const auto& values = variant_result(result);
+    ASSERT_EQ(values.size(), 7);
+    EXPECT_TRUE(nullable.is_null_at(0));
+    EXPECT_EQ(values.get_value_ref(1).get_int(), 2);
+    EXPECT_TRUE(nullable.is_null_at(2));
+    EXPECT_TRUE(nullable.is_null_at(3));
+    EXPECT_TRUE(nullable.is_null_at(4));
+    EXPECT_TRUE(nullable.is_null_at(5));
+    EXPECT_TRUE(nullable.is_null_at(6));
+    EXPECT_EQ(source->get_value_ref(0).basic_type(), VariantBasicType::SHORT_STRING);
+    EXPECT_EQ(source->get_value_ref(2).basic_type(), VariantBasicType::PRIMITIVE);
+    EXPECT_EQ(source->get_value_ref(2).primitive_id(), VariantPrimitiveId::STRING);
 }
 
 } // namespace doris

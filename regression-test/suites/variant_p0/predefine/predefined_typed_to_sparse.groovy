@@ -94,7 +94,7 @@ suite("predefined_typed_to_sparse", "p0"){
          INSERT INTO ${tableName} (`id`, `var`) VALUES
         (
             1,
-            '{
+            parse_to_variant('{
               "array_decimal_1": ["12345678901234567.123456789", "987.654321"],
               "array_ipv6_1": ["2001:0db8:85a3:0000:0000:8a2e:0370:7334", "::1"],
               "int_1": 42,
@@ -119,7 +119,7 @@ suite("predefined_typed_to_sparse", "p0"){
               "ipv6_1": "::1",
               "largeint_1": "12345678901234567890123456789012345678",
               "char_1": "short text"
-            }'
+            }')
         );
     """
     for (int i = 1; i < 10; i++) {
@@ -176,7 +176,7 @@ suite("predefined_typed_to_sparse", "p0"){
           INSERT INTO ${tableName} (`id`, `var`) VALUES
           (
             ${i},
-              '{
+              parse_to_variant('{
                 "array_decimal_1": ["12345678901234567.123456789", "987.654321"],
                 "array_ipv6_1": ["2001:0db8:85a3:0000:0000:8a2e:0370:7334", "::1"],
                 "int_1": 42,
@@ -201,7 +201,7 @@ suite("predefined_typed_to_sparse", "p0"){
                 "ipv6_1": "::1",
                 "largeint_1": "12345678901234567890123456789012345678",
                 "char_1": "short text"
-              }'
+              }')
           );
       """
     }

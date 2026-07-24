@@ -31,24 +31,24 @@ suite("regression_test_variant_var_index", "p0, nonConcurrent"){
         properties("replication_num" = "1", "disable_auto_compaction" = "true");
     """
 
-    sql """insert into var_index values(1, '{"a" : 123, "b" : "xxxyyy", "c" : 111999111}')"""
-    sql """insert into var_index values(2, '{"a" : 18811, "b" : "hello world", "c" : 1181111}')"""
-    sql """insert into var_index values(3, '{"a" : 18811, "b" : "hello wworld", "c" : 11111}')"""
-    sql """insert into var_index values(4, '{"a" : 1234, "b" : "hello xxx world", "c" : 8181111}')"""
+    sql """insert into var_index values(1, parse_to_variant('{"a" : 123, "b" : "xxxyyy", "c" : 111999111}'))"""
+    sql """insert into var_index values(2, parse_to_variant('{"a" : 18811, "b" : "hello world", "c" : 1181111}'))"""
+    sql """insert into var_index values(3, parse_to_variant('{"a" : 18811, "b" : "hello wworld", "c" : 11111}'))"""
+    sql """insert into var_index values(4, parse_to_variant('{"a" : 1234, "b" : "hello xxx world", "c" : 8181111}'))"""
     qt_sql """select * from var_index where cast(v["a"] as smallint) > 123 and cast(v["b"] as string) match 'hello' and cast(v["c"] as int) > 1024 order by k"""
     trigger_and_wait_compaction(table_name, "full", 1800)
     sql """ set enable_segment_limit_pushdown = true """
     sql """set enable_match_without_inverted_index = false"""
     qt_sql """select * from var_index where cast(v["a"] as smallint) > 123 and cast(v["b"] as string) match 'hello' and cast(v["c"] as int) > 1024 order by k"""
     sql """set enable_match_without_inverted_index = true"""
-    sql """insert into var_index values(5, '{"a" : 123456789, "b" : 123456, "c" : 8181111}')"""
+    sql """insert into var_index values(5, parse_to_variant('{"a" : 123456789, "b" : 123456, "c" : 8181111}'))"""
     qt_sql """select * from var_index where cast(v["a"] as int) > 123 and cast(v["b"] as string) match 'hello' and cast(v["c"] as int) > 11111 order by k"""
     // insert double/float/array/json
-    sql """insert into var_index values(6, '{"timestamp": 1713283200.060359}')"""
-    sql """insert into var_index values(7, '{"timestamp": 17.0}')"""
-    sql """insert into var_index values(8, '{"arr": [123]}')"""
-    sql """insert into var_index values(9, '{"timestamp": 17.0}'),(10, '{"timestamp": "17.0"}')"""
-    sql """insert into var_index values(11, '{"nested": [{"a" : 1}]}'),(11, '{"nested": [{"b" : "1024"}]}')"""
+    sql """insert into var_index values(6, parse_to_variant('{"timestamp": 1713283200.060359}'))"""
+    sql """insert into var_index values(7, parse_to_variant('{"timestamp": 17.0}'))"""
+    sql """insert into var_index values(8, parse_to_variant('{"arr": [123]}'))"""
+    sql """insert into var_index values(9, parse_to_variant('{"timestamp": 17.0}')),(10, parse_to_variant('{"timestamp": "17.0"}'))"""
+    sql """insert into var_index values(11, parse_to_variant('{"nested": [{"a" : 1}]}')),(11, parse_to_variant('{"nested": [{"b" : "1024"}]}'))"""
     trigger_and_wait_compaction(table_name, "full", 1800)
     qt_sql "select * from var_index order by k limit 15"
 
@@ -171,7 +171,7 @@ suite("regression_test_variant_var_index", "p0, nonConcurrent"){
     properties("replication_num" = "1", "disable_auto_compaction" = "true");
     """
 
-    sql """insert into var_index values(1, '{"name": "张三", "age": 18}')"""
+    sql """insert into var_index values(1, parse_to_variant('{"name": "张三", "age": 18}'))"""
     sql """ select * from var_index """
 
     def timeout = 60000
@@ -228,7 +228,7 @@ suite("regression_test_variant_var_index", "p0, nonConcurrent"){
 
     sql """ drop index idx_var2 on ${table_name} """
     wait_for_latest_op_on_table_finish(table_name, timeout)
-    sql """ insert into ${table_name} values(2, '{"name": "李四", "age": 20}') """
+    sql """ insert into ${table_name} values(2, parse_to_variant('{"name": "李四", "age": 20}')) """
     sql """ select * from ${table_name} """
     if (isCloudMode()) {
         assertEquals(4, get_indeces_count())
@@ -237,9 +237,9 @@ suite("regression_test_variant_var_index", "p0, nonConcurrent"){
     }
 
 
-    sql """ insert into ${table_name} values(2, '{"name": "李四", "age": 20}') """
-    sql """ insert into ${table_name} values(2, '{"name": "李四", "age": 20}') """
-    sql """ insert into ${table_name} values(2, '{"name": "李四", "age": 20}') """
+    sql """ insert into ${table_name} values(2, parse_to_variant('{"name": "李四", "age": 20}')) """
+    sql """ insert into ${table_name} values(2, parse_to_variant('{"name": "李四", "age": 20}')) """
+    sql """ insert into ${table_name} values(2, parse_to_variant('{"name": "李四", "age": 20}')) """
     sql """ select * from ${table_name} """
     if (isCloudMode()) {
         assertEquals(10, get_indeces_count())
@@ -249,7 +249,7 @@ suite("regression_test_variant_var_index", "p0, nonConcurrent"){
 
     sql """ drop index idx_var on ${table_name} """
     wait_for_latest_op_on_table_finish(table_name, timeout)
-    sql """ insert into ${table_name} values(2, '{"name": "李四", "age": 20}') """
+    sql """ insert into ${table_name} values(2, parse_to_variant('{"name": "李四", "age": 20}')) """
     sql """ select * from ${table_name} """
     trigger_and_wait_compaction(table_name, "full", 1800)
     assertEquals(0, get_indeces_count())

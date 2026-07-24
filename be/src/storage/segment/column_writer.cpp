@@ -29,6 +29,7 @@
 #include "core/data_type/data_type_agg_state.h"
 #include "core/data_type/data_type_factory.hpp"
 #include "core/types.h"
+#include "exec/common/variant_util.h"
 #include "io/fs/file_writer.h"
 #include "storage/index/bloom_filter/bloom_filter_index_writer.h"
 #include "storage/index/inverted/inverted_index_writer.h"
@@ -1382,7 +1383,9 @@ Status VariantColumnWriter::write_bloom_filter_index() {
 
 Status VariantColumnWriter::append_nullable(const uint8_t* null_map, const uint8_t** ptr,
                                             size_t num_rows) {
-    return _impl->append_nullable(null_map, ptr, num_rows);
+    RETURN_IF_ERROR(_impl->append_nullable(null_map, ptr, num_rows));
+    _next_rowid += num_rows;
+    return Status::OK();
 }
 
 } // namespace doris::segment_v2

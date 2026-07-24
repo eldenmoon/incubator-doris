@@ -25,7 +25,9 @@
 #include "core/block/column_with_type_and_name.h"
 #include "core/column/column_array.h"
 #include "core/column/column_map.h"
+#include "core/column/column_string.h"
 #include "core/column/column_struct.h"
+#include "core/column/variant_v2/column_variant_v2.h"
 #include "core/data_type/data_type_array.h"
 #include "core/data_type/data_type_factory.hpp"
 #include "core/data_type/data_type_map.h"
@@ -33,6 +35,7 @@
 #include "core/data_type/data_type_variant.h"
 #include "core/data_type/define_primitive_type.h"
 #include "core/data_type_serde/data_type_serde.h"
+#include "core/data_type_serde/data_type_variant_v2_serde.h"
 #include "core/field.h"
 #include "format/native/native_format.h"
 #include "format/native/native_reader.h"
@@ -46,6 +49,32 @@
 namespace doris {
 
 class NativeReaderWriterTest : public ::testing::Test {};
+
+static std::string serialize_native_cell_to_json(const ColumnWithTypeAndName& value, size_t row) {
+    auto output = ColumnString::create();
+    BufferWritable writer(*output);
+    DataTypeSerDe::FormatOptions options;
+    const Status status = value.type->get_serde()->serialize_one_cell_to_json(*value.column, row,
+                                                                              writer, options);
+    EXPECT_TRUE(status.ok()) << status;
+    if (!status.ok()) {
+        return {};
+    }
+    writer.commit();
+    return output->get_data_at(0).to_string();
+}
+
+static void expect_native_cell_equal(const ColumnWithTypeAndName& src,
+                                     const ColumnWithTypeAndName& dst, size_t col, size_t row) {
+    if (src.type->get_primitive_type() == TYPE_VARIANT) {
+        EXPECT_EQ(dst.type->get_primitive_type(), TYPE_VARIANT);
+        EXPECT_EQ(serialize_native_cell_to_json(src, row), serialize_native_cell_to_json(dst, row))
+                << "mismatch at col=" << col << " row=" << row;
+        return;
+    }
+    EXPECT_EQ((*src.column)[row], (*dst.column)[row])
+            << "mismatch at col=" << col << " row=" << row;
+}
 
 static void fill_primitive_columns(Block& block, size_t rows) {
     DataTypePtr int_type =
@@ -205,11 +234,11 @@ static void fill_variant_column(Block& block, size_t rows) {
     // variant
     DataTypePtr variant_type = make_nullable(std::make_shared<DataTypeVariant>());
 
-    // variant column: use JSON strings + deserialize_column_from_json_vector to populate ColumnVariant
+    // Populate the V2 physical column through its JSON SerDe.
     {
         MutableColumnPtr col = variant_type->create_column();
         auto* nullable_col = assert_cast<ColumnNullable*>(col.get());
-        auto& nested = nullable_col->get_nested_column(); // ColumnVariant
+        auto& nested = assert_cast<ColumnVariantV2&>(nullable_col->get_nested_column());
 
         // Prepare JSON strings with variable number of keys per row
         std::vector<std::string> json_rows;
@@ -239,10 +268,10 @@ static void fill_variant_column(Block& block, size_t rows) {
             slices.emplace_back(json_rows.back().data(), json_rows.back().size());
         }
 
-        // Use Variant SerDe to parse JSON into ColumnVariant
+        // Use the public Variant type's V2 SerDe to parse JSON.
         auto variant_type_inner = std::make_shared<DataTypeVariant>();
         auto serde = variant_type_inner->get_serde();
-        auto* variant_serde = assert_cast<DataTypeVariantSerDe*>(serde.get());
+        auto* variant_serde = assert_cast<DataTypeVariantV2SerDe*>(serde.get());
 
         uint64_t num_deserialized = 0;
         DataTypeSerDe::FormatOptions options;
@@ -326,9 +355,7 @@ TEST_F(NativeReaderWriterTest, round_trip_native_file) {
         ASSERT_EQ(src.type->get_family_name(), dst.type->get_family_name());
         ASSERT_EQ(src.column->size(), dst.column->size());
         for (size_t row = 0; row < src_block.rows(); ++row) {
-            auto src_field = (*src.column)[row];
-            auto dst_field = (*dst.column)[row];
-            ASSERT_EQ(src_field, dst_field) << "mismatch at col=" << col << " row=" << row;
+            expect_native_cell_equal(src, dst, col, row);
         }
     }
 
@@ -443,9 +470,7 @@ TEST_F(NativeReaderWriterTest, round_trip_empty_and_single_row) {
             const auto& dst = dst_block.get_by_position(col);
             ASSERT_EQ(src.type->get_family_name(), dst.type->get_family_name());
             ASSERT_EQ(src.column->size(), dst.column->size());
-            auto src_field = (*src.column)[0];
-            auto dst_field = (*dst.column)[0];
-            ASSERT_EQ(src_field, dst_field) << "mismatch at col=" << col << " row=0";
+            expect_native_cell_equal(src, dst, col, 0);
         }
 
         // Next call should hit EOF
@@ -552,9 +577,7 @@ TEST_F(NativeReaderWriterTest, round_trip_native_file_large_rows) {
         ASSERT_EQ(src.type->get_family_name(), dst.type->get_family_name());
         ASSERT_EQ(src.column->size(), dst.column->size());
         for (size_t row = 0; row < src_block.rows(); row += 10) {
-            auto src_field = (*src.column)[row];
-            auto dst_field = (*dst.column)[row];
-            ASSERT_EQ(src_field, dst_field) << "mismatch at col=" << col << " row=" << row;
+            expect_native_cell_equal(src, dst, col, row);
         }
     }
     bool exists = false;
@@ -642,9 +665,7 @@ TEST_F(NativeReaderWriterTest, non_nullable_columns_forced_nullable) {
         const auto& dst = dst_block.get_by_position(col);
         ASSERT_EQ(src.column->size(), dst.column->size());
         for (size_t row = 0; row < src_block.rows(); ++row) {
-            auto src_field = (*src.column)[row];
-            auto dst_field = (*dst.column)[row];
-            ASSERT_EQ(src_field, dst_field) << "mismatch at col=" << col << " row=" << row;
+            expect_native_cell_equal(src, dst, col, row);
         }
     }
 
@@ -1152,7 +1173,7 @@ static Block create_all_types_test_block() {
 
         auto variant_type_inner = std::make_shared<DataTypeVariant>();
         auto serde = variant_type_inner->get_serde();
-        auto* variant_serde = assert_cast<DataTypeVariantSerDe*>(serde.get());
+        auto* variant_serde = assert_cast<DataTypeVariantV2SerDe*>(serde.get());
 
         uint64_t num_deserialized = 0;
         DataTypeSerDe::FormatOptions options;
@@ -1252,11 +1273,7 @@ TEST_F(NativeReaderWriterTest, read_all_types_from_pregenerated_file) {
         ASSERT_EQ(src.column->size(), dst.column->size())
                 << "Size mismatch at col=" << col << " (" << src.name << ")";
 
-        // Compare field values
-        auto src_field = (*src.column)[0];
-        auto dst_field = (*dst.column)[0];
-        ASSERT_EQ(src_field, dst_field)
-                << "Value mismatch at col=" << col << " (" << src.name << ")";
+        expect_native_cell_equal(src, dst, col, 0);
     }
 
     // Next call should hit EOF
@@ -1323,11 +1340,7 @@ TEST_F(NativeReaderWriterTest, round_trip_all_types_single_row) {
         ASSERT_EQ(src.column->size(), dst.column->size())
                 << "Size mismatch at col=" << col << " (" << src.name << ")";
 
-        // Compare field values
-        auto src_field = (*src.column)[0];
-        auto dst_field = (*dst.column)[0];
-        ASSERT_EQ(src_field, dst_field)
-                << "Value mismatch at col=" << col << " (" << src.name << ")";
+        expect_native_cell_equal(src, dst, col, 0);
     }
 
     // Next call should hit EOF

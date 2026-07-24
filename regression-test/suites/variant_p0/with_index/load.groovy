@@ -33,7 +33,10 @@ suite("regression_test_variant_with_index", "p0"){
         DISTRIBUTED BY HASH(k) BUCKETS 3
         properties("replication_num" = "1", "disable_auto_compaction" = "true");
     """
-    sql """insert into var_with_index values(1, '{"a" : 0, "b": 3}', 'hello world'), (2, '{"a" : 123}', 'world'),(3, '{"a" : 123}', 'hello world')"""
+    sql """insert into var_with_index values
+            (1, parse_to_variant('{"a" : 0, "b": 3}'), 'hello world'),
+            (2, parse_to_variant('{"a" : 123}'), 'world'),
+            (3, parse_to_variant('{"a" : 123}'), 'hello world')"""
     sql """set enable_match_without_inverted_index = false"""
     sql """ set enable_segment_limit_pushdown = true """
     qt_sql_inv_1 """select v["a"] from var_with_index where inv match 'hello' order by k"""
@@ -42,8 +45,14 @@ suite("regression_test_variant_with_index", "p0"){
     sql "truncate table var_with_index"
     // set back configs
     // sql "truncate table ${table_name}"
-    sql """insert into var_with_index values(1, '{"a1" : 0, "b1": 3}', 'hello world'), (2, '{"a2" : 123}', 'world'),(3, '{"a3" : 123}', 'hello world')"""
-    sql """insert into var_with_index values(4, '{"b1" : 0, "b2": 3}', 'hello world'), (5, '{"b2" : 123}', 'world'),(6, '{"b3" : 123}', 'hello world')"""
+    sql """insert into var_with_index values
+            (1, parse_to_variant('{"a1" : 0, "b1": 3}'), 'hello world'),
+            (2, parse_to_variant('{"a2" : 123}'), 'world'),
+            (3, parse_to_variant('{"a3" : 123}'), 'hello world')"""
+    sql """insert into var_with_index values
+            (4, parse_to_variant('{"b1" : 0, "b2": 3}'), 'hello world'),
+            (5, parse_to_variant('{"b2" : 123}'), 'world'),
+            (6, parse_to_variant('{"b3" : 123}'), 'hello world')"""
     def drop_result = sql """
                       ALTER TABLE var_with_index
                           drop index idx
@@ -61,15 +70,27 @@ suite("regression_test_variant_with_index", "p0"){
     wait_for_last_schema_change_finish(table_name, timeout)
     show_result = sql "show index from ${table_name}"
     assertEquals(show_result.size(), 1)
-    sql """insert into var_with_index values(7, '{"a1" : 0, "b1": 3}', 'hello world'), (8, '{"a2" : 123}', 'world'),(9, '{"a3" : 123}', 'hello world')"""
+    sql """insert into var_with_index values
+            (7, parse_to_variant('{"a1" : 0, "b1": 3}'), 'hello world'),
+            (8, parse_to_variant('{"a2" : 123}'), 'world'),
+            (9, parse_to_variant('{"a3" : 123}'), 'hello world')"""
     qt_sql_inv6 """select * from ${table_name} order by k desc limit 4"""
 
-    sql """insert into var_with_index values(1, '{"a" : 0, "b": 3}', 'hello world'), (2, '{"a" : 123}', 'world'),(3, '{"a" : 123}', 'hello world')"""
+    sql """insert into var_with_index values
+            (1, parse_to_variant('{"a" : 0, "b": 3}'), 'hello world'),
+            (2, parse_to_variant('{"a" : 123}'), 'world'),
+            (3, parse_to_variant('{"a" : 123}'), 'hello world')"""
 
-    sql """insert into var_with_index values(1, '{"a" : 0, "b": 3}', 'hello world'), (2, '{"a" : 123}', 'world'),(3, '{"a" : 123}', 'hello world')"""
+    sql """insert into var_with_index values
+            (1, parse_to_variant('{"a" : 0, "b": 3}'), 'hello world'),
+            (2, parse_to_variant('{"a" : 123}'), 'world'),
+            (3, parse_to_variant('{"a" : 123}'), 'hello world')"""
     sql "select * from var_with_index order by k limit 4"
 
-    sql """insert into var_with_index values(1, '{"a" : 0, "b": 3}', 'hello world'), (2, '{"a" : 123}', 'world'),(3, '{"a" : 123}', 'hello world')"""
+    sql """insert into var_with_index values
+            (1, parse_to_variant('{"a" : 0, "b": 3}'), 'hello world'),
+            (2, parse_to_variant('{"a" : 123}'), 'world'),
+            (3, parse_to_variant('{"a" : 123}'), 'hello world')"""
     sql "select * from var_with_index order by k limit 4"
 
 }

@@ -31,11 +31,8 @@
 #include "core/column/column.h"
 #include "core/data_type/data_type.h"
 #include "storage/segment/column_reader.h"
-#include "storage/segment/variant/nested_group_builder.h"
 #include "storage/segment/variant/nested_group_path.h"
 #include "storage/segment/variant/nested_group_reader.h"
-#include "storage/segment/variant/nested_group_routing_plan.h"
-#include "storage/segment/variant/nested_group_streaming_write_plan.h"
 #include "util/json/path_in_data.h"
 
 namespace roaring {
@@ -49,15 +46,11 @@ class StorageReadOptions;
 namespace io {
 class FileReader;
 } // namespace io
-class ColumnVariant;
-class OlapBlockDataConvertor;
 } // namespace doris
 
 namespace doris::segment_v2 {
 
-struct ColumnWriterOptions;
 struct ColumnReaderOptions;
-struct VariantStatistics;
 struct NestedGroupReader;
 class ColumnMetaAccessor;
 class SegmentFooterPB;
@@ -124,52 +117,6 @@ struct NestedGroupPathMatch {
 // Shared resolver for nested-group path matching used by both reader and provider.
 NestedGroupPathMatch find_in_nested_groups(const NestedGroupReaders& readers,
                                            const std::string& path, bool collect_chain);
-
-// --------------------------------------------------------------------------
-// Write provider
-// --------------------------------------------------------------------------
-
-// Extension point for NestedGroup write path.
-// Concrete behavior is selected by create_nested_group_write_provider().
-// The default provider is a no-op placeholder.
-// Downstream integrations may provide a full implementation that expands JSONB
-// into NestedGroup columns with auxiliary indexes.
-Status build_nested_groups_from_variant_jsonb(
-        const ColumnVariant& variant, NestedGroupsMap* nested_groups,
-        std::vector<std::string>* out_ng_paths = nullptr,
-        std::vector<std::string>* out_conflict_paths = nullptr);
-
-class NestedGroupWriteProvider {
-public:
-    virtual ~NestedGroupWriteProvider() = default;
-
-    virtual Status prepare(const ColumnVariant& variant, const TabletColumn* tablet_column,
-                           const ColumnWriterOptions& opts, OlapBlockDataConvertor* converter,
-                           int* column_id, VariantStatistics* statistics) = 0;
-
-    virtual Status prepare_with_built_groups(const NestedGroupsMap& nested_groups,
-                                             const TabletColumn* tablet_column,
-                                             const ColumnWriterOptions& opts,
-                                             OlapBlockDataConvertor* converter, int* column_id,
-                                             VariantStatistics* statistics) = 0;
-
-    virtual Status init_with_plan(const NestedGroupStreamingWritePlan& plan,
-                                  const TabletColumn* tablet_column,
-                                  const ColumnWriterOptions& opts, int* column_id,
-                                  VariantStatistics* statistics) = 0;
-
-    virtual Status append_chunk(const NestedGroupStreamingWritePlan& plan,
-                                const ColumnVariant& variant) = 0;
-
-    virtual uint64_t estimate_buffer_size() const = 0;
-
-    virtual Status finish() = 0;
-    virtual Status write_data() = 0;
-    virtual Status write_ordinal_index() = 0;
-    virtual Status write_zone_map() = 0;
-    virtual Status write_inverted_index() = 0;
-    virtual Status write_bloom_filter_index() = 0;
-};
 
 // --------------------------------------------------------------------------
 // Read provider
@@ -249,9 +196,7 @@ public:
             roaring::Roaring* parent_bitmap) const = 0;
 };
 
-// Factory functions. Implementations are selected at link time.
-// The default providers are disabled/no-op placeholders.
-std::unique_ptr<NestedGroupWriteProvider> create_nested_group_write_provider();
+// Factory implementation is selected at link time.
 std::unique_ptr<NestedGroupReadProvider> create_nested_group_read_provider();
 
 } // namespace doris::segment_v2

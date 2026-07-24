@@ -35,8 +35,8 @@
 #include "core/column/column_nullable.h"
 #include "core/column/column_string.h"
 #include "core/column/column_struct.h"
-#include "core/column/column_variant.h"
 #include "core/column/column_vector.h"
+#include "core/column/variant_v2/column_variant_v2.h"
 #include "core/data_type/data_type_agg_state.h"
 #include "core/data_type/data_type_array.h"
 #include "core/data_type/data_type_map.h"
@@ -1006,49 +1006,34 @@ Status OlapBlockDataConvertor::OlapColumnDataConvertorMap::convert_to_olap(
 
 void OlapBlockDataConvertor::OlapColumnDataConvertorVariant::set_source_column(
         const ColumnWithTypeAndName& typed_column, size_t row_pos, size_t num_rows) {
-    // set
     const ColumnNullable* nullable_column = nullptr;
     if (is_column_nullable(*typed_column.column)) {
         nullable_column = assert_cast<const ColumnNullable*>(typed_column.column.get());
         _nullmap = nullable_column->get_null_map_data().data();
     }
-    const auto* variant = nullable_column == nullptr
-                                  ? check_and_get_column<const ColumnVariant>(*typed_column.column)
-                                  : check_and_get_column<const ColumnVariant>(
-                                            nullable_column->get_nested_column());
+    const auto* variant =
+            nullable_column == nullptr
+                    ? check_and_get_column<const ColumnVariantV2>(*typed_column.column)
+                    : check_and_get_column<const ColumnVariantV2>(
+                              nullable_column->get_nested_column());
     OlapBlockDataConvertor::OlapColumnDataConvertorBase::set_source_column(typed_column, row_pos,
                                                                            num_rows);
 
     _value_ptr = variant;
-    // Convert root data, since the root data is a jsonb column, we treat is as jsonb convertor
-    if (!_value_ptr) {
-        _root_data_convertor = std::make_unique<OlapColumnDataConvertorVarChar>(true);
-        _root_data_convertor->set_source_column(typed_column, row_pos, num_rows);
-    }
+    _variant_column_data.reset();
 }
 
-// convert root data
 Status OlapBlockDataConvertor::OlapColumnDataConvertorVariant::convert_to_olap() {
-    // Convert root data, since the root data is a jsonb column, we treat is as jsonb convertor
     if (!_value_ptr) {
-        const auto* nullable = assert_cast<const ColumnNullable*>(_typed_column.column.get());
-        const auto* root_column = assert_cast<const ColumnString*>(&nullable->get_nested_column());
-        RETURN_IF_ERROR(_root_data_convertor->convert_to_olap(_nullmap, root_column));
-        return Status::OK();
+        return Status::InvalidArgument(
+                "Variant storage boundary requires ColumnVariantV2 input, got {}",
+                _typed_column.column->get_name());
     }
-    // Do nothing, the column writer will finally do finalize and write subcolumns one by one
-    // since we are not sure the final column(type and columns) until the end of the last block
-    // need to return the position of the column data
     _variant_column_data = std::make_unique<VariantColumnData>(_value_ptr, _row_pos);
     return Status::OK();
 }
 
 const void* OlapBlockDataConvertor::OlapColumnDataConvertorVariant::get_data() const {
-    if (!_value_ptr) {
-        return _root_data_convertor->get_data();
-    }
-    // return the ptr of VariantColumnData, see VariantColumnWriterImpl::append_data
-    // which will cast to VariantColumnData
     return _variant_column_data.get();
 }
 const void* OlapBlockDataConvertor::OlapColumnDataConvertorVariant::get_data_at(

@@ -27,9 +27,9 @@ suite("regression_test_variant_multi_var", "variant_type"){
         DISTRIBUTED BY HASH(k) BUCKETS 4
         properties("replication_num" = "1", "disable_auto_compaction" = "true");
     """
-    sql """INSERT INTO ${table_name} SELECT *, '{"k1":1, "k2": "hello world", "k3" : [1234], "k4" : 1.10000, "k5" : [[123]]}' FROM numbers("number" = "101")"""
-    sql """INSERT INTO ${table_name} SELECT *, '{"k7":123, "k8": "elden ring", "k9" : 1.1112, "k10" : [1.12], "k11" : ["moon"]}' FROM numbers("number" = "203") where number > 100"""
-    sql """INSERT INTO ${table_name} SELECT *, '{"k7":123, "k8": "elden ring", "k9" : 1.1112, "k10" : [1.12], "k11" : ["moon"]}' FROM numbers("number" = "411") where number > 200"""
+    sql """INSERT INTO ${table_name} SELECT *, parse_to_variant('{"k1":1, "k2": "hello world", "k3" : [1234], "k4" : 1.10000, "k5" : [[123]]}') FROM numbers("number" = "101")"""
+    sql """INSERT INTO ${table_name} SELECT *, parse_to_variant('{"k7":123, "k8": "elden ring", "k9" : 1.1112, "k10" : [1.12], "k11" : ["moon"]}') FROM numbers("number" = "203") where number > 100"""
+    sql """INSERT INTO ${table_name} SELECT *, parse_to_variant('{"k7":123, "k8": "elden ring", "k9" : 1.1112, "k10" : [1.12], "k11" : ["moon"]}') FROM numbers("number" = "411") where number > 200"""
     sql "alter table ${table_name} add column v2 variant default null"
     sql """INSERT INTO ${table_name} select k, v, v from ${table_name}"""
     sql "alter table ${table_name} add column v3 variant default null"
@@ -43,7 +43,9 @@ suite("regression_test_variant_multi_var", "variant_type"){
 
     sql "alter table ${table_name} add column v4 variant default null"
     for (int i = 0; i < 20; i++) {
-        sql """insert into ${table_name}  values (1, '{"a" : 1}', '{"a" : 1}', '{"a" : 1}', '{"a" : 1}', '{"a" : 1}')"""
+        sql """insert into ${table_name} values
+                (1, parse_to_variant('{"a" : 1}'), parse_to_variant('{"a" : 1}'),
+                 parse_to_variant('{"a" : 1}'), parse_to_variant('{"a" : 1}'), '{"a" : 1}')"""
     }
 
     trigger_and_wait_compaction(table_name, "full")

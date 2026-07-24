@@ -15,697 +15,221 @@
 // specific language governing permissions and limitations
 // under the License.
 
+#include <gtest/gtest.h>
+
+#include <string_view>
 #include <vector>
 
-#include "common/status.h"
-#include "core/column/column_array.h"
-#include "core/column/column_decimal.h"
+#include "core/assert_cast.h"
+#include "core/block/block.h"
+#include "core/column/column_const.h"
 #include "core/column/column_nullable.h"
-#include "core/column/column_variant.h"
-#include "core/data_type/data_type_array.h"
-#include "core/data_type/data_type_decimal.h"
+#include "core/column/column_string.h"
+#include "core/column/variant_v2/column_variant_v2.h"
 #include "core/data_type/data_type_nullable.h"
 #include "core/data_type/data_type_number.h"
 #include "core/data_type/data_type_string.h"
 #include "core/data_type/data_type_variant.h"
-#include "core/data_type/define_primitive_type.h"
-#include "core/data_type/primitive_type.h"
-#include "core/field.h"
+#include "core/data_type_serde/data_type_variant_v2_serde.h"
+#include "core/value/variant/variant_batch_builder.h"
+#include "exec/common/variant_util.h"
 #include "exprs/function/simple_function_factory.h"
-#include "gtest/gtest_pred_impl.h"
 #include "runtime/runtime_state.h"
 
 namespace doris {
-static doris::Field construct_variant_map(
-        const std::vector<std::pair<std::string, doris::Field>>& key_and_values) {
-    doris::Field res = Field::create_field<TYPE_VARIANT>(VariantMap {});
-    auto& object = res.get<TYPE_VARIANT>();
-    for (const auto& [k, v] : key_and_values) {
-        PathInData path(k);
-        object.try_emplace(path, v);
+namespace {
+
+Status execute_cast(ColumnPtr source, DataTypePtr source_type, DataTypePtr target_type,
+                    ColumnPtr* output) {
+    ColumnsWithTypeAndName arguments {{std::move(source), std::move(source_type), "source"},
+                                      {nullptr, target_type, "target"}};
+    auto function = SimpleFunctionFactory::instance().get_function("CAST", arguments, target_type);
+    if (!function) {
+        return Status::NotFound("CAST overload is not registered");
     }
-    return res;
-}
-
-static auto construct_basic_varint_column() {
-    // 1. create an empty variant column
-    auto variant = ColumnVariant::create(5, false);
-
-    std::vector<std::pair<std::string, doris::Field>> data;
-
-    // 2. subcolumn path
-    data.emplace_back("v.a", Field::create_field<TYPE_INT>(20));
-    data.emplace_back("v.b", Field::create_field<TYPE_STRING>("20"));
-    data.emplace_back("v.c", Field::create_field<TYPE_INT>(20));
-    data.emplace_back("v.f", Field::create_field<TYPE_INT>(20));
-    data.emplace_back("v.e", Field::create_field<TYPE_STRING>("50"));
-    for (int i = 0; i < 5; ++i) {
-        auto field = construct_variant_map(data);
-        variant->try_insert(field);
-    }
-
-    return variant;
-}
-
-TEST(FunctionVariantCast, CastToVariant) {
-    // Test casting from basic types to variant
-    {
-        // Test Int32 to variant
-        auto int32_type = std::make_shared<DataTypeInt32>();
-        auto variant_type = std::make_shared<DataTypeVariant>();
-        auto int32_col = ColumnInt32::create();
-        int32_col->insert(Field::create_field<TYPE_INT>(42));
-        int32_col->insert(Field::create_field<TYPE_INT>(100));
-        int32_col->insert(Field::create_field<TYPE_INT>(-1));
-
-        ColumnsWithTypeAndName arguments {{int32_col->get_ptr(), int32_type, "int32_col"},
-                                          {nullptr, variant_type, "variant_type"}};
-
-        auto function =
-                SimpleFunctionFactory::instance().get_function("CAST", arguments, variant_type);
-        ASSERT_NE(function, nullptr);
-
-        Block block {arguments};
-        size_t result_column = block.columns();
-        block.insert({nullptr, variant_type, "result"});
-
-        RuntimeState state;
-        auto ctx = FunctionContext::create_context(&state, {}, {});
-        ASSERT_TRUE(function->execute(ctx.get(), block, {0}, result_column, 3).ok());
-
-        auto result_col = block.get_by_position(result_column).column;
-        ASSERT_NE(result_col.get(), nullptr);
-        const auto* variant_col = assert_cast<const ColumnVariant*>(result_col.get());
-        ASSERT_EQ(variant_col->size(), 3);
-    }
-
-    // Test casting from string to variant
-    {
-        auto string_type = std::make_shared<DataTypeString>();
-        auto variant_type = std::make_shared<DataTypeVariant>();
-        auto string_col = ColumnString::create();
-        string_col->insert_data("hello", 5);
-        string_col->insert_data("world", 5);
-
-        ColumnsWithTypeAndName arguments {{string_col->get_ptr(), string_type, "string_col"},
-                                          {nullptr, variant_type, "variant_type"}};
-
-        auto function = SimpleFunctionFactory::instance().get_function("CAST", arguments,
-                                                                       make_nullable(variant_type));
-        ASSERT_NE(function, nullptr);
-
-        Block block {arguments};
-        size_t result_column = block.columns();
-        block.insert({nullptr, variant_type, "result"});
-
-        RuntimeState state;
-        auto ctx = FunctionContext::create_context(&state, {}, {});
-        ASSERT_TRUE(function->execute(ctx.get(), block, {0}, result_column, 2).ok());
-
-        auto result_col = block.get_by_position(result_column).column;
-        ASSERT_NE(result_col.get(), nullptr);
-        const auto* variant_col =
-                assert_cast<const ColumnVariant*>(remove_nullable(result_col).get());
-        ASSERT_EQ(variant_col->size(), 2);
-    }
-
-    // Test casting from array to variant
-    {
-        auto array_type = std::make_shared<DataTypeArray>(std::make_shared<DataTypeInt32>());
-        auto variant_type = std::make_shared<DataTypeVariant>();
-        auto array_col = array_type->create_column();
-        array_col->insert(Field::create_field<TYPE_ARRAY>(
-                Array {Field::create_field<TYPE_INT>(1), Field::create_field<TYPE_INT>(2),
-                       Field::create_field<TYPE_INT>(3)}));
-
-        ColumnsWithTypeAndName arguments {{array_col->get_ptr(), array_type, "array_col"},
-                                          {nullptr, variant_type, "variant_type"}};
-
-        auto function =
-                SimpleFunctionFactory::instance().get_function("CAST", arguments, variant_type);
-        ASSERT_NE(function, nullptr);
-
-        Block block {arguments};
-        size_t result_column = block.columns();
-        block.insert({nullptr, variant_type, "result"});
-
-        RuntimeState state;
-        auto ctx = FunctionContext::create_context(&state, {}, {});
-        ASSERT_TRUE(function->execute(ctx.get(), block, {0}, result_column, 1).ok());
-
-        auto result_col = block.get_by_position(result_column).column;
-        ASSERT_NE(result_col.get(), nullptr);
-        const auto* variant_col =
-                assert_cast<const ColumnVariant*>(remove_nullable(result_col).get());
-        ASSERT_EQ(variant_col->size(), 1);
-    }
-}
-
-TEST(FunctionVariantCast, CastFromVariant) {
-    // Test casting from variant to basic types
-    {
-        auto variant_type = std::make_shared<DataTypeVariant>();
-        auto int32_type = std::make_shared<DataTypeInt32>();
-        auto variant_col = ColumnVariant::create(0, false);
-
-        // Create a variant column with integer values
-        variant_col->create_root(int32_type, ColumnInt32::create());
-        MutableColumnPtr data = variant_col->get_root();
-        data->insert(Field::create_field<TYPE_INT>(42));
-        data->insert(Field::create_field<TYPE_INT>(100));
-        data->insert(Field::create_field<TYPE_INT>(-1));
-
-        ColumnsWithTypeAndName arguments {{variant_col->get_ptr(), variant_type, "variant_col"},
-                                          {nullptr, int32_type, "int32_type"}};
-
-        auto function =
-                SimpleFunctionFactory::instance().get_function("CAST", arguments, int32_type);
-        ASSERT_NE(function, nullptr);
-
-        Block block {arguments};
-        size_t result_column = block.columns();
-        block.insert({nullptr, int32_type, "result"});
-
-        RuntimeState state;
-        auto ctx = FunctionContext::create_context(&state, {}, {});
-        ASSERT_TRUE(function->execute(ctx.get(), block, {0}, result_column, 3).ok());
-
-        auto result_col = block.get_by_position(result_column).column;
-        ASSERT_NE(result_col.get(), nullptr);
-        // always nullable
-        const auto* int32_result =
-                assert_cast<const ColumnInt32*>(remove_nullable(result_col).get());
-        ASSERT_EQ(int32_result->size(), 3);
-        ASSERT_EQ(int32_result->get_element(0), 42);
-        ASSERT_EQ(int32_result->get_element(1), 100);
-        ASSERT_EQ(int32_result->get_element(2), -1);
-    }
-
-    // Test casting from variant to string
-    {
-        auto variant_type = std::make_shared<DataTypeVariant>();
-        auto string_type = std::make_shared<DataTypeString>();
-        auto variant_col = ColumnVariant::create(0, false);
-
-        // Create a variant column with string values
-        variant_col->create_root(string_type, ColumnString::create());
-        MutableColumnPtr data = variant_col->get_root();
-        data->insert_data("hello", 5);
-        data->insert_data("world", 5);
-
-        ColumnsWithTypeAndName arguments {{variant_col->get_ptr(), variant_type, "variant_col"},
-                                          {nullptr, string_type, "string_type"}};
-
-        auto function =
-                SimpleFunctionFactory::instance().get_function("CAST", arguments, string_type);
-        ASSERT_NE(function, nullptr);
-
-        Block block {arguments};
-        size_t result_column = block.columns();
-        block.insert({nullptr, string_type, "result"});
-
-        RuntimeState state;
-        auto ctx = FunctionContext::create_context(&state, {}, {});
-        ASSERT_TRUE(function->execute(ctx.get(), block, {0}, result_column, 2).ok());
-
-        auto result_col = block.get_by_position(result_column).column;
-        ASSERT_NE(result_col.get(), nullptr);
-        const auto* string_result =
-                assert_cast<const ColumnString*>(remove_nullable(result_col).get());
-        ASSERT_EQ(string_result->size(), 2);
-        ASSERT_EQ(string_result->get_data_at(0).to_string(), "hello");
-        ASSERT_EQ(string_result->get_data_at(1).to_string(), "world");
-    }
-
-    // Test casting from variant to array
-    {
-        auto variant_type = std::make_shared<DataTypeVariant>();
-        auto array_type = std::make_shared<DataTypeArray>(std::make_shared<DataTypeInt32>());
-        auto variant_col = ColumnVariant::create(0, false);
-
-        // Create a variant column with array values
-        variant_col->create_root(array_type, array_type->create_column());
-        MutableColumnPtr data = variant_col->get_root();
-
-        Field a = Field::create_field<TYPE_ARRAY>(Array {Field::create_field<TYPE_INT>(1),
-                                                         Field::create_field<TYPE_INT>(2),
-                                                         Field::create_field<TYPE_INT>(3)});
-
-        data->insert(a);
-
-        ColumnsWithTypeAndName arguments {{variant_col->get_ptr(), variant_type, "variant_col"},
-                                          {nullptr, array_type, "array_type"}};
-
-        auto function =
-                SimpleFunctionFactory::instance().get_function("CAST", arguments, array_type);
-        ASSERT_NE(function, nullptr);
-
-        Block block {arguments};
-        size_t result_column = block.columns();
-        block.insert({nullptr, array_type, "result"});
-
-        RuntimeState state;
-        auto ctx = FunctionContext::create_context(&state, {}, {});
-        ASSERT_TRUE(function->execute(ctx.get(), block, {0}, result_column, 1).ok());
-
-        auto result_col = block.get_by_position(result_column).column;
-        ASSERT_NE(result_col.get(), nullptr);
-        const auto* array_result =
-                assert_cast<const ColumnArray*>(remove_nullable(result_col).get());
-        ASSERT_EQ(array_result->size(), 1);
-        const auto& result_nullable = assert_cast<const ColumnNullable&>(array_result->get_data());
-        const auto& result_data =
-                assert_cast<const ColumnInt32&>(result_nullable.get_nested_column());
-        ASSERT_EQ(result_data.size(), 3);
-        ASSERT_EQ(result_data.get_element(0), 1);
-        ASSERT_EQ(result_data.get_element(1), 2);
-        ASSERT_EQ(result_data.get_element(2), 3);
-        ASSERT_FALSE(result_nullable.has_null());
-    }
-}
-
-TEST(FunctionVariantCast, CastFromVariantDoesNotFinalizeSourceColumn) {
-    auto variant_type = std::make_shared<DataTypeVariant>();
-    auto int32_type = std::make_shared<DataTypeInt32>();
-    auto string_type = std::make_shared<DataTypeString>();
-    auto variant_col = construct_basic_varint_column();
-
-    ASSERT_FALSE(variant_col->is_finalized());
-
-    {
-        ColumnsWithTypeAndName arguments {{variant_col->get_ptr(), variant_type, "variant_col"},
-                                          {nullptr, int32_type, "int32_type"}};
-
-        auto function =
-                SimpleFunctionFactory::instance().get_function("CAST", arguments, int32_type);
-        ASSERT_NE(function, nullptr);
-
-        Block block {arguments};
-        size_t result_column = block.columns();
-        block.insert({nullptr, int32_type, "result"});
-
-        RuntimeState state;
-        auto ctx = FunctionContext::create_context(&state, {}, {});
-        ASSERT_TRUE(
-                function->execute(ctx.get(), block, {0}, result_column, variant_col->size()).ok());
-
-        EXPECT_FALSE(variant_col->is_finalized());
-
-        auto result_col = block.get_by_position(result_column).column;
-        ASSERT_NE(result_col.get(), nullptr);
-        ASSERT_EQ(result_col->size(), variant_col->size());
-    }
-
-    {
-        ColumnsWithTypeAndName arguments {{variant_col->get_ptr(), variant_type, "variant_col"},
-                                          {nullptr, string_type, "string_type"}};
-
-        auto function =
-                SimpleFunctionFactory::instance().get_function("CAST", arguments, string_type);
-        ASSERT_NE(function, nullptr);
-
-        Block block {arguments};
-        size_t result_column = block.columns();
-        block.insert({nullptr, string_type, "result"});
-
-        RuntimeState state;
-        auto ctx = FunctionContext::create_context(&state, {}, {});
-        ASSERT_TRUE(
-                function->execute(ctx.get(), block, {0}, result_column, variant_col->size()).ok());
-
-        EXPECT_FALSE(variant_col->is_finalized());
-
-        auto result_col = block.get_by_position(result_column).column;
-        ASSERT_NE(result_col.get(), nullptr);
-        ASSERT_EQ(result_col->size(), variant_col->size());
-    }
-}
-
-TEST(FunctionVariantCast, CastVariantWithNull) {
-    auto variant_type = std::make_shared<DataTypeVariant>();
-    auto int32_type = std::make_shared<DataTypeInt32>();
-    auto nullable_int32_type = std::make_shared<DataTypeNullable>(int32_type);
-
-    // Create a variant column with nullable integer values
-    auto variant_col = ColumnVariant::create(0, false);
-    variant_col->create_root(nullable_int32_type,
-                             ColumnNullable::create(ColumnInt32::create(), ColumnUInt8::create()));
-    MutableColumnPtr data = variant_col->get_root();
-
-    data->insert(Field::create_field<TYPE_INT>(42));
-    data->insert(Field::create_field<TYPE_NULL>(Null()));
-    data->insert(Field::create_field<TYPE_INT>(100));
-
-    ColumnsWithTypeAndName arguments {{variant_col->get_ptr(), variant_type, "variant_col"},
-                                      {nullptr, nullable_int32_type, "nullable_int32_type"}};
-
-    variant_col->finalize();
-    auto function =
-            SimpleFunctionFactory::instance().get_function("CAST", arguments, nullable_int32_type);
-    ASSERT_NE(function, nullptr);
-
-    Block block {arguments};
-    size_t result_column = block.columns();
-    block.insert({nullptr, nullable_int32_type, "result"});
-
+    Block block {std::move(arguments)};
+    const size_t result = block.columns();
+    block.insert({nullptr, target_type, "result"});
     RuntimeState state;
-    auto ctx = FunctionContext::create_context(&state, {}, {});
-    ASSERT_TRUE(function->execute(ctx.get(), block, {0}, result_column, 3).ok());
-
-    auto result_col = block.get_by_position(result_column).column;
-    ASSERT_NE(result_col.get(), nullptr);
-    const auto* nullable_result = assert_cast<const ColumnNullable*>(result_col.get());
-    ASSERT_EQ(nullable_result->size(), 3);
-
-    const auto& result_data = assert_cast<const ColumnInt32&>(nullable_result->get_nested_column());
-    const auto& result_null_map = nullable_result->get_null_map_data();
-
-    ASSERT_EQ(result_data.get_element(0), 42);
-    ASSERT_EQ(result_null_map[0], 0);
-    ASSERT_EQ(result_null_map[1], 1);
-    ASSERT_EQ(result_data.get_element(2), 100);
+    auto context = FunctionContext::create_context(&state, {}, {});
+    RETURN_IF_ERROR(function->execute(context.get(), block, {0}, result, block.rows()));
+    *output = block.get_by_position(result).column;
+    return Status::OK();
 }
 
-TEST(FunctionVariantCast, CastFromVariantWithEmptyRoot) {
-    // Test case 1: variant.empty() branch
+ColumnVariantV2::MutablePtr encoded_scalars() {
+    VariantBatchBuilder builder(VariantBatchBuilder::ReserveHint {.rows = 4});
     {
-        auto variant_type = std::make_shared<DataTypeVariant>();
-        auto int32_type = std::make_shared<DataTypeInt32>();
-        MutableColumnPtr root = ColumnInt32::create();
-        root->insert(Field::create_field<TYPE_INT>(42));
-        ColumnVariant::Subcolumns dynamic_subcolumns;
-        dynamic_subcolumns.add(PathInData(ColumnVariant::COLUMN_NAME_DUMMY),
-                               ColumnVariant::Subcolumn {root->get_ptr(), int32_type, true, true});
-        auto variant_col = ColumnVariant::create(0, false, std::move(dynamic_subcolumns));
+        auto row = builder.begin_row();
+        row.add_int(42);
+        row.finish();
+    }
+    {
+        auto row = builder.begin_row();
+        row.add_string(StringRef("7"));
+        row.finish();
+    }
+    {
+        auto row = builder.begin_row();
+        auto object = row.start_object();
+        object.add_key(StringRef("a"));
+        row.add_int(1);
+        object.finish();
+        row.finish();
+    }
+    {
+        auto row = builder.begin_row();
+        row.add_null();
+        row.finish();
+    }
+    VariantBatchBuilder block = builder.finish_batch();
+    auto result = ColumnVariantV2::create();
+    result->insert_encoded_batch(block);
+    return result;
+}
 
-        variant_col->finalize();
-        ColumnsWithTypeAndName arguments {{variant_col->get_ptr(), variant_type, "variant_col"},
-                                          {nullptr, int32_type, "int32_type"}};
+std::string variant_text_at(const IColumn& column, size_t row) {
+    DataTypeVariantV2SerDe serde;
+    auto output = ColumnString::create();
+    BufferWritable writer(*output);
+    DataTypeSerDe::FormatOptions options;
+    serde.to_string(column, row, writer, options);
+    writer.commit();
+    return output->get_data_at(0).to_string();
+}
 
-        auto function =
-                SimpleFunctionFactory::instance().get_function("CAST", arguments, int32_type);
-        ASSERT_NE(function, nullptr);
+} // namespace
 
-        Block block {arguments};
-        size_t result_column = block.columns();
-        block.insert({nullptr, int32_type, "result"});
-
-        RuntimeState state;
-        auto ctx = FunctionContext::create_context(&state, {}, {});
-        ASSERT_TRUE(function->execute(ctx.get(), block, {0}, result_column, 1).ok());
-
-        auto result_col = block.get_by_position(result_column).column;
-        ASSERT_NE(result_col.get(), nullptr);
-        // always nullable
-        const auto* int32_result =
-                assert_cast<const ColumnInt32*>(remove_nullable(result_col).get());
-        ASSERT_EQ(int32_result->size(), 1);
-        // because of variant.empty() we insert_default with data_type_to
-        ASSERT_EQ(int32_result->get_element(0), 0);
+TEST(FunctionVariantCast, StorageCastPreservesStringScalarsWithoutSession) {
+    auto strings = ColumnString::create();
+    for (const std::string_view value : {"", "1", "true", "null", "{}"}) {
+        strings->insert_data(value.data(), value.size());
     }
 
-    // Test case 2: !data_type_to->is_nullable() && !WhichDataType(data_type_to).is_string() branch
-    {
-        // object has sparse column
-        auto int32_type = std::make_shared<DataTypeInt32>();
-        auto variant_col = construct_basic_varint_column();
-        auto variant_type = std::make_shared<DataTypeVariant>();
+    auto source_type = std::make_shared<DataTypeString>();
+    auto target_type = std::make_shared<DataTypeVariant>();
+    ColumnPtr output;
+    ASSERT_TRUE(variant_util::cast_column({strings->get_ptr(), source_type, "v.path"}, target_type,
+                                          &output)
+                        .ok());
 
-        ColumnsWithTypeAndName arguments {{variant_col->get_ptr(), variant_type, "variant_col"},
-                                          {nullptr, int32_type, "int32_type"}};
-
-        variant_col->finalize();
-        auto function =
-                SimpleFunctionFactory::instance().get_function("CAST", arguments, int32_type);
-        ASSERT_NE(function, nullptr);
-
-        Block block {arguments};
-        size_t result_column = block.columns();
-        block.insert({nullptr, int32_type, "result"});
-        RuntimeState state;
-        auto ctx = FunctionContext::create_context(&state, {}, {});
-        ASSERT_TRUE(function->execute(ctx.get(), block, {0}, result_column, 1).ok());
-
-        auto result_col = block.get_by_position(result_column).column;
-        ASSERT_NE(result_col.get(), nullptr);
-        const auto* nullable_result = assert_cast<const ColumnNullable*>(result_col.get());
-        ASSERT_EQ(nullable_result->size(), 1);
-        ASSERT_TRUE(nullable_result->is_null_at(0));
-    }
-
-    // Test case 3: WhichDataType(data_type_to).is_string() branch
-    {
-        // variant has sparse column
-        auto int32_type = std::make_shared<DataTypeInt32>();
-        auto variant_col = construct_basic_varint_column();
-
-        auto string_type = std::make_shared<DataTypeString>();
-        auto variant_type = std::make_shared<DataTypeVariant>();
-
-        ColumnsWithTypeAndName arguments {{variant_col->get_ptr(), variant_type, "variant_col"},
-                                          {nullptr, string_type, "string_type"}};
-
-        variant_col->finalize();
-        auto function =
-                SimpleFunctionFactory::instance().get_function("CAST", arguments, string_type);
-        ASSERT_NE(function, nullptr);
-
-        Block block {arguments};
-        size_t result_column = block.columns();
-        block.insert({nullptr, string_type, "result"});
-        RuntimeState state;
-        auto ctx = FunctionContext::create_context(&state, {}, {});
-        ASSERT_TRUE(function->execute(ctx.get(), block, {0}, result_column, 1).ok());
-
-        auto result_col = block.get_by_position(result_column).column;
-        ASSERT_NE(result_col.get(), nullptr);
-        const auto* string_result = assert_cast<const ColumnString*>(result_col.get());
-        ASSERT_EQ(string_result->size(), 1);
-        ASSERT_EQ(string_result->get_data_at(0).to_string(),
-                  "{\"v\":{\"a\":20,\"b\":\"20\",\"c\":20,\"e\":\"50\",\"f\":20}}");
-    }
-
-    // Test case 4: else branch (nullable type)
-    {
-        auto variant_col = construct_basic_varint_column();
-        variant_col->finalize();
-        const auto rows = variant_col->size();
-        auto nullable_variant_col =
-                ColumnNullable::create(std::move(variant_col), ColumnUInt8::create(rows, 0));
-
-        auto nullable_string_type = make_nullable(std::make_shared<DataTypeString>());
-        auto variant_type = std::make_shared<DataTypeVariant>();
-        auto nullable_variant_type = make_nullable(variant_type);
-
-        ColumnsWithTypeAndName arguments {
-                {nullable_variant_col->get_ptr(), nullable_variant_type, "variant_col"},
-                {nullptr, nullable_string_type, "nullable_string_type"}};
-
-        auto function = SimpleFunctionFactory::instance().get_function("CAST", arguments,
-                                                                       nullable_string_type);
-        ASSERT_NE(function, nullptr);
-
-        Block block {arguments};
-        size_t result_column = block.columns();
-        block.insert({nullptr, nullable_string_type, "result"});
-        RuntimeState state;
-        auto ctx = FunctionContext::create_context(&state, {}, {});
-        ASSERT_TRUE(function->execute(ctx.get(), block, {0}, result_column, 1).ok());
-
-        auto result_col = block.get_by_position(result_column).column;
-        ASSERT_NE(result_col.get(), nullptr);
-        const auto* nullable_result = assert_cast<const ColumnNullable*>(result_col.get());
-        ASSERT_EQ(nullable_result->size(), 1);
-        ASSERT_FALSE(nullable_result->is_null_at(0));
-        const auto* string_result =
-                assert_cast<const ColumnString*>(&nullable_result->get_nested_column());
-        ASSERT_EQ(string_result->get_data_at(0).to_string(),
-                  "{\"v\":{\"a\":20,\"b\":\"20\",\"c\":20,\"e\":\"50\",\"f\":20}}");
-    }
-
-    // Test case 5: nullable source null-map is preserved.
-    {
-        auto variant_col = construct_basic_varint_column();
-        variant_col->finalize();
-        auto single_variant_col = variant_col->cut(0, 1);
-        auto null_map = ColumnUInt8::create(single_variant_col->size(), 0);
-        null_map->get_data()[0] = 1;
-        auto nullable_variant_col =
-                ColumnNullable::create(std::move(single_variant_col), std::move(null_map));
-
-        auto nullable_string_type = make_nullable(std::make_shared<DataTypeString>());
-        auto variant_type = std::make_shared<DataTypeVariant>();
-        auto nullable_variant_type = make_nullable(variant_type);
-
-        ColumnsWithTypeAndName arguments {
-                {nullable_variant_col->get_ptr(), nullable_variant_type, "variant_col"},
-                {nullptr, nullable_string_type, "nullable_string_type"}};
-
-        auto function = SimpleFunctionFactory::instance().get_function("CAST", arguments,
-                                                                       nullable_string_type);
-        ASSERT_NE(function, nullptr);
-
-        Block block {arguments};
-        size_t result_column = block.columns();
-        block.insert({nullptr, nullable_string_type, "result"});
-        RuntimeState state;
-        auto ctx = FunctionContext::create_context(&state, {}, {});
-        ASSERT_TRUE(function->execute(ctx.get(), block, {0}, result_column,
-                                      nullable_variant_col->size())
-                            .ok());
-
-        auto result_col = block.get_by_position(result_column).column;
-        ASSERT_NE(result_col.get(), nullptr);
-        const auto* nullable_result = assert_cast<const ColumnNullable*>(result_col.get());
-        ASSERT_EQ(nullable_result->size(), 1);
-        ASSERT_TRUE(nullable_result->is_null_at(0));
+    const auto& variant = assert_cast<const ColumnVariantV2&>(*output);
+    const std::vector<std::string> expected {R"("")", R"("1")", R"("true")", R"("null")",
+                                             R"("{}")"};
+    ASSERT_EQ(variant.size(), expected.size());
+    for (size_t row = 0; row < expected.size(); ++row) {
+        EXPECT_EQ(variant_text_at(variant, row), expected[row]);
     }
 }
 
-// Regression test for JIRA-233:
-// INSERT INTO SELECT with variant→target cast returns all NULLs in strict mode.
-// The bug was that cast_from_variant_impl inherited strict mode from the INSERT context,
-// causing internal JSONB→target conversion to fail for null entries, which made the
-// entire cast return all NULLs.
-TEST(FunctionVariantCast, CastFromVariantStrictModeRegression) {
-    // Test: variant with nullable root → Int32 with strict mode enabled
-    // Before fix: strict mode causes all NULLs
-    // After fix: non-null entries produce correct values, null entries stay NULL
-    {
-        auto variant_type = std::make_shared<DataTypeVariant>();
-        auto int32_type = std::make_shared<DataTypeInt32>();
-        auto nullable_int32_type = std::make_shared<DataTypeNullable>(int32_type);
+TEST(FunctionVariantCast, PublicCastToVariantCreatesTypedV2) {
+    auto source_type = std::make_shared<DataTypeInt32>();
+    auto target_type = std::make_shared<DataTypeVariant>(37, true);
+    auto source = ColumnInt32::create();
+    source->insert_value(42);
+    source->insert_value(-3);
 
-        // Create variant column with nullable integer root (some null, some not)
-        auto variant_col = ColumnVariant::create(0, false);
-        variant_col->create_root(
-                nullable_int32_type,
-                ColumnNullable::create(ColumnInt32::create(), ColumnUInt8::create()));
-        MutableColumnPtr data = variant_col->get_root();
+    ColumnPtr output;
+    ASSERT_TRUE(execute_cast(source->get_ptr(), source_type, target_type, &output).ok());
+    const auto& variant = assert_cast<const ColumnVariantV2&>(*output);
+    ASSERT_TRUE(variant.is_typed());
+    EXPECT_EQ(variant.typed_type()->get_primitive_type(), TYPE_INT);
+    EXPECT_EQ(variant_text_at(variant, 0), "42");
+    EXPECT_EQ(variant_text_at(variant, 1), "-3");
 
-        // Row 0: value 42
-        data->insert(Field::create_field<TYPE_INT>(42));
-        // Row 1: NULL (simulating a row where the variant subcolumn doesn't exist)
-        data->insert(Field::create_field<TYPE_NULL>(Null()));
-        // Row 2: value 100
-        data->insert(Field::create_field<TYPE_INT>(100));
-        // Row 3: NULL
-        data->insert(Field::create_field<TYPE_NULL>(Null()));
-        // Row 4: value -5
-        data->insert(Field::create_field<TYPE_INT>(-5));
+    auto strings = ColumnString::create();
+    strings->insert_data("{\"a\":1}", 7);
+    ASSERT_TRUE(execute_cast(strings->get_ptr(), std::make_shared<DataTypeString>(), target_type,
+                             &output)
+                        .ok());
+    const auto& string_variant = assert_cast<const ColumnVariantV2&>(*output);
+    ASSERT_TRUE(string_variant.is_typed());
+    EXPECT_EQ(string_variant.typed_type()->get_primitive_type(), TYPE_STRING);
+    EXPECT_EQ(variant_text_at(string_variant, 0), R"("{\"a\":1}")");
+}
 
-        variant_col->finalize();
-
-        ColumnsWithTypeAndName arguments {{variant_col->get_ptr(), variant_type, "variant_col"},
-                                          {nullptr, int32_type, "int32_type"}};
-
-        auto function =
-                SimpleFunctionFactory::instance().get_function("CAST", arguments, int32_type);
-        ASSERT_NE(function, nullptr);
-
-        Block block {arguments};
-        size_t result_column = block.columns();
-        block.insert({nullptr, int32_type, "result"});
-
-        RuntimeState state;
-        auto ctx = FunctionContext::create_context(&state, {}, {});
-
-        // Enable strict mode to simulate INSERT context (this is the key!)
-        ctx->set_enable_strict_mode(true);
-
-        ASSERT_TRUE(function->execute(ctx.get(), block, {0}, result_column, 5).ok());
-
-        auto result_col = block.get_by_position(result_column).column;
-        ASSERT_NE(result_col.get(), nullptr);
-
-        // The result should be a nullable column
-        const auto* nullable_result = assert_cast<const ColumnNullable*>(result_col.get());
-        ASSERT_EQ(nullable_result->size(), 5);
-
-        const auto& result_data =
-                assert_cast<const ColumnInt32&>(nullable_result->get_nested_column());
-        const auto& null_map = nullable_result->get_null_map_data();
-
-        // Row 0: value 42, not null
-        ASSERT_EQ(null_map[0], 0);
-        ASSERT_EQ(result_data.get_element(0), 42);
-
-        // Row 1: NULL
-        ASSERT_EQ(null_map[1], 1);
-
-        // Row 2: value 100, not null
-        ASSERT_EQ(null_map[2], 0);
-        ASSERT_EQ(result_data.get_element(2), 100);
-
-        // Row 3: NULL
-        ASSERT_EQ(null_map[3], 1);
-
-        // Row 4: value -5, not null
-        ASSERT_EQ(null_map[4], 0);
-        ASSERT_EQ(result_data.get_element(4), -5);
+TEST(FunctionVariantCast, PublicCastFromVariantPreservesNullsAndSource) {
+    auto source = encoded_scalars();
+    ASSERT_FALSE(source->is_typed());
+    std::vector<std::string> before;
+    for (size_t row = 0; row < source->size(); ++row) {
+        before.push_back(VariantField::from_ref(source->get_value_ref(row)).bytes().to_string());
     }
 
-    // Test 2: variant with string root → Int32 with strict mode
-    // Simulates casting variant['field'] that stored as string "123" to Int32
-    {
-        auto variant_type = std::make_shared<DataTypeVariant>();
-        auto int32_type = std::make_shared<DataTypeInt32>();
-        auto nullable_string_type =
-                std::make_shared<DataTypeNullable>(std::make_shared<DataTypeString>());
+    auto source_type = std::make_shared<DataTypeVariant>(37, true);
+    auto result_type = make_nullable(std::make_shared<DataTypeInt32>());
+    ColumnPtr output;
+    ASSERT_TRUE(execute_cast(source->get_ptr(), source_type, result_type, &output).ok());
+    const auto& nullable = assert_cast<const ColumnNullable&>(*output);
+    const auto& values = assert_cast<const ColumnInt32&>(nullable.get_nested_column());
+    ASSERT_EQ(values.size(), 4);
+    EXPECT_FALSE(nullable.is_null_at(0));
+    EXPECT_EQ(values.get_element(0), 42);
+    EXPECT_FALSE(nullable.is_null_at(1));
+    EXPECT_EQ(values.get_element(1), 7);
+    EXPECT_TRUE(nullable.is_null_at(2));
+    EXPECT_TRUE(nullable.is_null_at(3));
 
-        auto variant_col = ColumnVariant::create(0, false);
-        variant_col->create_root(
-                nullable_string_type,
-                ColumnNullable::create(ColumnString::create(), ColumnUInt8::create()));
-        MutableColumnPtr data = variant_col->get_root();
-
-        // Row 0: "42"
-        data->insert(Field::create_field<TYPE_STRING>(String("42")));
-        // Row 1: NULL
-        data->insert(Field::create_field<TYPE_NULL>(Null()));
-        // Row 2: "100"
-        data->insert(Field::create_field<TYPE_STRING>(String("100")));
-
-        variant_col->finalize();
-
-        ColumnsWithTypeAndName arguments {{variant_col->get_ptr(), variant_type, "variant_col"},
-                                          {nullptr, int32_type, "int32_type"}};
-
-        auto function =
-                SimpleFunctionFactory::instance().get_function("CAST", arguments, int32_type);
-        ASSERT_NE(function, nullptr);
-
-        Block block {arguments};
-        size_t result_column = block.columns();
-        block.insert({nullptr, int32_type, "result"});
-
-        RuntimeState state;
-        auto ctx = FunctionContext::create_context(&state, {}, {});
-
-        // Enable strict mode (INSERT context)
-        ctx->set_enable_strict_mode(true);
-
-        ASSERT_TRUE(function->execute(ctx.get(), block, {0}, result_column, 3).ok());
-
-        auto result_col = block.get_by_position(result_column).column;
-        ASSERT_NE(result_col.get(), nullptr);
-
-        const auto* nullable_result = assert_cast<const ColumnNullable*>(result_col.get());
-        ASSERT_EQ(nullable_result->size(), 3);
-
-        const auto& result_data =
-                assert_cast<const ColumnInt32&>(nullable_result->get_nested_column());
-        const auto& null_map = nullable_result->get_null_map_data();
-
-        // After fix: non-null entries should produce correct values
-        ASSERT_EQ(null_map[0], 0);
-        ASSERT_EQ(result_data.get_element(0), 42);
-
-        ASSERT_EQ(null_map[1], 1); // NULL stays NULL
-
-        ASSERT_EQ(null_map[2], 0);
-        ASSERT_EQ(result_data.get_element(2), 100);
+    EXPECT_FALSE(source->is_typed());
+    for (size_t row = 0; row < source->size(); ++row) {
+        EXPECT_EQ(VariantField::from_ref(source->get_value_ref(row)).bytes().to_string(),
+                  before[row]);
     }
+}
+
+TEST(FunctionVariantCast, PublicCastMaterializesConstAndPreservesOuterNulls) {
+    auto target_type = std::make_shared<DataTypeVariant>(37, true);
+    auto constant_data = ColumnInt32::create();
+    constant_data->insert_value(7);
+    ColumnPtr constant = ColumnConst::create(std::move(constant_data), 3);
+
+    ColumnPtr output;
+    ASSERT_TRUE(
+            execute_cast(constant, std::make_shared<DataTypeInt32>(), target_type, &output).ok());
+    ColumnPtr materialized = output->convert_to_full_column_if_const();
+    const auto& constant_variant = assert_cast<const ColumnVariantV2&>(*materialized);
+    ASSERT_EQ(constant_variant.size(), 3);
+    for (size_t row = 0; row < constant_variant.size(); ++row) {
+        EXPECT_EQ(variant_text_at(constant_variant, row), "7");
+    }
+
+    auto values = ColumnString::create();
+    values->insert_data("kept", 4);
+    values->insert_default();
+    auto nulls = ColumnUInt8::create();
+    nulls->insert_value(0);
+    nulls->insert_value(1);
+    ColumnPtr nullable_source = ColumnNullable::create(std::move(values), std::move(nulls));
+    auto nullable_source_type = make_nullable(std::make_shared<DataTypeString>());
+    auto nullable_target_type = make_nullable(target_type);
+
+    ASSERT_TRUE(execute_cast(nullable_source, nullable_source_type, nullable_target_type, &output)
+                        .ok());
+    const auto& nullable = assert_cast<const ColumnNullable&>(*output);
+    EXPECT_FALSE(nullable.is_null_at(0));
+    EXPECT_TRUE(nullable.is_null_at(1));
+    const auto& variant = assert_cast<const ColumnVariantV2&>(nullable.get_nested_column());
+    EXPECT_TRUE(variant.is_typed());
+    EXPECT_EQ(variant.typed_type()->get_primitive_type(), TYPE_STRING);
+    EXPECT_EQ(variant_text_at(variant, 0), "\"kept\"");
+}
+
+TEST(FunctionVariantCast, DifferentVariantConfigurationsAreCompatibleButWrongPhysicalColumnsFail) {
+    auto source_type = std::make_shared<DataTypeVariant>(37, true);
+    auto target_type = std::make_shared<DataTypeVariant>(38, true);
+    auto source = encoded_scalars();
+    ColumnPtr output;
+    ASSERT_TRUE(execute_cast(source->get_ptr(), source_type, target_type, &output).ok());
+    EXPECT_EQ(output.get(), source.get());
+    ASSERT_TRUE(execute_cast(source->get_ptr(), source_type, source_type, &output).ok());
+    EXPECT_NE(dynamic_cast<const ColumnVariantV2*>(output.get()), nullptr);
+
+    auto wrong_physical = ColumnString::create();
+    wrong_physical->insert_data("not a variant column", 20);
+    EXPECT_FALSE(execute_cast(wrong_physical->get_ptr(), source_type, source_type, &output).ok());
+    EXPECT_FALSE(execute_cast(wrong_physical->get_ptr(), source_type,
+                              std::make_shared<DataTypeString>(), &output)
+                         .ok());
 }
 
 } // namespace doris
