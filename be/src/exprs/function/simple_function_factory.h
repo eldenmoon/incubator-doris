@@ -93,6 +93,7 @@ void register_function_array(SimpleFunctionFactory& factory);
 void register_function_map(SimpleFunctionFactory& factory);
 void register_function_struct(SimpleFunctionFactory& factory);
 void register_function_variant_element(SimpleFunctionFactory& factory);
+void register_function_variant_get(SimpleFunctionFactory& factory);
 void register_function_variant_parse(SimpleFunctionFactory& factory);
 void register_function_geo(SimpleFunctionFactory& factory);
 void register_function_multi_string_position(SimpleFunctionFactory& factory);
@@ -119,6 +120,7 @@ void register_function_dict_get_many(SimpleFunctionFactory& factory);
 void register_function_ai(SimpleFunctionFactory& factory);
 void register_function_score(SimpleFunctionFactory& factory);
 void register_function_variant_type(SimpleFunctionFactory& factory);
+void register_function_variant_typeof(SimpleFunctionFactory& factory);
 void register_function_binary(SimpleFunctionFactory& factory);
 void register_function_levenshtein(SimpleFunctionFactory& factory);
 void register_function_hamming_distance(SimpleFunctionFactory& factory);
@@ -269,6 +271,7 @@ private:
     }
 
 public:
+    // NOLINTNEXTLINE(readability-function-size) -- centralized scalar registration list.
     static SimpleFunctionFactory& instance() {
         static std::once_flag oc;
         static SimpleFunctionFactory instance;
@@ -346,6 +349,7 @@ public:
             register_function_tokenize(instance);
             register_function_ignore(instance);
             register_function_variant_element(instance);
+            register_function_variant_get(instance);
             register_function_multi_match(instance);
             register_function_search(instance);
             register_function_split_by_regexp(instance);
@@ -367,6 +371,7 @@ public:
             register_function_throw_exception(instance);
 #endif
             register_function_variant_type(instance);
+            register_function_variant_typeof(instance);
         });
         return instance;
     }

@@ -30,8 +30,10 @@
 #include "benchmark_hybrid_set.hpp"
 #include "benchmark_string.hpp"
 #include "benchmark_string_replace.hpp"
+#include "benchmark_variant_functions.hpp"
 #include "benchmark_zone_map_index.hpp"
 #include "binary_cast_benchmark.hpp"
+#include "common/config.h"
 #include "core/block/block.h"
 #include "core/column/column_string.h"
 #include "core/data_type/data_type.h"
@@ -76,6 +78,9 @@ BENCHMARK(Example1);
 // the minimal subset of be/test/testutil/run_all_tests.cpp::main.
 int main(int argc, char** argv) {
     SCOPED_INIT_THREAD_CONTEXT();
+    doris::config::variant_max_json_key_length = 255;
+    doris::config::variant_throw_exeception_on_invalid_json = false;
+    doris::config::variant_enable_duplicate_json_path_check = false;
     doris::ExecEnv::GetInstance()->init_mem_tracker();
     doris::thread_context()->thread_mem_tracker_mgr->init();
     auto bench_tracker = doris::MemTrackerLimiter::create_shared(
