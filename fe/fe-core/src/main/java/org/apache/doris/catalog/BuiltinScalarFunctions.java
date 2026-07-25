@@ -549,6 +549,7 @@ import org.apache.doris.nereids.trees.expressions.functions.scalar.Translate;
 import org.apache.doris.nereids.trees.expressions.functions.scalar.Trim;
 import org.apache.doris.nereids.trees.expressions.functions.scalar.TrimIn;
 import org.apache.doris.nereids.trees.expressions.functions.scalar.Truncate;
+import org.apache.doris.nereids.trees.expressions.functions.scalar.TryParseToVariant;
 import org.apache.doris.nereids.trees.expressions.functions.scalar.Uncompress;
 import org.apache.doris.nereids.trees.expressions.functions.scalar.Unhex;
 import org.apache.doris.nereids.trees.expressions.functions.scalar.UnhexNull;
@@ -565,6 +566,12 @@ import org.apache.doris.nereids.trees.expressions.functions.scalar.UtcTimestamp;
 import org.apache.doris.nereids.trees.expressions.functions.scalar.Uuid;
 import org.apache.doris.nereids.trees.expressions.functions.scalar.UuidNumeric;
 import org.apache.doris.nereids.trees.expressions.functions.scalar.UuidtoInt;
+import org.apache.doris.nereids.trees.expressions.functions.scalar.VariantContains;
+import org.apache.doris.nereids.trees.expressions.functions.scalar.VariantExistsPath;
+import org.apache.doris.nereids.trees.expressions.functions.scalar.VariantGet;
+import org.apache.doris.nereids.trees.expressions.functions.scalar.VariantIsNull;
+import org.apache.doris.nereids.trees.expressions.functions.scalar.VariantKeys;
+import org.apache.doris.nereids.trees.expressions.functions.scalar.VariantLength;
 import org.apache.doris.nereids.trees.expressions.functions.scalar.Version;
 import org.apache.doris.nereids.trees.expressions.functions.scalar.Week;
 import org.apache.doris.nereids.trees.expressions.functions.scalar.WeekCeil;
@@ -867,6 +874,7 @@ public class BuiltinScalarFunctions implements FunctionHelper {
             scalar(JsonQuote.class, "json_quote"),
             scalar(JsonUnQuote.class, "json_unquote"),
             scalar(JsonExtractNoQuotes.class, "json_extract_no_quotes"),
+            scalar(JsonExtractNoQuotes.class, "jsonb_extract_no_quotes"),
             scalar(JsonHash.class, "json_hash"),
             scalar(JsonHash.class, "jsonb_hash"),
             scalar(JsonInsert.class, "json_insert", "jsonb_insert"),
@@ -986,6 +994,7 @@ public class BuiltinScalarFunctions implements FunctionHelper {
             scalar(ParseDataSize.class, "parse_data_size"),
             scalar(ParseToVariant.class, "parse_to_variant"),
             scalar(ParseToVariantErrorToNull.class, "parse_to_variant_error_to_null"),
+            scalar(TryParseToVariant.class, "try_parse_to_variant"),
             scalar(PeriodAdd.class, "period_add"),
             scalar(PeriodDiff.class, "period_diff"),
             scalar(PreviousDay.class, "previous_day"),
@@ -1157,6 +1166,12 @@ public class BuiltinScalarFunctions implements FunctionHelper {
             scalar(Uuid.class, "uuid"),
             scalar(UuidNumeric.class, "uuid_numeric"),
             scalar(UuidtoInt.class, "uuid_to_int"),
+            scalar(VariantContains.class, "variant_contains"),
+            scalar(VariantExistsPath.class, "variant_exists_path"),
+            scalar(VariantGet.class, "variant_get"),
+            scalar(VariantIsNull.class, "variant_is_null"),
+            scalar(VariantKeys.class, "variant_keys"),
+            scalar(VariantLength.class, "variant_length"),
             scalar(Version.class, "version"),
             scalar(Week.class, "week"),
             scalar(WeekCeil.class, "week_ceil"),

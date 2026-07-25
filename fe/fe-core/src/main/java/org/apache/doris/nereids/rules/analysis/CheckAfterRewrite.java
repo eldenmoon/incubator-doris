@@ -19,11 +19,11 @@ package org.apache.doris.nereids.rules.analysis;
 
 import org.apache.doris.catalog.Type;
 import org.apache.doris.nereids.exceptions.AnalysisException;
-import org.apache.doris.nereids.properties.OrderKey;
 import org.apache.doris.nereids.rules.Rule;
 import org.apache.doris.nereids.rules.RuleType;
 import org.apache.doris.nereids.trees.expressions.Alias;
 import org.apache.doris.nereids.trees.expressions.Cast;
+import org.apache.doris.nereids.trees.expressions.ComparisonPredicate;
 import org.apache.doris.nereids.trees.expressions.Expression;
 import org.apache.doris.nereids.trees.expressions.Match;
 import org.apache.doris.nereids.trees.expressions.Slot;
@@ -45,13 +45,17 @@ import org.apache.doris.nereids.trees.plans.logical.LogicalRepeat;
 import org.apache.doris.nereids.trees.plans.logical.LogicalSort;
 import org.apache.doris.nereids.trees.plans.logical.LogicalTopN;
 import org.apache.doris.nereids.trees.plans.logical.LogicalWindow;
+import org.apache.doris.nereids.types.DataType;
+import org.apache.doris.nereids.types.VariantType;
 
 import com.google.common.collect.Sets;
 import org.apache.commons.lang3.StringUtils;
 import org.roaringbitmap.RoaringBitmap;
 
+import java.util.List;
 import java.util.Set;
 import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 /**
  * some check need to do after analyze whole plan.
@@ -154,6 +158,11 @@ public class CheckAfterRewrite extends OneAnalysisRuleFactory {
     }
 
     private void checkMetricTypeIsUsedCorrectly(Plan plan) {
+        if (!(plan instanceof LogicalJoin)) {
+            for (Expression expression : plan.getExpressions()) {
+                checkVariantComparisonIsUsedCorrectly(expression);
+            }
+        }
         if (plan instanceof LogicalAggregate) {
             LogicalAggregate<?> agg = (LogicalAggregate<?>) plan;
             for (Expression groupBy : agg.getGroupByExpressions()) {
@@ -163,32 +172,21 @@ public class CheckAfterRewrite extends OneAnalysisRuleFactory {
             }
         } else if (plan instanceof LogicalSort) {
             LogicalSort<?> sort = (LogicalSort<?>) plan;
-            for (OrderKey orderKey : sort.getOrderKeys()) {
-                if (orderKey.getExpr().getDataType().isObjectOrVariantType()) {
-                    throw new AnalysisException(Type.OnlyMetricTypeErrorMsg);
-                }
-            }
+            checkTypesSupportOrdering(sort.getOrderKeys().stream()
+                    .map(orderKey -> orderKey.getExpr().getDataType()));
         } else if (plan instanceof LogicalTopN) {
             LogicalTopN<?> topN = (LogicalTopN<?>) plan;
-            for (OrderKey orderKey : topN.getOrderKeys()) {
-                if (orderKey.getExpr().getDataType().isObjectOrVariantType()) {
-                    throw new AnalysisException(Type.OnlyMetricTypeErrorMsg);
-                }
-            }
+            checkTypesSupportOrdering(topN.getOrderKeys().stream()
+                    .map(orderKey -> orderKey.getExpr().getDataType()));
         } else if (plan instanceof LogicalWindow) {
             ((LogicalWindow<?>) plan).getWindowExpressions().forEach(a -> {
                 if (!(a instanceof Alias && ((Alias) a).child() instanceof WindowExpression)) {
                     return;
                 }
                 WindowExpression windowExpression = (WindowExpression) ((Alias) a).child();
-                if (windowExpression.getOrderKeys().stream().anyMatch((
-                        orderKey -> orderKey.getDataType().isObjectOrVariantType()))) {
-                    throw new AnalysisException(Type.OnlyMetricTypeErrorMsg);
-                }
-                if (windowExpression.getPartitionKeys().stream().anyMatch((
-                        partitionKey -> partitionKey.getDataType().isObjectOrVariantType()))) {
-                    throw new AnalysisException(Type.OnlyMetricTypeErrorMsg);
-                }
+                checkTypesSupportOrdering(Stream.concat(
+                        windowExpression.getOrderKeys().stream().map(orderKey -> orderKey.getDataType()),
+                        windowExpression.getPartitionKeys().stream().map(Expression::getDataType)));
             });
         } else if (plan instanceof LogicalJoin) {
             LogicalJoin<?, ?> join = (LogicalJoin<?, ?>) plan;
@@ -201,10 +199,16 @@ public class CheckAfterRewrite extends OneAnalysisRuleFactory {
                             "varbinary type could not in join equal conditions: " + conjunct.toSql());
                 }
             }
+            for (Expression conjunct : join.getOtherJoinConjuncts()) {
+                checkVariantComparisonIsUsedCorrectly(conjunct);
+                if (conjunct.anyMatch(e -> ((Expression) e).getDataType().isVarBinaryType())) {
+                    throw new AnalysisException(
+                            "varbinary type could not in join equal conditions: " + conjunct.toSql());
+                }
+            }
             for (Expression conjunct : join.getMarkJoinConjuncts()) {
-                if (containsVariantTypeOutsideCast(conjunct)) {
-                    throw new AnalysisException("variant type could not in join equal conditions: " + conjunct.toSql());
-                } else if (conjunct.anyMatch(e -> ((Expression) e).getDataType().isVarBinaryType())) {
+                checkVariantComparisonIsUsedCorrectly(conjunct);
+                if (conjunct.anyMatch(e -> ((Expression) e).getDataType().isVarBinaryType())) {
                     throw new AnalysisException(
                             "varbinary type could not in join equal conditions: " + conjunct.toSql());
                 }
@@ -212,21 +216,50 @@ public class CheckAfterRewrite extends OneAnalysisRuleFactory {
         }
     }
 
-    private boolean containsVariantTypeOutsideCast(Expression expr) {
-        return containsVariantTypeOutsideCast(expr, false);
+    private void checkTypesSupportOrdering(Stream<DataType> dataTypes) {
+        List<DataType> types = dataTypes.collect(Collectors.toList());
+        if (types.stream().anyMatch(DataType::isVariantType)) {
+            throw new AnalysisException(VariantType.UNSUPPORTED_ORDERING_COMPARISON_MESSAGE);
+        }
+        if (types.stream().anyMatch(DataType::isObjectOrVariantType)) {
+            throw new AnalysisException(Type.OnlyMetricTypeErrorMsg);
+        }
     }
 
-    private boolean containsVariantTypeOutsideCast(Expression expr, boolean underCast) {
-        boolean nextUnderCast = underCast || (expr instanceof Cast && !expr.getDataType().isVariantType());
-        if (!nextUnderCast && expr.getDataType().isVariantType()) {
+    private boolean containsVariantTypeOutsideCast(Expression expression) {
+        return containsVariantTypeOutsideCast(expression, false);
+    }
+
+    private boolean containsVariantTypeOutsideCast(Expression expression, boolean underCast) {
+        boolean nextUnderCast = underCast
+                || (expression instanceof Cast && !expression.getDataType().isVariantType());
+        if (!nextUnderCast && expression.getDataType().isVariantType()) {
             return true;
         }
-        for (Expression child : expr.children()) {
+        for (Expression child : expression.children()) {
             if (containsVariantTypeOutsideCast(child, nextUnderCast)) {
                 return true;
             }
         }
         return false;
+    }
+
+    private void checkVariantComparisonIsUsedCorrectly(Expression expression) {
+        expression.foreach(expr -> {
+            if (expr instanceof ComparisonPredicate) {
+                ComparisonPredicate comparisonPredicate = (ComparisonPredicate) expr;
+                boolean leftIsVariant = comparisonPredicate.left().getDataType().isVariantType();
+                boolean rightIsVariant = comparisonPredicate.right().getDataType().isVariantType();
+                if (leftIsVariant || rightIsVariant) {
+                    DataType variantDataType = leftIsVariant
+                            ? comparisonPredicate.left().getDataType()
+                            : comparisonPredicate.right().getDataType();
+                    throw new AnalysisException("data type " + variantDataType
+                            + " could not used in ComparisonPredicate " + comparisonPredicate.toSql()
+                            + ". " + VariantType.UNSUPPORTED_ORDERING_COMPARISON_MESSAGE);
+                }
+            }
+        });
     }
 
     private void checkMatchIsUsedCorrectly(Plan plan) {

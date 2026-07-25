@@ -265,6 +265,7 @@ protected:
     uint64_t _primary_keys_size = 0;
     // variant statistics calculator for efficient stats collection
     std::unique_ptr<VariantStatsCaculator> _variant_stats_calculator;
+    bool _should_calculate_variant_stats = false;
 };
 
 } // namespace segment_v2

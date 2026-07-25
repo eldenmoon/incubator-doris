@@ -37,12 +37,12 @@ suite("test_variant_array_function", "p0") {
     """
     sql """
     insert into ${tableName} values
-    (1, '{"a":[1, 2,3],"b": ["a", "b", "c"], "c": [1.1, 2.2, 3.3]}')
+    (1, parse_to_variant('{"a":[1, 2,3],"b": ["a", "b", "c"], "c": [1.1, 2.2, 3.3]}'))
     """
 
     sql """
     insert into ${tableName} values
-    (2, '{"a":[1, 2,3],"b": ["1", "2", "3"], "c": [1.1, 2.2, 3.3]}')
+    (2, parse_to_variant('{"a":[1, 2,3],"b": ["1", "2", "3"], "c": [1.1, 2.2, 3.3]}'))
    """
 
 

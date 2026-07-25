@@ -15,10 +15,9 @@
 // specific language governing permissions and limitations
 // under the License.
 
-suite("test_variant_ordering_comparison_error", "p0,nonConcurrent") {
+suite("test_variant_ordering_comparison_error") {
     sql "SET enable_nereids_planner = true"
     sql "SET enable_fallback_to_original_planner = false"
-    sql "SET enable_variant_v2 = true"
 
     test {
         sql """
@@ -30,7 +29,16 @@ suite("test_variant_ordering_comparison_error", "p0,nonConcurrent") {
             ) t
             ORDER BY v
         """
-        exception "Doris hll, bitmap, array, map, struct, jsonb, variant column"
+        exception "CAST to a concrete type first"
+    }
+
+    test {
+        sql """
+            SELECT number, CAST(CAST(number AS STRING) AS VARIANT) AS v
+            FROM numbers("number" = "2")
+            ORDER BY number, v
+        """
+        exception "CAST to a concrete type first"
     }
 
     test {
@@ -44,7 +52,7 @@ suite("test_variant_ordering_comparison_error", "p0,nonConcurrent") {
             ORDER BY v
             LIMIT 1
         """
-        exception "Doris hll, bitmap, array, map, struct, jsonb, variant column"
+        exception "CAST to a concrete type first"
     }
 
     test {
@@ -58,7 +66,46 @@ suite("test_variant_ordering_comparison_error", "p0,nonConcurrent") {
     }
 
     test {
+        sql "SELECT CAST('1' AS VARIANT) = 1"
+        exception "CAST to a concrete type first"
+    }
+
+    test {
         sql "SELECT CAST('2' AS VARIANT) <=> CAST('1' AS VARIANT)"
+        exception "CAST to a concrete type first"
+    }
+
+    test {
+        sql """
+            SELECT ROW_NUMBER() OVER (ORDER BY v)
+            FROM (
+                SELECT CAST('2' AS VARIANT) AS v
+                UNION ALL
+                SELECT CAST('1' AS VARIANT) AS v
+            ) t
+        """
+        exception "CAST to a concrete type first"
+    }
+
+    test {
+        sql """
+            SELECT ROW_NUMBER() OVER (PARTITION BY v)
+            FROM (
+                SELECT CAST('2' AS VARIANT) AS v
+                UNION ALL
+                SELECT CAST('1' AS VARIANT) AS v
+            ) t
+        """
+        exception "CAST to a concrete type first"
+    }
+
+    test {
+        sql "SELECT ROW_NUMBER() OVER (ORDER BY CAST('1' AS VARIANT)) FROM numbers(\"number\" = \"2\")"
+        exception "CAST to a concrete type first"
+    }
+
+    test {
+        sql "SELECT ROW_NUMBER() OVER (PARTITION BY CAST('1' AS VARIANT)) FROM numbers(\"number\" = \"2\")"
         exception "CAST to a concrete type first"
     }
 
@@ -74,6 +121,20 @@ suite("test_variant_ordering_comparison_error", "p0,nonConcurrent") {
 
     order_qt_explicit_cast_comparison """
         SELECT CAST(v AS STRING) > '1'
+        FROM (
+            SELECT CAST('2' AS VARIANT) AS v
+            UNION ALL
+            SELECT CAST('1' AS VARIANT) AS v
+        ) t
+        ORDER BY 1
+    """
+
+    order_qt_explicit_cast_window """
+        SELECT CAST(v AS STRING),
+               ROW_NUMBER() OVER (
+                   PARTITION BY CAST(v AS STRING)
+                   ORDER BY CAST(v AS STRING)
+               )
         FROM (
             SELECT CAST('2' AS VARIANT) AS v
             UNION ALL
@@ -98,6 +159,15 @@ suite("test_variant_ordering_comparison_error", "p0,nonConcurrent") {
         ORDER BY 1
     """
 
+    order_qt_jsonb_window """
+        SELECT ROW_NUMBER() OVER (
+                   PARTITION BY CAST(CAST(number AS STRING) AS JSON)
+                   ORDER BY CAST(CAST(number AS STRING) AS JSON)
+               )
+        FROM numbers("number" = "2")
+        ORDER BY 1
+    """
+
     test {
         sql """
             SELECT HLL_HASH(CAST(number AS STRING))
@@ -107,4 +177,30 @@ suite("test_variant_ordering_comparison_error", "p0,nonConcurrent") {
         exception "Doris hll, bitmap, array, map, struct, jsonb, variant column"
     }
 
+    test {
+        sql """
+            SELECT HLL_HASH(CAST(number AS STRING)) AS h,
+                   CAST(CAST(number AS STRING) AS VARIANT) AS v
+            FROM numbers("number" = "2")
+            ORDER BY h, v
+            LIMIT 1
+        """
+        exception "CAST to a concrete type first"
+    }
+
+    test {
+        sql """
+            SELECT ROW_NUMBER() OVER (ORDER BY HLL_HASH(CAST(number AS STRING)))
+            FROM numbers("number" = "2")
+        """
+        exception "Doris hll, bitmap, array, map, struct, jsonb, variant column"
+    }
+
+    test {
+        sql """
+            SELECT ROW_NUMBER() OVER (PARTITION BY HLL_HASH(CAST(number AS STRING)))
+            FROM numbers("number" = "2")
+        """
+        exception "Doris hll, bitmap, array, map, struct, jsonb, variant column"
+    }
 }

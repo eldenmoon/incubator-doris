@@ -98,7 +98,7 @@ suite("regression_test_variant_mtmv"){
         CREATE TABLE tbl1 ( pk int, var VARIANT NULL ) engine=olap DUPLICATE KEY(pk) distributed by hash(pk) buckets 10 properties("replication_num"
 = "1");
     """
-    sql """insert into tbl1 values (1, '{"a":1}')"""
+    sql """insert into tbl1 values (1, parse_to_variant('{"a":1}'))"""
     sql """DROP MATERIALIZED VIEW IF EXISTS tbl1_mv"""
     sql """
         CREATE MATERIALIZED VIEW tbl1_mv BUILD IMMEDIATE REFRESH AUTO ON MANUAL DISTRIBUTED BY RANDOM BUCKETS 10 PROPERTIES

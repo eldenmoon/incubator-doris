@@ -24,12 +24,20 @@
 #include "core/column/column_array.h"
 #include "core/column/column_map.h"
 #include "core/column/column_string.h"
-#include "core/column/column_variant.h"
 #include "core/string_ref.h"
 #include "exec/common/variant_util.h"
 #include "storage/segment/segment.h"
 
 namespace doris::segment_v2 {
+
+namespace {
+
+MutableColumnPtr create_binary_map_column() {
+    return ColumnMap::create(ColumnString::create(), ColumnString::create(),
+                             ColumnArray::ColumnOffsets::create());
+}
+
+} // namespace
 
 Status DummyBinaryColumnReader::new_binary_column_iterator(ColumnIteratorUPtr* iter) const {
     static const TabletColumn binary_column = []() {
@@ -204,7 +212,7 @@ Status CombineMultipleBinaryColumnIterator::next_batch(size_t* n, MutableColumnP
     _binary_column_data.clear();
     _binary_column_data.reserve(_iters.size());
     for (auto& it : _iters) {
-        MutableColumnPtr m = ColumnVariant::create_binary_column_fn();
+        MutableColumnPtr m = create_binary_map_column();
         RETURN_IF_ERROR(it->next_batch(n, m, has_null));
         _binary_column_data.emplace_back(std::move(m));
     }
@@ -218,7 +226,7 @@ Status CombineMultipleBinaryColumnIterator::read_by_rowids(const rowid_t* rowids
     _binary_column_data.clear();
     _binary_column_data.reserve(_iters.size());
     for (auto& it : _iters) {
-        MutableColumnPtr m = ColumnVariant::create_binary_column_fn();
+        MutableColumnPtr m = create_binary_map_column();
         RETURN_IF_ERROR(it->read_by_rowids(rowids, count, m));
         _binary_column_data.emplace_back(std::move(m));
     }

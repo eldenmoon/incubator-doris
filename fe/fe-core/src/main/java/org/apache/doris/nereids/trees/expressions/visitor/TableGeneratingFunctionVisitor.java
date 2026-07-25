@@ -38,6 +38,8 @@ import org.apache.doris.nereids.trees.expressions.functions.generator.ExplodeOut
 import org.apache.doris.nereids.trees.expressions.functions.generator.ExplodeSplit;
 import org.apache.doris.nereids.trees.expressions.functions.generator.ExplodeSplitOuter;
 import org.apache.doris.nereids.trees.expressions.functions.generator.ExplodeVariantArray;
+import org.apache.doris.nereids.trees.expressions.functions.generator.ExplodeVariantObject;
+import org.apache.doris.nereids.trees.expressions.functions.generator.ExplodeVariantObjectOuter;
 import org.apache.doris.nereids.trees.expressions.functions.generator.JsonEach;
 import org.apache.doris.nereids.trees.expressions.functions.generator.JsonEachOuter;
 import org.apache.doris.nereids.trees.expressions.functions.generator.JsonEachText;
@@ -65,6 +67,14 @@ public interface TableGeneratingFunctionVisitor<R, C> {
 
     default R visitExplodeVariant(ExplodeVariantArray explodeVariantArray, C context) {
         return visitTableGeneratingFunction(explodeVariantArray, context);
+    }
+
+    default R visitExplodeVariantObject(ExplodeVariantObject explodeVariantObject, C context) {
+        return visitTableGeneratingFunction(explodeVariantObject, context);
+    }
+
+    default R visitExplodeVariantObjectOuter(ExplodeVariantObjectOuter explodeVariantObjectOuter, C context) {
+        return visitTableGeneratingFunction(explodeVariantObjectOuter, context);
     }
 
     default R visitExplodeMap(ExplodeMap explode, C context) {

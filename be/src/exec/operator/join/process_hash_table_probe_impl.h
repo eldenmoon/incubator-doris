@@ -162,15 +162,6 @@ void ProcessHashTableProbe<JoinOpType>::probe_side_output_column(MutableColumns&
             _need_calculate_all_match_one ? check_all_match_one(_probe_indexs.get_data()) : false;
 
     for (int i = 0; i < _left_output_slot_flags.size(); ++i) {
-        if (_left_output_slot_flags[i]) {
-            if (_parent_operator->need_finalize_variant_column()) {
-                auto mutable_column =
-                        IColumn::mutate(std::move(probe_block.get_by_position(i).column));
-                mutable_column->finalize();
-                probe_block.get_by_position(i).column = std::move(mutable_column);
-            }
-        }
-
         // For ASOF JOIN optimized path, skip lazy materialization check
         constexpr bool is_asof_join = is_asof_join_op_v<JoinOpType>;
         bool should_output = _left_output_slot_flags[i] &&

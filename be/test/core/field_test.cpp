@@ -21,17 +21,91 @@
 #include <gtest/gtest-test-part.h>
 
 #include <string>
+#include <type_traits>
+#include <utility>
 
 #include "core/column/column_string.h"
 #include "core/data_type/define_primitive_type.h"
 #include "core/string_buffer.hpp"
 #include "core/string_ref.h"
 #include "core/types.h"
+#include "core/value/variant/variant_field.h"
 #include "core/value/vdatetime_value.h"
 #include "exprs/function/cast/cast_to_string.h"
+#include "exprs/function/parse/variant_string_parse.h"
 #include "gtest/gtest_pred_impl.h" // IWYU pragma: keep
 
 namespace doris {
+namespace {
+
+[[maybe_unused]] VariantField encode_variant_field(std::string_view json) {
+    JsonStringToVariantEncoder encoder;
+    encoder.add_json({json.data(), json.size()});
+    VariantBatchBuilder block = encoder.finish_batch();
+    return VariantField::from_ref(block.value_at(0));
+}
+
+template <typename VariantCppType>
+// GTest assertion macros dominate the reported complexity of this contract helper.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
+void expect_encoded_variant_field_contract() {
+    ASSERT_TRUE((std::is_same_v<VariantCppType, VariantField>));
+    if constexpr (std::is_same_v<VariantCppType, VariantField>) {
+        VariantField encoded = encode_variant_field(R"({"a":[1,true]})");
+        const std::string expected(encoded.bytes().data, encoded.bytes().size);
+        VariantCppType value(std::move(encoded));
+        Field original = Field::create_field<TYPE_VARIANT>(std::move(value));
+        ASSERT_EQ(original.get_type(), TYPE_VARIANT);
+        const auto& original_value =
+                static_cast<const VariantCppType&>(original.get<TYPE_VARIANT>());
+        EXPECT_EQ(std::string(original_value.bytes().data, original_value.bytes().size), expected);
+
+        Field copy(original);
+        const auto& copy_value = static_cast<const VariantCppType&>(copy.get<TYPE_VARIANT>());
+        EXPECT_NE(copy_value.bytes().data, original_value.bytes().data);
+        EXPECT_EQ(std::string(copy_value.bytes().data, copy_value.bytes().size), expected);
+
+        Field moved(std::move(copy));
+        const auto& moved_value = static_cast<const VariantCppType&>(moved.get<TYPE_VARIANT>());
+        EXPECT_EQ(std::string(moved_value.bytes().data, moved_value.bytes().size), expected);
+
+        Field assigned;
+        assigned = original;
+        const auto& assigned_value =
+                static_cast<const VariantCppType&>(assigned.get<TYPE_VARIANT>());
+        EXPECT_NE(assigned_value.bytes().data, original_value.bytes().data);
+        EXPECT_EQ(std::string(assigned_value.bytes().data, assigned_value.bytes().size), expected);
+
+        EXPECT_THROW(static_cast<void>(original == moved), Exception);
+        EXPECT_THROW(static_cast<void>(original < moved), Exception);
+        EXPECT_THROW(static_cast<void>(original <= moved), Exception);
+        EXPECT_THROW(static_cast<void>(original > moved), Exception);
+        EXPECT_THROW(static_cast<void>(original >= moved), Exception);
+        EXPECT_THROW(static_cast<void>(original != moved), Exception);
+
+        const Field null;
+        // Repeated EXPECT_THROW macros dominate the reported complexity of this local checker.
+        // NOLINTNEXTLINE(readability-function-cognitive-complexity)
+        const auto expect_comparisons_throw = [](const Field& lhs, const Field& rhs) {
+            EXPECT_THROW(static_cast<void>(lhs == rhs), Exception);
+            EXPECT_THROW(static_cast<void>(lhs != rhs), Exception);
+            EXPECT_THROW(static_cast<void>(lhs <=> rhs), Exception);
+            EXPECT_THROW(static_cast<void>(lhs < rhs), Exception);
+            EXPECT_THROW(static_cast<void>(lhs <= rhs), Exception);
+            EXPECT_THROW(static_cast<void>(lhs > rhs), Exception);
+            EXPECT_THROW(static_cast<void>(lhs >= rhs), Exception);
+        };
+        expect_comparisons_throw(original, null);
+        expect_comparisons_throw(null, original);
+    }
+}
+
+} // namespace
+
+TEST(VFieldTest, variant_field_storage_copy_move_and_comparison_reject) {
+    expect_encoded_variant_field_contract<PrimitiveTypeTraits<TYPE_VARIANT>::CppType>();
+}
+
 TEST(VFieldTest, field_string) {
     Field f;
 

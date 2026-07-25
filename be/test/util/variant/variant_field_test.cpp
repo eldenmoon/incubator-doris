@@ -180,8 +180,8 @@ std::string object(const std::vector<uint32_t>& field_ids, const std::vector<uin
 }
 
 VariantRef value_ref(const std::string& metadata_bytes, const std::string& value_bytes) {
-    return {.metadata = {.data = metadata_bytes.data(), .size = metadata_bytes.size()},
-            .value = {value_bytes.data(), value_bytes.size()}};
+    return {{metadata_bytes.data(), metadata_bytes.size()},
+            StringRef(value_bytes.data(), value_bytes.size())};
 }
 
 std::string raw_field(const std::string& metadata_bytes, const std::string& value_bytes) {

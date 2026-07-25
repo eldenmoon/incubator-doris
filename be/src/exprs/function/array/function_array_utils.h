@@ -19,7 +19,6 @@
 #include "core/column/column.h"
 #include "core/column/column_array.h"
 #include "core/column/column_nullable.h"
-#include "core/data_type/data_type.h"
 #include "core/types.h"
 
 namespace doris {
@@ -53,11 +52,6 @@ public:
     const ColumnArray::Offsets64* offsets_ptr = nullptr;
     const UInt8* nested_nullmap_data = nullptr;
     ColumnPtr nested_col = nullptr;
-    DataTypePtr nested_type = nullptr;
-    // wrap the nested column as variant column
-    bool output_as_variant = false;
-    // propagate enable_doc_mode when wrapping as variant
-    bool variant_enable_doc_mode = false;
 
     ColumnArrayMutableData to_mutable_data() const {
         ColumnArrayMutableData dst;

@@ -27,16 +27,16 @@ suite("regression_test_variant_column_rename", "variant_type"){
         properties("replication_num" = "1");
     """
 
-    sql """INSERT INTO variant_renam SELECT *, '{"k1":1, "k2": "hello world", "k3" : [1234], "k4" : 1.10000, "k5" : [[123]]}' FROM numbers("number" = "1")"""
+    sql """INSERT INTO variant_renam SELECT *, parse_to_variant('{"k1":1, "k2": "hello world", "k3" : [1234], "k4" : 1.10000, "k5" : [[123]]}') FROM numbers("number" = "1")"""
     sql """alter table variant_renam rename column v va""";
     qt_sql """select * from variant_renam"""
 
     // drop column and add the same name column
     sql """alter table variant_renam add column v2 variant default null"""
-    sql """insert into variant_renam values (2, '{"xxxx" :  1234}', '{"yyyy" : 1.1111}')"""
+    sql """insert into variant_renam values (2, parse_to_variant('{"xxxx" :  1234}'), parse_to_variant('{"yyyy" : 1.1111}'))"""
     qt_sql "select * from variant_renam order by k"
     sql """alter table variant_renam drop column v2"""
-    sql """insert into variant_renam values (2, '{"xxxx" :  1234}')"""
+    sql """insert into variant_renam values (2, parse_to_variant('{"xxxx" :  1234}'))"""
     sql """alter table variant_renam add column v2 variant default null"""
     qt_sql "select * from variant_renam order by k"
 }

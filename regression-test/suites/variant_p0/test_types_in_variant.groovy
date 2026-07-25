@@ -35,7 +35,7 @@ suite("regression_test_variant_types", "var_view") {
     """
 
     sql """
-        insert into ${table_name} (id, var) values (1, '{"a": 1, "b": 1.1, "c": "string", "d": true, "e": null, "f": 18446744073709551615}');
+        insert into ${table_name} (id, var) values (1, parse_to_variant('{"a": 1, "b": 1.1, "c": "string", "d": true, "e": null, "f": 18446744073709551615}'));
     """
 
     sql """
@@ -46,25 +46,25 @@ suite("regression_test_variant_types", "var_view") {
 
     qt_sql_scalar "desc ${table_name}"
     
-    sql """ insert into ${table_name} (id, var) values (2, '{"g": [1, 2, 3], "h": [1.1, 2.2], "i": ["string", "string2"], "j": [true, false], "l": [18446744073709551615, 18446744073709551605]}'); """
+    sql """ insert into ${table_name} (id, var) values (2, parse_to_variant('{"g": [1, 2, 3], "h": [1.1, 2.2], "i": ["string", "string2"], "j": [true, false], "l": [18446744073709551615, 18446744073709551605]}')); """
     
     qt_sql "select * from ${table_name} order by id"
 
     qt_sql_array "desc ${table_name}"
 
-    sql """ insert into ${table_name} (id, var) values (3, '{"m": [1, 18446744073709551605]}'); """
+    sql """ insert into ${table_name} (id, var) values (3, parse_to_variant('{"m": [1, 18446744073709551605]}')); """
 
     qt_sql "select * from ${table_name} order by id"
 
     qt_sql_array_largeint "desc ${table_name}"
 
-    sql """ insert into ${table_name} (id, var) values (4, '{"n": [2, "string", null, true, 1.1, 18446744073709551615]}'); """
+    sql """ insert into ${table_name} (id, var) values (4, parse_to_variant('{"n": [2, "string", null, true, 1.1, 18446744073709551615]}')); """
     
     qt_sql "select * from ${table_name} order by id"
 
     qt_sql_array_json "desc ${table_name}"
     
-    sql """ insert into ${table_name} (id, var) values (5, '{"o": [18446744073709551615, ["string", null]]}'); """
+    sql """ insert into ${table_name} (id, var) values (5, parse_to_variant('{"o": [18446744073709551615, ["string", null]]}')); """
     
     qt_sql "select * from ${table_name} order by id"
 
@@ -86,20 +86,19 @@ suite("regression_test_variant_types", "var_view") {
 
     sql """ set enable_variant_flatten_nested = false """
 
-    sql """ insert into ${table_name} (id, var) values (1, '{"a": [{"b" : 18446744073709551615}]}'); """
+    sql """ insert into ${table_name} (id, var) values (1, parse_to_variant('{"a": [{"b" : 18446744073709551615}]}')); """
 
     qt_sql "select * from ${table_name} order by id"
 
     qt_sql_array_largeint "desc ${table_name}"
     
-    // Avoid relying on bool-to-number rendering when this path evolves to array<json>.
-    sql """ insert into ${table_name} (id, var) values (2, '{"a": [{"b" : 2}]}'); """
+    sql """ insert into ${table_name} (id, var) values (2, parse_to_variant('{"a": [{"b" : true}]}')); """
 
     qt_sql "select * from ${table_name} order by id"
 
     qt_sql_array_largeint "desc ${table_name}"
 
-    sql """ insert into ${table_name} (id, var) values (3, '{"a": [{"b" : 1.1}]}'); """
+    sql """ insert into ${table_name} (id, var) values (3, parse_to_variant('{"a": [{"b" : 1.1}]}')); """
 
 
     qt_sql "select * from ${table_name} order by id"

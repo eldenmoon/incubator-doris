@@ -1,0 +1,21 @@
+build	engine	case	median_wall_ms	median_server_ms	result
+6bf4327a7a58bcff9d2b869869f7ae3067a0f80f	JSONB	stream_load	52640.715	52612	10000000 rows
+6bf4327a7a58bcff9d2b869869f7ae3067a0f80f	JSONB	root	434.303	-	4797090470
+6bf4327a7a58bcff9d2b869869f7ae3067a0f80f	JSONB	shallow_path	278.024	-	9946720
+6bf4327a7a58bcff9d2b869869f7ae3067a0f80f	JSONB	deep_path	310.254	-	9546110
+6bf4327a7a58bcff9d2b869869f7ae3067a0f80f	JSONB	path_group	301.378	-	15
+6bf4327a7a58bcff9d2b869869f7ae3067a0f80f	ColumnVariant_V1	stream_load	47732.666	47686	10000000 rows
+6bf4327a7a58bcff9d2b869869f7ae3067a0f80f	ColumnVariant_V1	root	12952.534	-	4796908570
+6bf4327a7a58bcff9d2b869869f7ae3067a0f80f	ColumnVariant_V1	shallow_path	66.763	-	9946720
+6bf4327a7a58bcff9d2b869869f7ae3067a0f80f	ColumnVariant_V1	deep_path	67.813	-	9546110
+6bf4327a7a58bcff9d2b869869f7ae3067a0f80f	ColumnVariant_V1	path_group	70.986	-	15
+50077170ee9322a5428bf17cb7b9cd6ae0aa8eff	JSONB	stream_load	18953.119	18938	10000000 rows
+50077170ee9322a5428bf17cb7b9cd6ae0aa8eff	JSONB	root	405.551	-	4797090470
+50077170ee9322a5428bf17cb7b9cd6ae0aa8eff	JSONB	shallow_path	282.192	-	9946720
+50077170ee9322a5428bf17cb7b9cd6ae0aa8eff	JSONB	deep_path	319.271	-	9546110
+50077170ee9322a5428bf17cb7b9cd6ae0aa8eff	JSONB	path_group	313.702	-	15
+50077170ee9322a5428bf17cb7b9cd6ae0aa8eff	ColumnVariantV2	stream_load	67804.674	67786	10000000 rows
+50077170ee9322a5428bf17cb7b9cd6ae0aa8eff	ColumnVariantV2	root	4158.279	-	4797090110
+50077170ee9322a5428bf17cb7b9cd6ae0aa8eff	ColumnVariantV2	shallow_path	200.061	-	9946720
+50077170ee9322a5428bf17cb7b9cd6ae0aa8eff	ColumnVariantV2	deep_path	195.140	-	9546110
+50077170ee9322a5428bf17cb7b9cd6ae0aa8eff	ColumnVariantV2	path_group	224.332	-	15

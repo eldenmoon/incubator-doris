@@ -34,11 +34,11 @@
 #include "core/column/column.h"
 #include "core/column/column_nullable.h"
 #include "core/column/column_string.h"
-#include "core/column/column_variant.h"
 #include "core/column/column_vector.h"
 #include "core/data_type/data_type.h"
 #include "core/data_type/data_type_array.h"
 #include "core/data_type/data_type_factory.hpp"
+#include "core/data_type/data_type_jsonb.h"
 #include "core/data_type/data_type_map.h"
 #include "core/data_type/data_type_variant.h"
 #include "core/decimal12.h"
@@ -56,6 +56,7 @@ class TabletColumn;
 class Block;
 class ColumnArray;
 class ColumnMap;
+class ColumnVariantV2;
 class DataTypeMap;
 template <PrimitiveType T>
 class ColumnDecimal;
@@ -69,7 +70,7 @@ public:
 };
 
 struct VariantColumnData {
-    const void* column_data;
+    const ColumnVariantV2* column_data;
     size_t row_pos;
 };
 
@@ -533,8 +534,7 @@ private:
         const void* get_data_at(size_t offset) const override;
 
     private:
-        const void* _value_ptr;
-        std::unique_ptr<OlapColumnDataConvertorVarChar> _root_data_convertor;
+        const ColumnVariantV2* _value_ptr = nullptr;
         std::unique_ptr<VariantColumnData> _variant_column_data;
     };
 

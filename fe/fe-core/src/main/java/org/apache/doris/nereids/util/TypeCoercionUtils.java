@@ -1103,11 +1103,11 @@ public class TypeCoercionUtils {
     public static Optional<DataType> findWiderTypeForTwo(DataType left, DataType right,
             boolean overflowToDouble, boolean stringIsHighPriority) {
         if (left.equals(right)) {
-            return Optional.of(left);
+            return Optional.of(normalizeVariantForCompute(left));
         } else if (left instanceof NullType) {
-            return Optional.of(right);
+            return Optional.of(normalizeVariantForCompute(right));
         } else if (right instanceof NullType) {
-            return Optional.of(left);
+            return Optional.of(normalizeVariantForCompute(left));
         } else if (left instanceof VariantType) {
             return Optional.of(replaceSpecifiedType(replaceDecimalV3WithTarget(replaceSpecifiedType(
                             replaceSpecifiedType(replaceSpecifiedType(replaceCharacterToString(right),
@@ -1127,6 +1127,43 @@ public class TypeCoercionUtils {
         } else {
             return findWiderPrimitiveTypeForTwo(left, right, overflowToDouble, stringIsHighPriority);
         }
+    }
+
+    /**
+     * Remove storage-only Variant properties from a computed result type.
+     * Scan slots and table schemas keep their original types; this is only used when expressions
+     * choose a new common/result type.
+     */
+    public static DataType normalizeVariantForCompute(DataType type) {
+        if (type instanceof VariantType) {
+            return VariantType.INSTANCE;
+        }
+        if (type instanceof ArrayType) {
+            DataType itemType = ((ArrayType) type).getItemType();
+            DataType normalizedItem = normalizeVariantForCompute(itemType);
+            return normalizedItem == itemType ? type : ArrayType.of(normalizedItem);
+        }
+        if (type instanceof MapType) {
+            MapType mapType = (MapType) type;
+            DataType keyType = mapType.getKeyType();
+            DataType valueType = mapType.getValueType();
+            DataType normalizedKey = normalizeVariantForCompute(keyType);
+            DataType normalizedValue = normalizeVariantForCompute(valueType);
+            return normalizedKey == keyType && normalizedValue == valueType
+                    ? type : MapType.of(normalizedKey, normalizedValue);
+        }
+        if (type instanceof StructType) {
+            StructType structType = (StructType) type;
+            boolean changed = false;
+            List<StructField> fields = new ArrayList<>(structType.getFields().size());
+            for (StructField field : structType.getFields()) {
+                DataType normalized = normalizeVariantForCompute(field.getDataType());
+                changed |= normalized != field.getDataType();
+                fields.add(normalized == field.getDataType() ? field : field.withDataType(normalized));
+            }
+            return changed ? new StructType(fields) : type;
+        }
+        return type;
     }
 
     private static Optional<DataType> findWiderComplexTypeForTwo(
@@ -1506,11 +1543,14 @@ public class TypeCoercionUtils {
 
         // type coercion
         List<DataType> dataTypesForCoercion = caseWhen.dataTypesForCoercion();
-        if (dataTypesForCoercion.size() <= 1) {
+        if (dataTypesForCoercion.isEmpty()) {
             return caseWhen;
         }
         DataType first = dataTypesForCoercion.get(0);
-        if (dataTypesForCoercion.stream().allMatch(dataType -> dataType.equals(first))) {
+        if (dataTypesForCoercion.stream()
+                .allMatch(dataType -> normalizeVariantForCompute(dataType) == dataType)
+                && (dataTypesForCoercion.size() == 1
+                || dataTypesForCoercion.stream().allMatch(dataType -> dataType.equals(first)))) {
             return caseWhen;
         }
 
@@ -1530,7 +1570,9 @@ public class TypeCoercionUtils {
                                 // we must cast every child to the common type, and then
                                 // FoldConstantRuleOnFe can eliminate some branches and direct
                                 // return a branch value
-                                if (!valueExpr.getDataType().equals(commonType)) {
+                                if (!valueExpr.getDataType().equals(commonType)
+                                        || normalizeVariantForCompute(valueExpr.getDataType())
+                                        != valueExpr.getDataType()) {
                                     valueExpr = new Cast(valueExpr, commonType);
                                 }
                                 return wc.withChildren(wc.getOperand(), valueExpr);
@@ -1539,7 +1581,9 @@ public class TypeCoercionUtils {
                     caseWhen.getDefaultValue()
                             .map(dv -> {
                                 Expression defaultExpr = TypeCoercionUtils.castIfNotSameType(dv, commonType);
-                                if (!defaultExpr.getDataType().equals(commonType)) {
+                                if (!defaultExpr.getDataType().equals(commonType)
+                                        || normalizeVariantForCompute(defaultExpr.getDataType())
+                                        != defaultExpr.getDataType()) {
                                     defaultExpr = new Cast(defaultExpr, commonType);
                                 }
                                 return defaultExpr;
@@ -1566,22 +1610,32 @@ public class TypeCoercionUtils {
                 });
     }
 
+    /**
+     * Find a common type using the selected coercion behavior and normalize computed Variant types.
+     */
     public static Optional<DataType> findWiderCommonTypeByVariable(List<DataType> dataTypes,
                    boolean overflowToDouble, boolean stringIsHighPriority) {
+        Optional<DataType> commonType;
         if (GlobalVariable.enableNewTypeCoercionBehavior) {
-            return findWiderCommonType(dataTypes, overflowToDouble, stringIsHighPriority);
+            commonType = findWiderCommonType(dataTypes, overflowToDouble, stringIsHighPriority);
         } else {
-            return findWiderCommonTypeForCaseWhen(dataTypes);
+            commonType = findWiderCommonTypeForCaseWhen(dataTypes);
         }
+        return commonType.map(TypeCoercionUtils::normalizeVariantForCompute);
     }
 
+    /**
+     * Find a common type for two inputs and normalize computed Variant types.
+     */
     public static Optional<DataType> findWiderTypeForTwoByVariable(DataType left, DataType right,
                    boolean overflowToDouble, boolean stringIsHighPriority) {
+        Optional<DataType> commonType;
         if (GlobalVariable.enableNewTypeCoercionBehavior) {
-            return findWiderTypeForTwo(left, right, overflowToDouble, stringIsHighPriority);
+            commonType = findWiderTypeForTwo(left, right, overflowToDouble, stringIsHighPriority);
         } else {
-            return findWiderTypeForTwoForCaseWhen(left, right);
+            commonType = findWiderTypeForTwoForCaseWhen(left, right);
         }
+        return commonType.map(TypeCoercionUtils::normalizeVariantForCompute);
     }
 
     @Deprecated
@@ -1869,7 +1923,7 @@ public class TypeCoercionUtils {
             }
             commonType = newCommonType.get();
         }
-        return Optional.of(commonType);
+        return Optional.of(normalizeVariantForCompute(commonType));
     }
 
     /**

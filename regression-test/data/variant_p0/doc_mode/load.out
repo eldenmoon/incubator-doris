@@ -257,15 +257,15 @@
 
 -- !sql_31 --
 {"a":1123,"b":[123,{"xx":1}],"c":{"c":456,"e":7.111},"oooo":{"xxxx":{"xxx":123}}}
-{"a":1234,"ddd":{"aaa":123,"mxmxm":[456, "789"]},"xxxx":"kaana"}
-{"a":1234,"ddd":{"aaa":123,"mxmxm":[456, "789"]},"xxxx":"kaana"}
-{"a":1234,"ddd":{"aaa":123,"mxmxm":[456, "789"]},"xxxx":"kaana"}
-{"a":1234,"ddd":{"aaa":123,"mxmxm":[456, "789"]},"xxxx":"kaana"}
-{"a":1234,"ddd":{"aaa":123,"mxmxm":[456, "789"]},"xxxx":"kaana"}
-{"a":1234,"ddd":{"aaa":123,"mxmxm":[456, "789"]},"xxxx":"kaana"}
-{"a":1234,"ddd":{"aaa":123,"mxmxm":[456, "789"]},"xxxx":"kaana"}
-{"a":1234,"ddd":{"aaa":123,"mxmxm":[456, "789"]},"xxxx":"kaana"}
-{"a":1234,"ddd":{"aaa":123,"mxmxm":[456, "789"]},"xxxx":"kaana"}
+{"a":1234,"ddd":{"aaa":123,"mxmxm":[456,"789"]},"xxxx":"kaana"}
+{"a":1234,"ddd":{"aaa":123,"mxmxm":[456,"789"]},"xxxx":"kaana"}
+{"a":1234,"ddd":{"aaa":123,"mxmxm":[456,"789"]},"xxxx":"kaana"}
+{"a":1234,"ddd":{"aaa":123,"mxmxm":[456,"789"]},"xxxx":"kaana"}
+{"a":1234,"ddd":{"aaa":123,"mxmxm":[456,"789"]},"xxxx":"kaana"}
+{"a":1234,"ddd":{"aaa":123,"mxmxm":[456,"789"]},"xxxx":"kaana"}
+{"a":1234,"ddd":{"aaa":123,"mxmxm":[456,"789"]},"xxxx":"kaana"}
+{"a":1234,"ddd":{"aaa":123,"mxmxm":[456,"789"]},"xxxx":"kaana"}
+{"a":1234,"ddd":{"aaa":123,"mxmxm":[456,"789"]},"xxxx":"kaana"}
 
 -- !sql_36_1 --
 1	\N	\N
@@ -309,7 +309,7 @@ kaana
 -- !sql_39 --
 1	array
 2	string
-3	bigint
+3	int
 4	double
 
 -- !sql_39 --

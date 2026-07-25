@@ -18,7 +18,6 @@
 suite("variant_compute_v2", "p0,nonConcurrent") {
     sql "SET enable_nereids_planner = true"
     sql "SET enable_fallback_to_original_planner = false"
-    sql "SET enable_variant_v2 = true"
 
     qt_constant_fold """
         SELECT CAST(parse_to_variant('{"folded":[1,true,null]}') AS STRING)
@@ -191,13 +190,10 @@ suite("variant_compute_v2", "p0,nonConcurrent") {
                element_at(parse_to_variant('{"1":"object-key"}'), 1) IS NULL
     """
 
-    test {
-        sql """
-            SELECT variant_type(parse_to_variant(CONCAT('{"k":', number, '}')))
-            FROM numbers("number" = "1")
-        """
-        exception "variant_type does not support ColumnVariantV2 execution"
-    }
+    qt_dynamic_variant_type """
+        SELECT variant_type(parse_to_variant(CONCAT('{"k":', number, '}')))
+        FROM numbers("number" = "1")
+    """
 
     setBeConfigTemporary([variant_throw_exeception_on_invalid_json: true]) {
         order_qt_parse_error_to_null """

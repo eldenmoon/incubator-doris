@@ -1,0 +1,6 @@
+phase	run	wall_ms	server_ms	rows	logical_input_bytes	pre_idle_pct	during_idle_pct	external_build_samples	accepted	note
+column_invariant_final	1	47278.498	47264	10000000	4807782770	88.80	85.71	0	true	Fresh table; exact compiler matcher excludes clangd background indexers
+column_invariant_final	rejected_pre_2	-	-	-	-	79.64	-	-	false	Below the 80% pre-run idle gate; load not started
+column_invariant_final	2	45577.091	45564	10000000	4807782770	88.20	85.73	0	true	Fresh table; no clang, clang++, cc1, ninja, or Maven build samples
+column_invariant_final	excluded_3a	46875.917	46861	10000000	4807782770	85.62	75.27	0	false	Excluded conservatively because full-interval CPU headroom differed from accepted runs
+column_invariant_final	3	46359.307	46344	10000000	4807782770	85.22	84.65	0	true	Fresh table; no clang, clang++, cc1, ninja, or Maven build samples

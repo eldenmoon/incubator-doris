@@ -40,9 +40,9 @@ suite("query_on_specific_partition") {
 
     sql """ALTER TABLE t_p ADD TEMPORARY PARTITION tp1 VALUES [("15"), ("20"));"""
 
-    sql """INSERT INTO t_p VALUES(1, '{"a" : 1}')"""
-    sql """INSERT INTO t_p VALUES(7, '{"a" : 2}')"""
-    sql """INSERT INTO t_p TEMPORARY PARTITION(tp1) values(16, '{"a" : 3}');"""
+    sql """INSERT INTO t_p VALUES(1, parse_to_variant('{"a" : 1}'))"""
+    sql """INSERT INTO t_p VALUES(7, parse_to_variant('{"a" : 2}'))"""
+    sql """INSERT INTO t_p TEMPORARY PARTITION(tp1) values(16, parse_to_variant('{"a" : 3}'));"""
 
     sql "SET enable_fallback_to_original_planner=false"
 
@@ -80,7 +80,7 @@ suite("query_on_specific_partition") {
     """
 
     sql """
-        INSERT INTO test_iot VALUES(1,'{"a" : 1}'),(4, '{"a" : 2}');
+        INSERT INTO test_iot VALUES(1,parse_to_variant('{"a" : 1}')),(4, parse_to_variant('{"a" : 2}'));
     """
 
     qt_sql """
@@ -110,9 +110,9 @@ suite("query_on_specific_partition") {
 
     sql """ALTER TABLE ut_p ADD TEMPORARY PARTITION tp1 VALUES [("5"), ("7"));"""
 
-    sql """INSERT INTO ut_p TEMPORARY PARTITION(tp1) values(6, '{"x" : "123"}');"""
-    sql """INSERT INTO ut_p values(6, '{"x" : 456}');"""
-    sql """INSERT INTO ut_p values(3, '{"x" : 789}');"""
+    sql """INSERT INTO ut_p TEMPORARY PARTITION(tp1) values(6, parse_to_variant('{"x" : "123"}'));"""
+    sql """INSERT INTO ut_p values(6, parse_to_variant('{"x" : 456}'));"""
+    sql """INSERT INTO ut_p values(3, parse_to_variant('{"x" : 789}'));"""
 
     sql "set enable_nereids_planner=true"
     sql "SET enable_fallback_to_original_planner=false"

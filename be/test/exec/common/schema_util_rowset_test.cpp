@@ -19,7 +19,10 @@
 #include <gtest/gtest.h>
 
 #include "common/consts.h"
+#include "core/column/variant_v2/column_variant_v2.h"
+#include "core/value/variant/variant_batch_builder.h"
 #include "exec/common/variant_util.h"
+#include "exprs/function/parse/variant_string_parse.h"
 #include "storage/rowset/beta_rowset_writer.h"
 #include "storage/rowset/rowset_factory.h"
 #include "storage/segment/segment_loader.h"
@@ -142,9 +145,12 @@ static void fill_varaint_column(auto& variant_column, int size, int uid) {
     auto column = type_string->create_column();
     auto column_string = assert_cast<ColumnString*>(column.get());
     fill_string_column_with_test_data(column_string, size, uid);
-    ParseConfig config;
-    config.deprecated_enable_flatten_nested = false;
-    variant_util::parse_json_to_variant(*variant_column, *column_string, config);
+    JsonStringToVariantEncoder encoder;
+    for (size_t row = 0; row < column_string->size(); ++row) {
+        encoder.add_json(column_string->get_data_at(row));
+    }
+    auto encoded = encoder.finish_batch();
+    assert_cast<ColumnVariantV2&>(*variant_column).insert_encoded_batch(encoded);
 }
 
 static void fill_block_with_test_data(Block* block, int size) {
@@ -717,9 +723,13 @@ TEST_F(SchemaUtilRowsetTest, some_test_for_subcolumn_writer) {
     auto size = variant_subcolumn_writer->estimate_buffer_size();
     std::cout << "size: " << size << std::endl;
     // append data
-    auto insert_object = ColumnVariant::create(0, false);
-    fill_varaint_column(insert_object, 1, 1);
-    std::cout << insert_object->debug_string() << std::endl;
+    VariantBatchBuilder builder({.rows = 1});
+    auto row = builder.begin_row();
+    row.add_string(StringRef("value"));
+    row.finish();
+    auto encoded = builder.finish_batch();
+    auto insert_object = ColumnVariantV2::create();
+    insert_object->insert_encoded_batch(encoded);
     std::unique_ptr<VariantColumnData> _variant_column_data = std::make_unique<VariantColumnData>();
     _variant_column_data->column_data = insert_object.get();
     _variant_column_data->row_pos = 0;

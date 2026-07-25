@@ -31,6 +31,7 @@ import org.apache.doris.nereids.trees.expressions.literal.Literal;
 import org.apache.doris.nereids.trees.plans.Plan;
 import org.apache.doris.nereids.trees.plans.logical.LogicalProject;
 import org.apache.doris.nereids.trees.plans.logical.LogicalWindow;
+import org.apache.doris.nereids.types.VariantType;
 import org.apache.doris.nereids.util.ExpressionUtils;
 
 import com.google.common.collect.ImmutableList;
@@ -61,6 +62,13 @@ public class ExtractAndNormalizeWindowExpression extends OneRewriteRuleFactory i
                 ExpressionUtils.rewriteDownShortCircuit(project.getProjects(), output -> {
                     if (output instanceof WindowExpression) {
                         WindowExpression windowExpression = (WindowExpression) output;
+                        boolean hasVariantPartitionKey = windowExpression.getPartitionKeys().stream()
+                                .anyMatch(partitionKey -> partitionKey.getDataType().isVariantType());
+                        boolean hasVariantOrderKey = windowExpression.getOrderKeys().stream()
+                                .anyMatch(orderKey -> orderKey.getDataType().isVariantType());
+                        if (hasVariantPartitionKey || hasVariantOrderKey) {
+                            throw new AnalysisException(VariantType.UNSUPPORTED_ORDERING_COMPARISON_MESSAGE);
+                        }
                         Expression expression = ((WindowExpression) output).getFunction();
                         if (expression.children().stream().anyMatch(OrderExpression.class::isInstance)) {
                             throw new AnalysisException("order by is not supported in " + expression);

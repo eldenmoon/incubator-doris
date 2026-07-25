@@ -27,7 +27,7 @@ suite("test_sub_path_pruning", "variant_type"){
     sql """
         CREATE TABLE `pruning_test` (
           `id` INT NULL,
-          `dt` VARIANT NULL
+          `dt` VARIANT<properties("variant_max_subcolumns_count" = "0")> NULL
         )
         DUPLICATE KEY(id)
         DISTRIBUTED BY HASH(id)
@@ -35,7 +35,7 @@ suite("test_sub_path_pruning", "variant_type"){
     """
 
     sql """
-        insert into pruning_test values(1, '{"a":{"b":{"c":{"d":{"e":11}}},"c":{"d":{"e":12}},"d":{"e":13},"e":14},"b":{"c":{"d":{"e":21}},"d":{"e":22},"e":23},"c":{"d":{"e":31},"e":32},"d":{"e":4},"e":5}')
+        insert into pruning_test values(1, parse_to_variant('{"a":{"b":{"c":{"d":{"e":11}}},"c":{"d":{"e":12}},"d":{"e":13},"e":14},"b":{"c":{"d":{"e":21}},"d":{"e":22},"e":23},"c":{"d":{"e":31},"e":32},"d":{"e":4},"e":5}'))
     """
 
     sql "sync"
@@ -86,10 +86,10 @@ suite("test_sub_path_pruning", "variant_type"){
 
 
     // filter
-    order_qt_sql """select id, dt['e'] as c1 from pruning_test where dt['e'] > 1;"""
-    order_qt_sql """select id, dt['a'] as c1 from pruning_test where dt['e'] > 1;"""
-    order_qt_sql """select id, dt['a'] as c1, dt['e'] as c2 from pruning_test where dt['e'] > 1;"""
-    order_qt_sql """select id, dt['a'] as c1, dt['e'] as c2 from pruning_test where dt['d']['e'] > 1;"""
+    order_qt_sql """select id, dt['e'] as c1 from pruning_test where cast(dt['e'] as int) > 1;"""
+    order_qt_sql """select id, dt['a'] as c1 from pruning_test where cast(dt['e'] as int) > 1;"""
+    order_qt_sql """select id, dt['a'] as c1, dt['e'] as c2 from pruning_test where cast(dt['e'] as int) > 1;"""
+    order_qt_sql """select id, dt['a'] as c1, dt['e'] as c2 from pruning_test where cast(dt['d']['e'] as int) > 1;"""
     order_qt_sql """select id, c1, c2 from (select id, dt['a'] as c1, dt['e'] as c2 from pruning_test)tmp where cast(c2 as int) > 1;"""
 
 
@@ -166,20 +166,18 @@ suite("test_sub_path_pruning", "variant_type"){
     order_qt_sql """select c1['c']['d'] from (select dt['a']['b'] as c1 from pruning_test union all select dt['a'] as c1 from pruning_test union all select dt as c1 from pruning_test) v1;"""
 
     // one table + one const list
-    order_qt_sql """select id, cast(c1['a'] as text) from (select cast('{"a":1}' as variant) as c1, 0 as id union all select dt as c1, id from pruning_test) tmp order by id limit 100;"""
-    order_qt_sql """select c1['a'] from (select id, c1 from (select cast('{"a":1}' as variant) as c1, 0 as id union all select dt as c1, id from pruning_test) tmp order by id limit 100) tmp order by id;"""
-    order_qt_sql """select c2['b'] from (select id, cast(c1['a'] as text) as c2 from (select cast('{"a":{"b":1}}' as variant) as c1, 0 as id union all select dt as c1, id from pruning_test) tmp order by id limit 100) tmp order by id;"""
-    // order_qt_sql """select c2['a']['b'] from (select id, c1 as c2 from (select cast('1' as variant) as c1, 0 as id union all select dt as c1, id from pruning_test) tmp order by id limit 100) tmp;"""
-    order_qt_sql """select id, cast(c1['c'] as text) from (select cast('{"c":1}' as variant) as c1, 0 as id union all select dt['a']['b'] as c1, id from pruning_test) tmp order by 1, 2 limit 100;"""
-    order_qt_sql """select c1['c'] from (select id, c1 from (select cast('{"c":1}' as variant) as c1, 0 as id union all select dt['a']['b'] as c1, id from pruning_test) tmp order by id limit 100) tmp order by id;"""
-    order_qt_sql """select  cast(c2['d'] as text)  from (select id, c1['a'] as c2 from (select cast('{"c":{"d":1}}' as variant) as c1, 0 as id union all select dt['a']['b'] as c1, id from pruning_test) tmp order by id limit 100) tmp order by id;"""
-    // order_qt_sql """select c2['c']['d'] from (select id, c1 as c2 from (select cast('{"c":{"d":1}}' as variant) as c1, 0 as id union all select dt['a']['b'] as c1, id from pruning_test) tmp order by id limit 100) tmp;"""
+    order_qt_sql """select id, cast(c1['a'] as text) from (select parse_to_variant('{"a":1}') as c1, 0 as id union all select dt as c1, id from pruning_test) tmp order by id limit 100;"""
+    order_qt_sql """select c1['a'] from (select id, c1 from (select parse_to_variant('{"a":1}') as c1, 0 as id union all select dt as c1, id from pruning_test) tmp order by id limit 100) tmp order by id;"""
+    order_qt_sql """select c2['b'] from (select id, parse_to_variant(cast(c1['a'] as text)) as c2 from (select parse_to_variant('{"a":{"b":1}}') as c1, 0 as id union all select dt as c1, id from pruning_test) tmp order by id limit 100) tmp order by id;"""
+    order_qt_sql """select id, cast(c1['c'] as text) from (select parse_to_variant('{"c":1}') as c1, 0 as id union all select dt['a']['b'] as c1, id from pruning_test) tmp order by 1, 2 limit 100;"""
+    order_qt_sql """select c1['c'] from (select id, c1 from (select parse_to_variant('{"c":1}') as c1, 0 as id union all select dt['a']['b'] as c1, id from pruning_test) tmp order by id limit 100) tmp order by id;"""
+    order_qt_sql """select  cast(c2['d'] as text)  from (select id, c1['a'] as c2 from (select parse_to_variant('{"c":{"d":1}}') as c1, 0 as id union all select dt['a']['b'] as c1, id from pruning_test) tmp order by id limit 100) tmp order by id;"""
 
     // two const list
-    order_qt_sql """select id, cast(c1['a'] as text) from (select cast('{"a":1}' as variant) as c1, 0 as id union all select cast('{"a":1}' as variant) as c1, 2 as id) tmp order by id limit 100;"""
-    order_qt_sql """select c1['a'] from (select id, c1 from (select cast('{"a":1}' as variant) as c1, 0 as id union all select cast('{"a":1}' as variant) as c1, 2 as id) tmp order by id limit 100) tmp order by id;"""
-    order_qt_sql """select cast(c2['b'] as text) from (select id, c1['a'] as c2 from (select cast('{"a":{"b":1}}' as variant) as c1, 0 as id union all select cast('{"a":{"b":1}}' as variant) as c1, 2 as id) tmp order by id limit 100) tmp order by id;"""
-    order_qt_sql """select c2['a']['b'] from (select id, c1 as c2 from (select cast('{"a":{"b":1}}' as variant) as c1, 0 as id union all select cast('{"a":{"b":1}}' as variant) as c1, 2 as id) tmp order by id limit 100) tmp order by id;"""
+    order_qt_sql """select id, cast(c1['a'] as text) from (select parse_to_variant('{"a":1}') as c1, 0 as id union all select parse_to_variant('{"a":1}') as c1, 2 as id) tmp order by id limit 100;"""
+    order_qt_sql """select c1['a'] from (select id, c1 from (select parse_to_variant('{"a":1}') as c1, 0 as id union all select parse_to_variant('{"a":1}') as c1, 2 as id) tmp order by id limit 100) tmp order by id;"""
+    order_qt_sql """select cast(c2['b'] as text) from (select id, c1['a'] as c2 from (select parse_to_variant('{"a":{"b":1}}') as c1, 0 as id union all select parse_to_variant('{"a":{"b":1}}') as c1, 2 as id) tmp order by id limit 100) tmp order by id;"""
+    order_qt_sql """select c2['a']['b'] from (select id, c1 as c2 from (select parse_to_variant('{"a":{"b":1}}') as c1, 0 as id union all select parse_to_variant('{"a":{"b":1}}') as c1, 2 as id) tmp order by id limit 100) tmp order by id;"""
 
 
     // join
@@ -211,20 +209,68 @@ suite("test_sub_path_pruning", "variant_type"){
     // variant in project / one row relation
 
     // variant in project
-    order_qt_sql """select c1['a'] from (select id, cast('{"a":1}' as variant) as c1 from pruning_test order by id limit 100) tmp;"""
-    order_qt_sql """select c1['a'] as c2, c1['b'] as c3 from (select id, cast('{"a":1, "b":2}' as variant) as c1 from pruning_test order by id limit 100) tmp;"""
-    order_qt_sql """select c1['a'] from (select id, cast('{"b":{"a":1}}' as variant)["b"] as c1 from pruning_test order by id limit 100) tmp;"""
-    order_qt_sql """select c1['a'] as c2, c1['b'] as c3 from (select id, cast('{"b":{"a":1, "b":2}}' as variant)["b"] as c1 from pruning_test order by id limit 100) tmp;"""
+    order_qt_sql """select c1['a'] from (select id, parse_to_variant('{"a":1}') as c1 from pruning_test order by id limit 100) tmp;"""
+    order_qt_sql """select c1['a'] as c2, c1['b'] as c3 from (select id, parse_to_variant('{"a":1, "b":2}') as c1 from pruning_test order by id limit 100) tmp;"""
+    order_qt_sql """select c1['a'] from (select id, parse_to_variant('{"b":{"a":1}}')["b"] as c1 from pruning_test order by id limit 100) tmp;"""
+    order_qt_sql """select c1['a'] as c2, c1['b'] as c3 from (select id, parse_to_variant('{"b":{"a":1, "b":2}}')["b"] as c1 from pruning_test order by id limit 100) tmp;"""
 
     // varaint in one row relation
-    order_qt_sql """select c1['a'] from (select 0 as id, cast('{"a":1}' as variant) as c1 order by id limit 100) tmp;"""
-    order_qt_sql """select c1['a'] as c2, c1['b'] as c3 from (select 0 as id, cast('{"a":1, "b":2}' as variant) as c1 order by id limit 100) tmp;"""
-    order_qt_sql """select c1['a'] from (select  0 as id, cast('{"b":{"a":1}}' as variant)["b"] as c1 order by id limit 100) tmp;"""
-    order_qt_sql """select c1['a'] as c2, c1['b'] as c3 from (select 0 as id, cast('{"b":{"a":1, "b":2}}' as variant)["b"] as c1 order by id limit 100) tmp;"""
+    order_qt_sql """select c1['a'] from (select 0 as id, parse_to_variant('{"a":1}') as c1 order by id limit 100) tmp;"""
+    order_qt_sql """select c1['a'] as c2, c1['b'] as c3 from (select 0 as id, parse_to_variant('{"a":1, "b":2}') as c1 order by id limit 100) tmp;"""
+    order_qt_sql """select c1['a'] from (select  0 as id, parse_to_variant('{"b":{"a":1}}')["b"] as c1 order by id limit 100) tmp;"""
+    order_qt_sql """select c1['a'] as c2, c1['b'] as c3 from (select 0 as id, parse_to_variant('{"b":{"a":1, "b":2}}')["b"] as c1 order by id limit 100) tmp;"""
 
     order_qt_sql_no_dead_loop """
       select
       FIRST_VALUE(dt['a']) over (PARTITION by id) A12708
       FROM pruning_test
+    """
+
+    // The same requested path is a LEAF in the first rowset and sparse in the second rowset.
+    // Keep the rowsets separate so static subpath pruning must read both physical sources.
+    sql "DROP TABLE IF EXISTS pruning_leaf_sparse_test"
+    sql """
+        CREATE TABLE pruning_leaf_sparse_test (
+          id INT NULL,
+          v VARIANT<properties("variant_max_subcolumns_count" = "1")> NULL
+        )
+        DUPLICATE KEY(id)
+        DISTRIBUTED BY HASH(id) BUCKETS 1
+        PROPERTIES (
+          "replication_num" = "1",
+          "disable_auto_compaction" = "true"
+        )
+    """
+
+    sql """
+        INSERT INTO pruning_leaf_sparse_test VALUES
+          (1, parse_to_variant('{"target":101,"cold_first":1}')),
+          (2, parse_to_variant('{"target":102}'))
+    """
+    sql "sync"
+
+    sql """
+        INSERT INTO pruning_leaf_sparse_test VALUES
+          (3, parse_to_variant('{"hot":1,"target":201}')),
+          (4, parse_to_variant('{"hot":2}'))
+    """
+    sql "sync"
+
+    explain {
+        verbose true
+        sql """
+            SELECT id, CAST(v['target'] AS INT)
+            FROM pruning_leaf_sparse_test
+            ORDER BY id
+        """
+        contains "sub path: [target]"
+        contains "all access paths: [v.target]"
+        contains "subColPath=[target]"
+    }
+
+    order_qt_leaf_and_sparse_same_path """
+        SELECT id, CAST(v['target'] AS INT)
+        FROM pruning_leaf_sparse_test
+        ORDER BY id
     """
 }

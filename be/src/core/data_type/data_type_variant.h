@@ -32,11 +32,11 @@
 
 #include "common/status.h"
 #include "core/assert_cast.h"
-#include "core/column/column_variant.h"
+#include "core/column/variant_v2/column_variant_v2.h"
 #include "core/data_type/data_type.h"
 #include "core/data_type/define_primitive_type.h"
 #include "core/data_type_serde/data_type_serde.h"
-#include "core/data_type_serde/data_type_variant_serde.h"
+#include "core/data_type_serde/data_type_variant_v2_serde.h"
 #include "core/field.h"
 #include "core/types.h"
 
@@ -61,7 +61,7 @@ public:
     const std::string get_family_name() const override { return "Variant"; }
 
     Status check_column(const IColumn& column) const override {
-        return check_column_non_nested_type<ColumnVariant>(column);
+        return check_column_non_nested_type<ColumnVariantV2>(column);
     }
     MutableColumnPtr create_column() const override;
     bool equals(const IDataType& rhs) const override;
@@ -73,7 +73,7 @@ public:
 
     Field get_field(const TExprNode& node) const override;
 
-    using SerDeType = DataTypeVariantSerDe;
+    using SerDeType = DataTypeVariantV2SerDe;
     DataTypeSerDeSPtr get_serde(int nesting_level = 1) const override {
         return std::make_shared<SerDeType>(nesting_level);
     };

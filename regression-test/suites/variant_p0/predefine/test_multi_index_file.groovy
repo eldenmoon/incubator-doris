@@ -31,7 +31,7 @@ suite("test_variant_multi_index_file", "p0, nonConcurrent"){
         INDEX idx_a_d_2 (var) USING INVERTED
     ) ENGINE=OLAP DUPLICATE KEY(`id`) DISTRIBUTED BY HASH(`id`) BUCKETS 1 PROPERTIES ( "replication_allocation" = "tag.location.default: 1", "disable_auto_compaction" = "true")"""
 
-    sql """insert into ${tableName} values(1, '{"string" : "hello", "int" : 1, "array_string" : ["hello"]}'), (2, '{"string" : "world", "int" : 2, "array_string" : ["world"]}'), (3, '{"string" : "hello", "int" : 3, "array_string" : ["hello"]}'), (4, '{"string" : "world", "int" : 4, "array_string" : ["world"]}'), (5, '{"string" : "hello", "int" : 5, "array_string" : ["hello"]}') """
+    sql """insert into ${tableName} values(1, parse_to_variant('{"string" : "hello", "int" : 1, "array_string" : ["hello"]}')), (2, parse_to_variant('{"string" : "world", "int" : 2, "array_string" : ["world"]}')), (3, parse_to_variant('{"string" : "hello", "int" : 3, "array_string" : ["hello"]}')), (4, parse_to_variant('{"string" : "world", "int" : 4, "array_string" : ["world"]}')), (5, parse_to_variant('{"string" : "hello", "int" : 5, "array_string" : ["hello"]}')) """
 
 
     def backendId_to_backendIP = [:]

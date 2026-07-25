@@ -31,7 +31,6 @@
 #include "core/block/columns_with_type_and_name.h"
 #include "core/column/column.h"
 #include "core/column/column_nullable.h"
-#include "core/column/column_variant.h"
 #include "core/column/subcolumn_tree.h"
 #include "core/data_type/data_type.h"
 #include "core/data_type/data_type_array.h"

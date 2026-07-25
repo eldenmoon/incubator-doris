@@ -28,6 +28,7 @@ suite("regression_test_variant_predefine_element_at", "p0")  {
         properties("replication_num" = "1");
     """
 
-    sql """insert into element_fn_test values (1, '{"arr1" : [1, 2, 3]}', '{"arr2" : [4, 5, 6]}')"""
+    sql """insert into element_fn_test values
+            (1, parse_to_variant('{"arr1" : [1, 2, 3]}'), parse_to_variant('{"arr2" : [4, 5, 6]}'))"""
     qt_sql """select array_first((x,y) -> (x - y) < 0, cast(v['arr1'] as array<int>), cast(v1['arr2'] as array<int>)) from element_fn_test order by k"""
 }

@@ -35,19 +35,31 @@ suite("duplicate_json_path", "p0") {
             );
         """
 
-        sql """insert into duplicate_json_path values (1, '{"a":42,"a":{"b":42}}')"""
-        sql """insert into duplicate_json_path values (2, '{"a" : 123, "a" : "123"}')"""
-        sql """insert into duplicate_json_path values (3, '{"a.b":1,"a":{"b":2}}')"""
-        sql """insert into duplicate_json_path values (4, '{"a":{"b":3},"a.b":4}')"""
-        sql """insert into duplicate_json_path values (5, '{"a":{"b":5},"a":{"c":6}}')"""
-        sql """insert into duplicate_json_path values (6, '{"a":[1],"a":2}')"""
-        sql """insert into duplicate_json_path values (7, '{"a":2,"a":[1]}')"""
+        sql """insert into duplicate_json_path values (1, parse_to_variant('{"a":42,"a":{"b":42}}'))"""
+        sql """insert into duplicate_json_path values (2, parse_to_variant('{"a" : 123, "a" : "123"}'))"""
+        test {
+            sql """insert into duplicate_json_path values (3, parse_to_variant('{"a.b":1,"a":{"b":2}}'))"""
+            exception "distinct structures collide at dotted path a.b"
+        }
+        test {
+            sql """insert into duplicate_json_path values (4, parse_to_variant('{"a":{"b":3},"a.b":4}'))"""
+            exception "distinct structures collide at dotted path a.b"
+        }
+        sql """insert into duplicate_json_path values (3, parse_to_variant('{"a":{"b":2}}'))"""
+        sql """insert into duplicate_json_path values (4, parse_to_variant('{"a":{"b":3}}'))"""
+        sql """insert into duplicate_json_path values (5, parse_to_variant('{"a":{"b":5},"a":{"c":6}}'))"""
+        sql """insert into duplicate_json_path values (6, parse_to_variant('{"a":[1],"a":2}'))"""
+        sql """insert into duplicate_json_path values (7, parse_to_variant('{"a":2,"a":[1]}'))"""
+
+        sql """insert into duplicate_json_path values (99, parse_to_variant('{"a.b":1}'))"""
+        sql """delete from duplicate_json_path where k = 99"""
 
         streamLoad {
             table "duplicate_json_path"
             set 'read_json_by_line', 'true'
             set 'format', 'json'
             set 'group_commit', 'async_mode'
+            set 'where', 'k not in (10, 11)'
             unset 'label'
             file 'duplicate_json_path.json'
             time 10000
@@ -59,9 +71,13 @@ suite("duplicate_json_path", "p0") {
                 def json = parseJson(result)
                 assertEquals("success", json.Status.toLowerCase())
                 assertEquals(7, json.NumberTotalRows)
-                assertEquals(7, json.NumberLoadedRows)
+                assertEquals(5, json.NumberLoadedRows)
+                assertEquals(2, json.NumberUnselectedRows)
             }
         }
+
+        sql """insert into duplicate_json_path values (10, parse_to_variant('{"a":{"b":9}}'))"""
+        sql """insert into duplicate_json_path values (11, parse_to_variant('{"a":{"b":10}}'))"""
 
         for (int i = 0; i < 30; i++) {
             def count = sql "select count(*) from duplicate_json_path"
@@ -70,37 +86,22 @@ suite("duplicate_json_path", "p0") {
             }
             sleep(1000)
         }
-        def totalRows = sql "select count(*) from duplicate_json_path"
-        assertEquals(14, totalRows[0][0])
+        qt_duplicate_json_path_row_count """
+            select count(*) from duplicate_json_path
+        """
 
-        // When duplicate path check is enabled, duplicate Variant paths keep the first value.
-        def expectedResult = [
-                [1, "{\"b\":42}", "42", null],
-                [2, "123", null, null],
-                [3, "{\"b\":1}", "1", null],
-                [4, "{\"b\":3}", "3", null],
-                [5, "{\"b\":5,\"c\":6}", "5", "6"],
-                [6, "[1]", null, null],
-                [7, "2", null, null],
-                [8, "{\"b\":42}", "42", null],
-                [9, "123", null, null],
-                [10, "{\"b\":8}", "8", null],
-                [11, "{\"b\":10}", "10", null],
-                [12, "{\"b\":11,\"c\":12}", "11", "12"],
-                [13, "[13]", null, null],
-                [14, "14", null, null]
-        ]
-
-        def queryResult = {
-            sql """
+        // Duplicate members keep the first complete subtree at the member boundary.
+        qt_duplicate_json_path_before_full_compaction """
             select k, cast(v['a'] as string), cast(v['a']['b'] as string), cast(v['a']['c'] as string)
             from duplicate_json_path
             order by k
-            """
-        }
-        assertEquals(expectedResult, queryResult())
+        """
 
         trigger_and_wait_compaction("duplicate_json_path", "full")
-        assertEquals(expectedResult, queryResult())
+        qt_duplicate_json_path_after_full_compaction """
+            select k, cast(v['a'] as string), cast(v['a']['b'] as string), cast(v['a']['c'] as string)
+            from duplicate_json_path
+            order by k
+        """
     }
 }

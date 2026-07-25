@@ -28,12 +28,12 @@
 #include "core/column/column_const.h"
 #include "core/column/column_nullable.h"
 #include "core/column/column_string.h"
-#include "core/column/column_variant.h"
 #include "core/column/variant_v2/column_variant_v2.h"
+#include "core/data_type/data_type_jsonb.h"
 #include "core/data_type/data_type_nullable.h"
 #include "core/data_type/data_type_string.h"
 #include "core/data_type/data_type_variant.h"
-#include "core/data_type/data_type_variant_v2.h"
+#include "core/value/jsonb_value.h"
 #include "core/value/variant/variant_parquet_encoding.h"
 #include "exprs/function/function_test_util.h"
 #include "exprs/function/parse/variant_string_parse.h"
@@ -75,6 +75,16 @@ ColumnPtr make_nullable_strings(const std::vector<std::optional<std::string>>& v
     return ColumnNullable::create(std::move(strings), std::move(nulls));
 }
 
+ColumnPtr make_jsonb(const std::vector<std::string>& values) {
+    auto column = ColumnString::create();
+    for (const std::string& value : values) {
+        JsonBinaryValue jsonb;
+        DORIS_CHECK(jsonb.from_json_string(value).ok());
+        column->insert_data(jsonb.value(), jsonb.size());
+    }
+    return column;
+}
+
 struct ExecutionResult {
     Status status;
     ColumnPtr output;
@@ -83,14 +93,11 @@ struct ExecutionResult {
 
 ExecutionResult execute_parse(std::string_view function_name, ColumnPtr input,
                               const DataTypePtr& input_type, size_t rows,
-                              DataTypePtr result_type = nullptr, bool use_variant_v2 = true) {
+                              DataTypePtr result_type = nullptr) {
     if (result_type == nullptr) {
-        if (use_variant_v2) {
-            result_type = std::make_shared<DataTypeVariantV2>();
-        } else {
-            result_type = std::make_shared<DataTypeVariant>();
-        }
-        if (function_name == "parse_to_variant_error_to_null" || input_type->is_nullable()) {
+        result_type = std::make_shared<DataTypeVariant>();
+        if (function_name == "try_parse_to_variant" ||
+            function_name == "parse_to_variant_error_to_null" || input_type->is_nullable()) {
             result_type = make_nullable(result_type);
         }
     }
@@ -112,12 +119,6 @@ ExecutionResult execute_parse(std::string_view function_name, ColumnPtr input,
     return {.status = std::move(status),
             .output = block.get_by_position(1).column,
             .return_type = function->get_return_type()};
-}
-
-ExecutionResult execute_parse(std::string_view function_name, ColumnPtr input,
-                              const DataTypePtr& input_type, size_t rows, bool use_variant_v2) {
-    return execute_parse(function_name, std::move(input), input_type, rows, nullptr,
-                         use_variant_v2);
 }
 
 const IColumn& physical_column(const ColumnPtr& output, size_t* row) {
@@ -161,52 +162,6 @@ std::string nested_array_json(uint32_t depth) {
 
 } // namespace
 
-TEST(FunctionVariantParseTest, ExecutionTypeSelectsPhysicalColumn) {
-    const DataTypePtr string_type = std::make_shared<DataTypeString>();
-    ExecutionResult legacy =
-            execute_parse("parse_to_variant", make_strings({R"({"a":1})"}), string_type, 1, false);
-    ASSERT_TRUE(legacy.status.ok()) << legacy.status.to_string();
-    EXPECT_NE(check_and_get_column_with_const<ColumnVariant>(*legacy.output), nullptr);
-
-    ExecutionResult v2 =
-            execute_parse("parse_to_variant", make_strings({R"({"a":1})"}), string_type, 1, true);
-    ASSERT_TRUE(v2.status.ok()) << v2.status.to_string();
-    EXPECT_NE(check_and_get_column_with_const<ColumnVariantV2>(*v2.output), nullptr);
-}
-
-TEST(FunctionVariantParseTest, LegacyPathPreservesSqlNullAndErrorToNull) {
-    const DataTypePtr nullable_string_type = make_nullable(std::make_shared<DataTypeString>());
-    ExecutionResult nullable =
-            execute_parse("parse_to_variant",
-                          make_nullable_strings({std::nullopt, std::string(R"({"value":1})")}),
-                          nullable_string_type, 2, false);
-    ASSERT_TRUE(nullable.status.ok()) << nullable.status.to_string();
-    EXPECT_TRUE(is_sql_null_at(nullable.output, 0));
-    const auto& nullable_output = assert_cast<const ColumnNullable&>(*nullable.output);
-    EXPECT_NE(check_and_get_column<ColumnVariant>(&nullable_output.get_nested_column()), nullptr);
-
-    const DataTypePtr string_type = std::make_shared<DataTypeString>();
-    const std::string invalid_utf8(1, static_cast<char>(0xFF));
-    ScopedValue strict(config::variant_throw_exeception_on_invalid_json, true);
-    ExecutionResult failure = execute_parse(
-            "parse_to_variant", make_strings({R"({"before":1})", invalid_utf8, R"({"after":2})"}),
-            string_type, 3, false);
-    EXPECT_FALSE(failure.status.ok());
-    EXPECT_FALSE(static_cast<bool>(failure.output));
-
-    ExecutionResult recoverable =
-            execute_parse("parse_to_variant_error_to_null",
-                          make_strings({R"({"before":1})", invalid_utf8, R"({"after":2})"}),
-                          string_type, 3, false);
-    ASSERT_TRUE(recoverable.status.ok()) << recoverable.status.to_string();
-    EXPECT_FALSE(is_sql_null_at(recoverable.output, 0));
-    EXPECT_TRUE(is_sql_null_at(recoverable.output, 1));
-    EXPECT_FALSE(is_sql_null_at(recoverable.output, 2));
-    const auto& recoverable_output = assert_cast<const ColumnNullable&>(*recoverable.output);
-    EXPECT_NE(check_and_get_column<ColumnVariant>(&recoverable_output.get_nested_column()),
-              nullptr);
-}
-
 TEST(FunctionVariantParseTest, FunctionsAreRegistered) {
     const DataTypePtr argument_type = make_nullable(std::make_shared<DataTypeString>());
     const DataTypePtr result_type = make_nullable(std::make_shared<DataTypeVariant>());
@@ -219,11 +174,14 @@ TEST(FunctionVariantParseTest, FunctionsAreRegistered) {
     EXPECT_NE(SimpleFunctionFactory::instance().get_function("parse_to_variant_error_to_null",
                                                              arguments, result_type),
               nullptr);
+    EXPECT_NE(SimpleFunctionFactory::instance().get_function("try_parse_to_variant", arguments,
+                                                             result_type),
+              nullptr);
 }
 
 TEST(FunctionVariantParseTest, ConfiguredVariantReturnTypeBuildsAndExecutes) {
     const DataTypePtr string_type = std::make_shared<DataTypeString>();
-    const DataTypePtr max_subcolumns_variant = std::make_shared<DataTypeVariantV2>(2048, false);
+    const DataTypePtr max_subcolumns_variant = std::make_shared<DataTypeVariant>(2048, false);
     ExecutionResult result = execute_parse("parse_to_variant", make_strings({R"({"a":1})"}),
                                            string_type, 1, max_subcolumns_variant);
 
@@ -236,7 +194,7 @@ TEST(FunctionVariantParseTest, ConfiguredVariantReturnTypeBuildsAndExecutes) {
 
     const DataTypePtr nullable_string_type = make_nullable(std::make_shared<DataTypeString>());
     const DataTypePtr nullable_doc_mode_variant =
-            make_nullable(std::make_shared<DataTypeVariantV2>(0, true));
+            make_nullable(std::make_shared<DataTypeVariant>(0, true));
     ExecutionResult nullable = execute_parse(
             "parse_to_variant", make_nullable_strings({std::nullopt, std::string(R"([1,2])")}),
             nullable_string_type, 2, nullable_doc_mode_variant);
@@ -247,10 +205,9 @@ TEST(FunctionVariantParseTest, ConfiguredVariantReturnTypeBuildsAndExecutes) {
     EXPECT_EQ(variant_json_at(nullable.output, 1), "[1,2]");
 
     const DataTypePtr nullable_max_subcolumns_variant =
-            make_nullable(std::make_shared<DataTypeVariantV2>(2048, false));
-    ExecutionResult error_to_null =
-            execute_parse("parse_to_variant_error_to_null", make_strings({"true"}), string_type, 1,
-                          nullable_max_subcolumns_variant);
+            make_nullable(std::make_shared<DataTypeVariant>(2048, false));
+    ExecutionResult error_to_null = execute_parse("try_parse_to_variant", make_strings({"true"}),
+                                                  string_type, 1, nullable_max_subcolumns_variant);
     ASSERT_TRUE(error_to_null.status.ok()) << error_to_null.status.to_string();
     ASSERT_TRUE(static_cast<bool>(error_to_null.return_type));
     EXPECT_TRUE(error_to_null.return_type->equals(*nullable_max_subcolumns_variant));
@@ -258,17 +215,16 @@ TEST(FunctionVariantParseTest, ConfiguredVariantReturnTypeBuildsAndExecutes) {
     EXPECT_EQ(variant_json_at(error_to_null.output, 0), "true");
 }
 
-TEST(FunctionVariantParseTest, DistinguishesSqlNullJsonNullEmptyAndConst) {
+TEST(FunctionVariantParseTest, DistinguishesSqlNullJsonNullAndConst) {
     const DataTypePtr string_type = std::make_shared<DataTypeString>();
-    ExecutionResult values = execute_parse(
-            "parse_to_variant", make_strings({R"({"a":1})", "null", ""}), string_type, 3);
+    ExecutionResult values =
+            execute_parse("parse_to_variant", make_strings({R"({"a":1})", "null"}), string_type, 2);
     ASSERT_TRUE(values.status.ok()) << values.status.to_string();
-    ASSERT_EQ(values.output->size(), 3);
+    ASSERT_EQ(values.output->size(), 2);
     EXPECT_FALSE(is_sql_null_at(values.output, 0));
     EXPECT_FALSE(is_sql_null_at(values.output, 1));
     EXPECT_EQ(variant_json_at(values.output, 0), R"({"a":1})");
     EXPECT_EQ(variant_json_at(values.output, 1), "null");
-    EXPECT_EQ(variant_json_at(values.output, 2), "{}");
 
     const DataTypePtr nullable_string_type = make_nullable(std::make_shared<DataTypeString>());
     ExecutionResult nullable = execute_parse(
@@ -290,8 +246,22 @@ TEST(FunctionVariantParseTest, DistinguishesSqlNullJsonNullEmptyAndConst) {
     EXPECT_EQ(variant_json_at(constant_result.output, 3), "[1,2]");
 }
 
+TEST(FunctionVariantParseTest, EmptyInputIsAParseFailure) {
+    const DataTypePtr string_type = std::make_shared<DataTypeString>();
+    ExecutionResult strict = execute_parse("parse_to_variant", make_strings({""}), string_type, 1);
+    EXPECT_FALSE(strict.status.ok());
+    EXPECT_EQ(strict.status.code(), ErrorCode::INVALID_ARGUMENT) << strict.status.to_string();
+    EXPECT_NE(strict.status.to_string().find("JSON input is empty"), std::string::npos)
+            << strict.status.to_string();
+
+    ExecutionResult try_parse =
+            execute_parse("try_parse_to_variant", make_strings({""}), string_type, 1);
+    ASSERT_TRUE(try_parse.status.ok()) << try_parse.status.to_string();
+    EXPECT_TRUE(is_sql_null_at(try_parse.output, 0));
+}
+
 TEST(FunctionVariantParseTest, StrictFailureDoesNotPublishPartialBatch) {
-    ScopedValue strict(config::variant_throw_exeception_on_invalid_json, true);
+    ScopedValue permissive(config::variant_throw_exeception_on_invalid_json, false);
     const DataTypePtr string_type = std::make_shared<DataTypeString>();
     ExecutionResult result =
             execute_parse("parse_to_variant",
@@ -307,12 +277,12 @@ TEST(FunctionVariantParseTest, StrictFailureDoesNotPublishPartialBatch) {
     EXPECT_FALSE(static_cast<bool>(result.output));
 }
 
-TEST(FunctionVariantParseTest, ErrorToNullOnlyNullsRecoverableFailures) {
+TEST(FunctionVariantParseTest, TryParseOnlyNullsRecoverableFailures) {
     const DataTypePtr string_type = std::make_shared<DataTypeString>();
     {
         ScopedValue strict(config::variant_throw_exeception_on_invalid_json, true);
         ExecutionResult result = execute_parse(
-                "parse_to_variant_error_to_null",
+                "try_parse_to_variant",
                 make_strings({R"({"before":1})", "{", "null", R"({"after":2})"}), string_type, 4);
         ASSERT_TRUE(result.status.ok()) << result.status.to_string();
         EXPECT_FALSE(is_sql_null_at(result.output, 0));
@@ -323,12 +293,26 @@ TEST(FunctionVariantParseTest, ErrorToNullOnlyNullsRecoverableFailures) {
     }
     {
         ScopedValue permissive(config::variant_throw_exeception_on_invalid_json, false);
-        ExecutionResult result = execute_parse("parse_to_variant_error_to_null",
-                                               make_strings({"{"}), string_type, 1);
+        ExecutionResult result =
+                execute_parse("try_parse_to_variant", make_strings({"{"}), string_type, 1);
         ASSERT_TRUE(result.status.ok()) << result.status.to_string();
-        EXPECT_FALSE(is_sql_null_at(result.output, 0));
-        EXPECT_EQ(variant_json_at(result.output, 0), R"("{")");
+        EXPECT_TRUE(is_sql_null_at(result.output, 0));
     }
+}
+
+TEST(FunctionVariantParseTest, JsonbInputIsConvertedToJsonTextBeforeParsing) {
+    const DataTypePtr jsonb_type = std::make_shared<DataTypeJsonb>();
+    ExecutionResult strict = execute_parse(
+            "parse_to_variant", make_jsonb({R"({"id":42})", "[1,null,3]"}), jsonb_type, 2);
+    ASSERT_TRUE(strict.status.ok()) << strict.status.to_string();
+    EXPECT_EQ(variant_json_at(strict.output, 0), R"({"id":42})");
+    EXPECT_EQ(variant_json_at(strict.output, 1), "[1,null,3]");
+
+    ExecutionResult try_parse =
+            execute_parse("try_parse_to_variant", make_jsonb({"null"}), jsonb_type, 1);
+    ASSERT_TRUE(try_parse.status.ok()) << try_parse.status.to_string();
+    EXPECT_FALSE(is_sql_null_at(try_parse.output, 0));
+    EXPECT_EQ(variant_json_at(try_parse.output, 0), "null");
 }
 
 TEST(FunctionVariantParseTest, ConfiguredInputValidationUsesFailOrOuterNull) {
@@ -339,7 +323,7 @@ TEST(FunctionVariantParseTest, ConfiguredInputValidationUsesFailOrOuterNull) {
                 execute_parse("parse_to_variant", make_strings({R"({"abcd":1})"}), string_type, 1);
         EXPECT_FALSE(fail.status.ok());
         EXPECT_FALSE(static_cast<bool>(fail.output));
-        ExecutionResult null = execute_parse("parse_to_variant_error_to_null",
+        ExecutionResult null = execute_parse("try_parse_to_variant",
                                              make_strings({R"({"abcd":1})"}), string_type, 1);
         ASSERT_TRUE(null.status.ok()) << null.status.to_string();
         EXPECT_TRUE(is_sql_null_at(null.output, 0));
@@ -349,14 +333,14 @@ TEST(FunctionVariantParseTest, ConfiguredInputValidationUsesFailOrOuterNull) {
         ExecutionResult fail = execute_parse("parse_to_variant", make_strings({R"({"a":1,"a":2})"}),
                                              string_type, 1);
         EXPECT_FALSE(fail.status.ok());
-        ExecutionResult null = execute_parse("parse_to_variant_error_to_null",
+        ExecutionResult null = execute_parse("try_parse_to_variant",
                                              make_strings({R"({"a":1,"a":2})"}), string_type, 1);
         ASSERT_TRUE(null.status.ok()) << null.status.to_string();
         EXPECT_TRUE(is_sql_null_at(null.output, 0));
     }
     {
         ScopedValue keep_first(config::variant_enable_duplicate_json_path_check, true);
-        ExecutionResult result = execute_parse("parse_to_variant_error_to_null",
+        ExecutionResult result = execute_parse("try_parse_to_variant",
                                                make_strings({R"({"a":1,"a":2})"}), string_type, 1);
         ASSERT_TRUE(result.status.ok()) << result.status.to_string();
         EXPECT_FALSE(is_sql_null_at(result.output, 0));
@@ -368,8 +352,8 @@ TEST(FunctionVariantParseTest, ConfiguredInputValidationUsesFailOrOuterNull) {
         ExecutionResult fail =
                 execute_parse("parse_to_variant", make_strings({invalid_utf8}), string_type, 1);
         EXPECT_FALSE(fail.status.ok());
-        ExecutionResult null = execute_parse("parse_to_variant_error_to_null",
-                                             make_strings({invalid_utf8}), string_type, 1);
+        ExecutionResult null =
+                execute_parse("try_parse_to_variant", make_strings({invalid_utf8}), string_type, 1);
         ASSERT_TRUE(null.status.ok()) << null.status.to_string();
         EXPECT_TRUE(is_sql_null_at(null.output, 0));
     }
@@ -378,8 +362,8 @@ TEST(FunctionVariantParseTest, ConfiguredInputValidationUsesFailOrOuterNull) {
         ExecutionResult fail =
                 execute_parse("parse_to_variant", make_strings({too_deep}), string_type, 1);
         EXPECT_FALSE(fail.status.ok());
-        ExecutionResult null = execute_parse("parse_to_variant_error_to_null",
-                                             make_strings({too_deep}), string_type, 1);
+        ExecutionResult null =
+                execute_parse("try_parse_to_variant", make_strings({too_deep}), string_type, 1);
         ASSERT_TRUE(null.status.ok()) << null.status.to_string();
         EXPECT_TRUE(is_sql_null_at(null.output, 0));
     }

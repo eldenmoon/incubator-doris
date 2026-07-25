@@ -31,10 +31,10 @@ suite("variant_different_max_subcolumns_count", "p0") {
         properties("replication_num" = "1", "disable_auto_compaction" = "true");
     """
 
-    sql """INSERT INTO ${table_name} values(1, '{"a": "1", "b": "hello", "c": 1.1}'), (2, '{"c": 2.2}')"""
-    sql """INSERT INTO ${table_name} values(3, '{"a": "3", "b": "world", "c": 3.3}')"""
-    sql """INSERT INTO ${table_name} values(4, '{"b": "world", "c": 4.4}')"""
-    sql """INSERT INTO ${table_name} values(5, '{"a": "5", "c": 5.5}')"""
+    sql """INSERT INTO ${table_name} values(1, parse_to_variant('{"a": "1", "b": "hello", "c": 1.1}')), (2, parse_to_variant('{"c": 2.2}'))"""
+    sql """INSERT INTO ${table_name} values(3, parse_to_variant('{"a": "3", "b": "world", "c": 3.3}'))"""
+    sql """INSERT INTO ${table_name} values(4, parse_to_variant('{"b": "world", "c": 4.4}'))"""
+    sql """INSERT INTO ${table_name} values(5, parse_to_variant('{"a": "5", "c": 5.5}'))"""
 
     qt_sql "select v['a'], v['b'], v['c'], * from ${table_name} order by k"
     trigger_and_wait_compaction(table_name, "full", 1800)
@@ -54,14 +54,14 @@ suite("variant_different_max_subcolumns_count", "p0") {
         properties("replication_num" = "1", "disable_auto_compaction" = "true");
     """
 
-    sql """INSERT INTO ${table_name} values(1, '{"a": "1", "b": "hello", "c": 1.1}', '{"a": "1", "b": "hello", "c": 1.1}', '{"a": "1", "b": "hello", "c": 1.1}', '{"a": "1", "b": "hello", "c": 1.1}')"""
-    sql """INSERT INTO ${table_name} values(2, '{"c": 2.2}', '{"c": 2.2}', '{"c": 2.2}', '{"c": 2.2}')"""
-    sql """INSERT INTO ${table_name} values(3, '{"a": "3", "b": "world", "c": 3.3}', '{"a": "3", "b": "world", "c": 3.3}', '{"a": "3", "b": "world", "c": 3.3}', '{"a": "3", "b": "world", "c": 3.3}')"""
-    sql """INSERT INTO ${table_name} values(4, '{"b": "world", "c": 4.4}', '{"b": "world", "c": 4.4}', '{"b": "world", "c": 4.4}', '{"b": "world", "c": 4.4}')"""
-    sql """INSERT INTO ${table_name} values(5, '{"a": "5", "c": 5.5}', '{"a": "5", "c": 5.5}', '{"a": "5", "c": 5.5}', '{"a": "5", "c": 5.5}')"""
-    sql """INSERT INTO ${table_name} values(6, '{"a" : "5", "b" : "world"}', '{"a" : "5", "b" : "world"}', '{"a" : "5", "b" : "world"}', '{"a" : "5", "b" : "world"}')"""
-    sql """INSERT INTO ${table_name} values(7, '{"a" : "1"}', '{"a" : "1"}', '{"a" : "1"}', '{"a" : "1"}')"""
-    sql """INSERT INTO ${table_name} values(8, '{"b" : "1"}', '{"b" : "1"}', '{"b" : "1"}', '{"b" : "1"}')"""
+    sql """INSERT INTO ${table_name} values(1, parse_to_variant('{"a": "1", "b": "hello", "c": 1.1}'), parse_to_variant('{"a": "1", "b": "hello", "c": 1.1}'), parse_to_variant('{"a": "1", "b": "hello", "c": 1.1}'), parse_to_variant('{"a": "1", "b": "hello", "c": 1.1}'))"""
+    sql """INSERT INTO ${table_name} values(2, parse_to_variant('{"c": 2.2}'), parse_to_variant('{"c": 2.2}'), parse_to_variant('{"c": 2.2}'), parse_to_variant('{"c": 2.2}'))"""
+    sql """INSERT INTO ${table_name} values(3, parse_to_variant('{"a": "3", "b": "world", "c": 3.3}'), parse_to_variant('{"a": "3", "b": "world", "c": 3.3}'), parse_to_variant('{"a": "3", "b": "world", "c": 3.3}'), parse_to_variant('{"a": "3", "b": "world", "c": 3.3}'))"""
+    sql """INSERT INTO ${table_name} values(4, parse_to_variant('{"b": "world", "c": 4.4}'), parse_to_variant('{"b": "world", "c": 4.4}'), parse_to_variant('{"b": "world", "c": 4.4}'), parse_to_variant('{"b": "world", "c": 4.4}'))"""
+    sql """INSERT INTO ${table_name} values(5, parse_to_variant('{"a": "5", "c": 5.5}'), parse_to_variant('{"a": "5", "c": 5.5}'), parse_to_variant('{"a": "5", "c": 5.5}'), parse_to_variant('{"a": "5", "c": 5.5}'))"""
+    sql """INSERT INTO ${table_name} values(6, parse_to_variant('{"a" : "5", "b" : "world"}'), parse_to_variant('{"a" : "5", "b" : "world"}'), parse_to_variant('{"a" : "5", "b" : "world"}'), parse_to_variant('{"a" : "5", "b" : "world"}'))"""
+    sql """INSERT INTO ${table_name} values(7, parse_to_variant('{"a" : "1"}'), parse_to_variant('{"a" : "1"}'), parse_to_variant('{"a" : "1"}'), parse_to_variant('{"a" : "1"}'))"""
+    sql """INSERT INTO ${table_name} values(8, parse_to_variant('{"b" : "1"}'), parse_to_variant('{"b" : "1"}'), parse_to_variant('{"b" : "1"}'), parse_to_variant('{"b" : "1"}'))"""
 
     qt_sql "select v['a'], v['b'], v['c'], v2['a'], v2['b'], v2['c'], v3['a'], v3['b'], v3['c'], v4['a'], v4['b'], v4['c'], * from ${table_name} order by k"
 
@@ -82,22 +82,22 @@ suite("variant_different_max_subcolumns_count", "p0") {
         DISTRIBUTED BY HASH(k) BUCKETS 1
         properties("replication_num" = "1", "disable_auto_compaction" = "true");
     """
-    sql """INSERT INTO ${table_name} values(1, '{"a": "1", "b": "hello", "c": 1.1}', '{"a": "1", "b": "hello", "c": 1.1}', '{"a": "1", "b": "hello", "c": 1.1}', '{"a": "1", "b": "hello", "c": 1.1}', '{"a": "1", "b": "hello", "c": 1.1}')"""
-    sql """INSERT INTO ${table_name} values(2, '{"c": 2.2, "d": 2.2}', '{"c": 2.2, "d": 2.2}', '{"c": 2.2, "d": 2.2}', '{"c": 2.2, "d": 2.2}', '{"c": 2.2, "d": 2.2}')"""
-    sql """INSERT INTO ${table_name} values(3, '{"e": "3", "f": "world", "g": 3.3, "h": 3.3}', '{"e": "3", "f": "world", "g": 3.3, "h": 3.3}', '{"e": "3", "f": "world", "g": 3.3, "h": 3.3}', '{"e": "3", "f": "world", "g": 3.3, "h": 3.3}', '{"e": "3", "f": "world", "g": 3.3, "h": 3.3}')"""
-    sql """INSERT INTO ${table_name} values(1, '{"a": "1", "b": "hello", "c": 1.1}', '{"a": "1", "b": "hello", "c": 1.1}', '{"a": "1", "b": "hello", "c": 1.1}', '{"a": "1", "b": "hello", "c": 1.1}', '{"a": "1", "b": "hello", "c": 1.1}')"""
-    sql """INSERT INTO ${table_name} values(2, '{"c": 2.2, "d": 2.2}', '{"c": 2.2, "d": 2.2}', '{"c": 2.2, "d": 2.2}', '{"c": 2.2, "d": 2.2}', '{"c": 2.2, "d": 2.2}')"""
-    sql """INSERT INTO ${table_name} values(3, '{"e": "3", "f": "world", "g": 3.3, "h": 3.3}', '{"e": "3", "f": "world", "g": 3.3, "h": 3.3}', '{"e": "3", "f": "world", "g": 3.3, "h": 3.3}', '{"e": "3", "f": "world", "g": 3.3, "h": 3.3}', '{"e": "3", "f": "world", "g": 3.3, "h": 3.3}')"""
+    sql """INSERT INTO ${table_name} values(1, parse_to_variant('{"a": "1", "b": "hello", "c": 1.1}'), parse_to_variant('{"a": "1", "b": "hello", "c": 1.1}'), parse_to_variant('{"a": "1", "b": "hello", "c": 1.1}'), parse_to_variant('{"a": "1", "b": "hello", "c": 1.1}'), parse_to_variant('{"a": "1", "b": "hello", "c": 1.1}'))"""
+    sql """INSERT INTO ${table_name} values(2, parse_to_variant('{"c": 2.2, "d": 2.2}'), parse_to_variant('{"c": 2.2, "d": 2.2}'), parse_to_variant('{"c": 2.2, "d": 2.2}'), parse_to_variant('{"c": 2.2, "d": 2.2}'), parse_to_variant('{"c": 2.2, "d": 2.2}'))"""
+    sql """INSERT INTO ${table_name} values(3, parse_to_variant('{"e": "3", "f": "world", "g": 3.3, "h": 3.3}'), parse_to_variant('{"e": "3", "f": "world", "g": 3.3, "h": 3.3}'), parse_to_variant('{"e": "3", "f": "world", "g": 3.3, "h": 3.3}'), parse_to_variant('{"e": "3", "f": "world", "g": 3.3, "h": 3.3}'), parse_to_variant('{"e": "3", "f": "world", "g": 3.3, "h": 3.3}'))"""
+    sql """INSERT INTO ${table_name} values(1, parse_to_variant('{"a": "1", "b": "hello", "c": 1.1}'), parse_to_variant('{"a": "1", "b": "hello", "c": 1.1}'), parse_to_variant('{"a": "1", "b": "hello", "c": 1.1}'), parse_to_variant('{"a": "1", "b": "hello", "c": 1.1}'), parse_to_variant('{"a": "1", "b": "hello", "c": 1.1}'))"""
+    sql """INSERT INTO ${table_name} values(2, parse_to_variant('{"c": 2.2, "d": 2.2}'), parse_to_variant('{"c": 2.2, "d": 2.2}'), parse_to_variant('{"c": 2.2, "d": 2.2}'), parse_to_variant('{"c": 2.2, "d": 2.2}'), parse_to_variant('{"c": 2.2, "d": 2.2}'))"""
+    sql """INSERT INTO ${table_name} values(3, parse_to_variant('{"e": "3", "f": "world", "g": 3.3, "h": 3.3}'), parse_to_variant('{"e": "3", "f": "world", "g": 3.3, "h": 3.3}'), parse_to_variant('{"e": "3", "f": "world", "g": 3.3, "h": 3.3}'), parse_to_variant('{"e": "3", "f": "world", "g": 3.3, "h": 3.3}'), parse_to_variant('{"e": "3", "f": "world", "g": 3.3, "h": 3.3}'))"""
 
     qt_sql "select v['a'], v2['b'], v3['c'], v4['d'], v5['e'], v5['g'], * from ${table_name} order by k"
 
     trigger_and_wait_compaction(table_name, "full", 1800)
     qt_sql "select v['a'], v2['b'], v3['c'], v4['d'], v5['e'], v5['g'], * from ${table_name} order by k"
 
-    sql """ INSERT INTO ${table_name} values(4, '{"a": "1", "b": "hello", "c": 1.1, "d": 1.1, "e": "3", "f": "world", "g": 3.3, "h": 3.3}', '{"a": "1", "b": "hello", "c": 1.1, "d": 1.1, "e": "3", "f": "world", "g": 3.3, "h": 3.3}', '{"a": "1", "b": "hello", "c": 1.1, "d": 1.1, "e": "3", "f": "world", "g": 3.3, "h": 3.3}', '{"a": "1", "b": "hello", "c": 1.1, "d": 1.1, "e": "3", "f": "world", "g": 3.3, "h": 3.3}', '{"a": "1", "b": "hello", "c": 1.1, "d": 1.1, "e": "3", "f": "world", "g": 3.3, "h": 3.3}')"""
-    sql """ INSERT INTO ${table_name} values(5, '{"a": "1", "b": "hello", "c": 1.1, "d": 1.1, "e": "3", "f": "world", "g": 3.3, "h": 3.3}', '{"a": "1", "b": "hello", "c": 1.1, "d": 1.1, "e": "3", "f": "world", "g": 3.3, "h": 3.3}', '{"a": "1", "b": "hello", "c": 1.1, "d": 1.1, "e": "3", "f": "world", "g": 3.3, "h": 3.3}', '{"a": "1", "b": "hello", "c": 1.1, "d": 1.1, "e": "3", "f": "world", "g": 3.3, "h": 3.3}', '{"a": "1", "b": "hello", "c": 1.1, "d": 1.1, "e": "3", "f": "world", "g": 3.3, "h": 3.3}')"""
-    sql """ INSERT INTO ${table_name} values(6, '{"a": "1", "b": "hello", "c": 1.1, "d": 1.1, "e": "3", "f": "world", "g": 3.3, "h": 3.3}', '{"a": "1", "b": "hello", "c": 1.1, "d": 1.1, "e": "3", "f": "world", "g": 3.3, "h": 3.3}', '{"a": "1", "b": "hello", "c": 1.1, "d": 1.1, "e": "3", "f": "world", "g": 3.3, "h": 3.3}', '{"a": "1", "b": "hello", "c": 1.1, "d": 1.1, "e": "3", "f": "world", "g": 3.3, "h": 3.3}', '{"a": "1", "b": "hello", "c": 1.1, "d": 1.1, "e": "3", "f": "world", "g": 3.3, "h": 3.3}')"""
-    sql """ INSERT INTO ${table_name} values(7, '{"a": "1", "b": "hello", "c": 1.1, "d": 1.1, "e": "3", "f": "world", "g": 3.3, "h": 3.3}', '{"a": "1", "b": "hello", "c": 1.1, "d": 1.1, "e": "3", "f": "world", "g": 3.3, "h": 3.3}', '{"a": "1", "b": "hello", "c": 1.1, "d": 1.1, "e": "3", "f": "world", "g": 3.3, "h": 3.3}', '{"a": "1", "b": "hello", "c": 1.1, "d": 1.1, "e": "3", "f": "world", "g": 3.3, "h": 3.3}', '{"a": "1", "b": "hello", "c": 1.1, "d": 1.1, "e": "3", "f": "world", "g": 3.3, "h": 3.3}')"""
+    sql """ INSERT INTO ${table_name} values(4, parse_to_variant('{"a": "1", "b": "hello", "c": 1.1, "d": 1.1, "e": "3", "f": "world", "g": 3.3, "h": 3.3}'), parse_to_variant('{"a": "1", "b": "hello", "c": 1.1, "d": 1.1, "e": "3", "f": "world", "g": 3.3, "h": 3.3}'), parse_to_variant('{"a": "1", "b": "hello", "c": 1.1, "d": 1.1, "e": "3", "f": "world", "g": 3.3, "h": 3.3}'), parse_to_variant('{"a": "1", "b": "hello", "c": 1.1, "d": 1.1, "e": "3", "f": "world", "g": 3.3, "h": 3.3}'), parse_to_variant('{"a": "1", "b": "hello", "c": 1.1, "d": 1.1, "e": "3", "f": "world", "g": 3.3, "h": 3.3}'))"""
+    sql """ INSERT INTO ${table_name} values(5, parse_to_variant('{"a": "1", "b": "hello", "c": 1.1, "d": 1.1, "e": "3", "f": "world", "g": 3.3, "h": 3.3}'), parse_to_variant('{"a": "1", "b": "hello", "c": 1.1, "d": 1.1, "e": "3", "f": "world", "g": 3.3, "h": 3.3}'), parse_to_variant('{"a": "1", "b": "hello", "c": 1.1, "d": 1.1, "e": "3", "f": "world", "g": 3.3, "h": 3.3}'), parse_to_variant('{"a": "1", "b": "hello", "c": 1.1, "d": 1.1, "e": "3", "f": "world", "g": 3.3, "h": 3.3}'), parse_to_variant('{"a": "1", "b": "hello", "c": 1.1, "d": 1.1, "e": "3", "f": "world", "g": 3.3, "h": 3.3}'))"""
+    sql """ INSERT INTO ${table_name} values(6, parse_to_variant('{"a": "1", "b": "hello", "c": 1.1, "d": 1.1, "e": "3", "f": "world", "g": 3.3, "h": 3.3}'), parse_to_variant('{"a": "1", "b": "hello", "c": 1.1, "d": 1.1, "e": "3", "f": "world", "g": 3.3, "h": 3.3}'), parse_to_variant('{"a": "1", "b": "hello", "c": 1.1, "d": 1.1, "e": "3", "f": "world", "g": 3.3, "h": 3.3}'), parse_to_variant('{"a": "1", "b": "hello", "c": 1.1, "d": 1.1, "e": "3", "f": "world", "g": 3.3, "h": 3.3}'), parse_to_variant('{"a": "1", "b": "hello", "c": 1.1, "d": 1.1, "e": "3", "f": "world", "g": 3.3, "h": 3.3}'))"""
+    sql """ INSERT INTO ${table_name} values(7, parse_to_variant('{"a": "1", "b": "hello", "c": 1.1, "d": 1.1, "e": "3", "f": "world", "g": 3.3, "h": 3.3}'), parse_to_variant('{"a": "1", "b": "hello", "c": 1.1, "d": 1.1, "e": "3", "f": "world", "g": 3.3, "h": 3.3}'), parse_to_variant('{"a": "1", "b": "hello", "c": 1.1, "d": 1.1, "e": "3", "f": "world", "g": 3.3, "h": 3.3}'), parse_to_variant('{"a": "1", "b": "hello", "c": 1.1, "d": 1.1, "e": "3", "f": "world", "g": 3.3, "h": 3.3}'), parse_to_variant('{"a": "1", "b": "hello", "c": 1.1, "d": 1.1, "e": "3", "f": "world", "g": 3.3, "h": 3.3}'))"""
 
 
     qt_sql "select v['a'], v2['b'], v3['c'], v4['d'], v5['e'], v5['g'], * from ${table_name} order by k"

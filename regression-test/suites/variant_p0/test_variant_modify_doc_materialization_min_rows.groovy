@@ -43,9 +43,9 @@ suite("test_variant_modify_doc_materialization_min_rows", "p0") {
     // Verify tablet meta shows min_rows=5
     // Insert 3 rows with different paths (3 < 5, so no sub-columns should be materialized)
     sql """ INSERT INTO ${tableName} VALUES
-        (1, '{"path_a": 100, "path_b": "hello", "path_c": 1.5}'),
-        (2, '{"path_a": 200, "path_b": "world", "path_c": 2.5}'),
-        (3, '{"path_a": 300, "path_b": "doris", "path_c": 3.5}')
+        (1, parse_to_variant('{"path_a": 100, "path_b": "hello", "path_c": 1.5}')),
+        (2, parse_to_variant('{"path_a": 200, "path_b": "world", "path_c": 2.5}')),
+        (3, parse_to_variant('{"path_a": 300, "path_b": "doris", "path_c": 3.5}'))
     """
 
     // Sync rowsets
@@ -69,9 +69,9 @@ suite("test_variant_modify_doc_materialization_min_rows", "p0") {
 
     // Insert 3 more rows with different paths (3 >= 2, so sub-columns should be materialized for new data)
     sql """ INSERT INTO ${tableName} VALUES
-        (4, '{"path_d": 400, "path_e": "alpha", "path_f": 4.5}'),
-        (5, '{"path_d": 500, "path_e": "beta", "path_f": 5.5}'),
-        (6, '{"path_d": 600, "path_e": "gamma", "path_f": 6.5}')
+        (4, parse_to_variant('{"path_d": 400, "path_e": "alpha", "path_f": 4.5}')),
+        (5, parse_to_variant('{"path_d": 500, "path_e": "beta", "path_f": 5.5}')),
+        (6, parse_to_variant('{"path_d": 600, "path_e": "gamma", "path_f": 6.5}'))
     """
 
     // Sync rowsets

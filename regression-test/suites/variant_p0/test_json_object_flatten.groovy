@@ -49,8 +49,7 @@ suite("regression_test_json_object_flatten", "p0") {
 
     qt_sql_jsonb """SELECT k, json_object_flatten(j) FROM json_object_flatten_jsonb_t ORDER BY k"""
 
-    // 2) VARIANT column: Nereids inserts an implicit Variant -> JSONB cast,
-    //    so users can pass the variant column straight to json_object_flatten.
+    // 2) VARIANT column: JSONB functions require an explicit Variant -> JSONB cast.
     sql """DROP TABLE IF EXISTS json_object_flatten_variant_t"""
     sql """
         CREATE TABLE json_object_flatten_variant_t (
@@ -61,24 +60,24 @@ suite("regression_test_json_object_flatten", "p0") {
         DISTRIBUTED BY HASH(k) BUCKETS 1
         PROPERTIES ("replication_num" = "1", "disable_auto_compaction" = "true");
     """
-    sql """INSERT INTO json_object_flatten_variant_t VALUES (1, '{"a": {"b": 2}}')"""
-    sql """INSERT INTO json_object_flatten_variant_t VALUES (2, '{"a": {"b": {"c": 3}}}')"""
-    sql """INSERT INTO json_object_flatten_variant_t VALUES (3, '{"a": 1, "b": "hi"}')"""
-    sql """INSERT INTO json_object_flatten_variant_t VALUES (4, '{}')"""
-    sql """INSERT INTO json_object_flatten_variant_t VALUES (5, '{"a": {}}')"""
-    sql """INSERT INTO json_object_flatten_variant_t VALUES (6, '{"a": null}')"""
-    sql """INSERT INTO json_object_flatten_variant_t VALUES (7, '{"a": {"b": null}}')"""
-    sql """INSERT INTO json_object_flatten_variant_t VALUES (8, '{"a":{"b":{"c":{"d":{"e":{"f":{"g":{"h":{"i":{"j":{"k":{"l":1}}}}}}}}}}}}')"""
+    sql """INSERT INTO json_object_flatten_variant_t VALUES (1, parse_to_variant('{"a": {"b": 2}}'))"""
+    sql """INSERT INTO json_object_flatten_variant_t VALUES (2, parse_to_variant('{"a": {"b": {"c": 3}}}'))"""
+    sql """INSERT INTO json_object_flatten_variant_t VALUES (3, parse_to_variant('{"a": 1, "b": "hi"}'))"""
+    sql """INSERT INTO json_object_flatten_variant_t VALUES (4, parse_to_variant('{}'))"""
+    sql """INSERT INTO json_object_flatten_variant_t VALUES (5, parse_to_variant('{"a": {}}'))"""
+    sql """INSERT INTO json_object_flatten_variant_t VALUES (6, parse_to_variant('{"a": null}'))"""
+    sql """INSERT INTO json_object_flatten_variant_t VALUES (7, parse_to_variant('{"a": {"b": null}}'))"""
+    sql """INSERT INTO json_object_flatten_variant_t VALUES (8, parse_to_variant('{"a":{"b":{"c":{"d":{"e":{"f":{"g":{"h":{"i":{"j":{"k":{"l":1}}}}}}}}}}}}'))"""
     sql """INSERT INTO json_object_flatten_variant_t VALUES (9, NULL)"""
-    sql """INSERT INTO json_object_flatten_variant_t VALUES (10, '42')"""
-    sql """INSERT INTO json_object_flatten_variant_t VALUES (11, '"hello"')"""
+    sql """INSERT INTO json_object_flatten_variant_t VALUES (10, parse_to_variant('42'))"""
+    sql """INSERT INTO json_object_flatten_variant_t VALUES (11, parse_to_variant('"hello"'))"""
     // Array-leaf cases through the variant -> jsonb cast path.
-    sql """INSERT INTO json_object_flatten_variant_t VALUES (12, '{"a": [1, 2, 3]}')"""
-    sql """INSERT INTO json_object_flatten_variant_t VALUES (13, '{"a": [{"b": 1}, {"b": 2}]}')"""
-    sql """INSERT INTO json_object_flatten_variant_t VALUES (14, '{"a": {"b": [1, 2, 3]}}')"""
-    sql """INSERT INTO json_object_flatten_variant_t VALUES (15, '{"a": {"b": [{"c": 1}, {"c": 2}]}}')"""
-    sql """INSERT INTO json_object_flatten_variant_t VALUES (16, '[1, 2, {"x": 3}]')"""
-    sql """INSERT INTO json_object_flatten_variant_t VALUES (17, '{"x": {"s": 1, "a": [1, 2], "o": {"k": "v"}}}')"""
+    sql """INSERT INTO json_object_flatten_variant_t VALUES (12, parse_to_variant('{"a": [1, 2, 3]}'))"""
+    sql """INSERT INTO json_object_flatten_variant_t VALUES (13, parse_to_variant('{"a": [{"b": 1}, {"b": 2}]}'))"""
+    sql """INSERT INTO json_object_flatten_variant_t VALUES (14, parse_to_variant('{"a": {"b": [1, 2, 3]}}'))"""
+    sql """INSERT INTO json_object_flatten_variant_t VALUES (15, parse_to_variant('{"a": {"b": [{"c": 1}, {"c": 2}]}}'))"""
+    sql """INSERT INTO json_object_flatten_variant_t VALUES (16, parse_to_variant('[1, 2, {"x": 3}]'))"""
+    sql """INSERT INTO json_object_flatten_variant_t VALUES (17, parse_to_variant('{"x": {"s": 1, "a": [1, 2], "o": {"k": "v"}}}'))"""
 
-    qt_sql_variant """SELECT k, json_object_flatten(cast(v AS JSONB)) FROM json_object_flatten_variant_t ORDER BY k"""
+    qt_sql_variant """SELECT k, json_object_flatten(cast(v as jsonb)) FROM json_object_flatten_variant_t ORDER BY k"""
 }

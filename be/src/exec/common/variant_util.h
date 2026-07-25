@@ -18,27 +18,23 @@
 #pragma once
 
 #include <gen_cpp/Descriptors_types.h>
-#include <parallel_hashmap/phmap.h>
 
 #include <cstddef>
 #include <cstdint>
 #include <map>
 #include <string>
-#include <string_view>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 #include "common/status.h"
 #include "core/column/column.h"
-#include "core/column/column_variant.h"
 #include "core/data_type/data_type.h"
-#include "core/field.h"
 #include "core/string_ref.h"
 #include "core/types.h"
 #include "exprs/aggregate/aggregate_function.h"
 #include "storage/tablet/tablet_fwd.h"
 #include "storage/tablet/tablet_schema.h"
-#include "util/json/json_parser.h"
 
 namespace doris {
 class TabletSchema;
@@ -46,17 +42,9 @@ enum class FieldType;
 namespace segment_v2 {
 struct VariantStatisticsPB;
 } // namespace segment_v2
-class Block;
 class IColumn;
 struct ColumnWithTypeAndName;
-class SimdJSONParser;
 enum class ExtractType;
-template <typename ParserImpl>
-class JSONDataParser;
-template <typename T>
-class ColumnStr;
-using ColumnString = ColumnStr<UInt32>;
-using JsonParser = JSONDataParser<SimdJSONParser>;
 } // namespace doris
 
 const std::string SPARSE_COLUMN_PATH = "__DORIS_VARIANT_SPARSE__";
@@ -146,9 +134,6 @@ void inherit_column_attributes(const TabletColumn& source, TabletColumn& target,
 // Align variant subcolumn BF inheritance with FE BF-supported types.
 bool is_bf_supported_by_fe_for_variant_subcolumn(FieldType type);
 
-// get sorted subcolumns of variant
-ColumnVariant::Subcolumns get_sorted_subcolumns(const ColumnVariant::Subcolumns& subcolumns);
-
 bool has_schema_index_diff(const TabletSchema* new_schema, const TabletSchema* old_schema,
                            int32_t new_col_idx, int32_t old_col_idx);
 
@@ -162,8 +147,6 @@ TabletColumn create_doc_value_column(const TabletColumn& variant, int bucket_ind
 
 // Compute bucket id for given path string using SipHash64(path) % bucket_num.
 uint32_t variant_binary_shard_of(const StringRef& path, uint32_t bucket_num);
-
-void get_field_info(const Field& field, FieldInfo* info);
 
 // inherit index from parent column
 bool inherit_index(const std::vector<const TabletIndex*>& parent_indexes,
@@ -182,8 +165,8 @@ Status update_least_schema_internal(const std::map<PathInData, DataTypes>& subco
                                     std::set<PathInData>* path_set = nullptr);
 
 bool generate_sub_column_info(const TabletSchema& schema, int32_t col_unique_id,
-                              const std::string& path,
-                              TabletSchema::SubColumnInfo* sub_column_info);
+                              const std::string& path, TabletSchema::SubColumnInfo* sub_column_info,
+                              PatternTypePB* matched_pattern_type = nullptr);
 
 class VariantCompactionUtil {
 public:
@@ -241,30 +224,5 @@ public:
             const PathToDataTypes& path_to_data_types, const TabletColumnPtr parent_column,
             TabletSchemaSPtr& output_schema, TabletSchema::PathsSetInfo& paths_set_info);
 };
-
-// parse a batch of json strings into column object, throws doris::Execption when failed
-// only UT test
-void parse_json_to_variant(IColumn& column, const ColumnString& raw_json_column,
-                           const ParseConfig& config);
-
-// Parse variant columns by picking variant positions from `variant_pos` and using provided ParseConfigs.
-// only UT test
-Status parse_and_materialize_variant_columns(Block& block, const std::vector<uint32_t>& variant_pos,
-                                             const std::vector<ParseConfig>& configs);
-
-// parse a single json, throws doris::Execption when failed
-void parse_json_to_variant(IColumn& column, const StringRef& jsons, JsonParser* parser,
-                           const ParseConfig& config);
-
-// Parse variant columns by picking variant positions from `column_pos` and generating ParseConfig
-// based on tablet schema settings (flatten nested / doc snapshot mode).
-Status parse_and_materialize_variant_columns(Block& block, const TabletSchema& tablet_schema,
-                                             const std::vector<uint32_t>& column_pos);
-
-// Parse doc snapshot column (paths/values/offsets stored in ColumnVariant) into per-path subcolumns.
-// NOTE: Returned map keys are `std::string_view` pointing into the underlying doc snapshot paths
-// column, so the input `variant` must outlive the returned map.
-phmap::flat_hash_map<std::string_view, ColumnVariant::Subcolumn> materialize_docs_to_subcolumns_map(
-        const ColumnVariant& variant, size_t expected_unique_paths = 0);
 
 } // namespace  doris::variant_util

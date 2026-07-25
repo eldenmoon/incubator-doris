@@ -29,6 +29,7 @@ import org.apache.doris.nereids.types.BigIntType;
 import org.apache.doris.nereids.types.JsonType;
 import org.apache.doris.nereids.types.StringType;
 import org.apache.doris.nereids.types.VarcharType;
+import org.apache.doris.nereids.types.VariantType;
 
 import com.google.common.base.Preconditions;
 import com.google.common.collect.ImmutableList;
@@ -43,7 +44,9 @@ public class JsonbExtractBigint extends ScalarFunction
 
     public static final List<FunctionSignature> SIGNATURES = ImmutableList.of(
             FunctionSignature.ret(BigIntType.INSTANCE).args(JsonType.INSTANCE, VarcharType.SYSTEM_DEFAULT),
-            FunctionSignature.ret(BigIntType.INSTANCE).args(JsonType.INSTANCE, StringType.INSTANCE)
+            FunctionSignature.ret(BigIntType.INSTANCE).args(JsonType.INSTANCE, StringType.INSTANCE),
+            FunctionSignature.ret(BigIntType.INSTANCE).args(VariantType.INSTANCE, VarcharType.SYSTEM_DEFAULT),
+            FunctionSignature.ret(BigIntType.INSTANCE).args(VariantType.INSTANCE, StringType.INSTANCE)
     );
 
     /**
@@ -79,6 +82,10 @@ public class JsonbExtractBigint extends ScalarFunction
 
     @Override
     public Expression rewriteWhenAnalyze() {
+        if (children.get(0).getDataType().isVariantType()) {
+            return new Cast(VariantJsonNativeRewrite.get(children.get(0), children.get(1)),
+                    BigIntType.INSTANCE, false);
+        }
         JsonbExtract jsonExtract = new JsonbExtract(children.get(0), children.get(1));
         return new Cast(jsonExtract, BigIntType.INSTANCE, false);
     }

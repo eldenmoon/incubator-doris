@@ -1,0 +1,6 @@
+build	engine	case	median_wall_ms	median_server_ms	result	result_sha256	measured_runs	warmups
+optimized_followup	ColumnVariantV2	stream_load	42940.792	42927	10000000 rows	-	3	0
+optimized_followup	ColumnVariantV2	root	4035.636	-	4797090110	83d8bd6127eb9defc1da4a9518e96b1a0870d6d6ae3f4ef83fe73f80c4b14a9e	7	2
+optimized_followup	ColumnVariantV2	shallow_path	70.078	-	9946720	0ccf6a23e665bc15f1ca416fb68b33e84c8f787ca7ba2978e74420aa2d043ef1	21	10
+optimized_followup	ColumnVariantV2	deep_path	68.183	-	9546110	2c8490f7c140b583c04d8fe2c18914af7a048ee3e3310ed880137cf7c0cfb35f	21	10
+optimized_followup	ColumnVariantV2	path_group	72.556	-	15	e629fa6598d732768f7c726b4b621285f9c3b85303900aa912017db7617d8bdb	21	10

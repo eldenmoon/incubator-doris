@@ -31,19 +31,19 @@ suite("regression_test_variant_concurrent_schema_update", ""){
     def t1 = Thread.startDaemon {
         for (int k = 1; k <= 60; k++) {
             int x = k % 10;
-            sql """insert into ${table_name} values(${x}, '{"k${x}" : ${x}, "x${k}" : 123}', '{"k${x}" : ${x}, "x${k}" : 123}')"""
+            sql """insert into ${table_name} values(${x}, parse_to_variant('{"k${x}" : ${x}, "x${k}" : 123}'), parse_to_variant('{"k${x}" : ${x}, "x${k}" : 123}'))"""
         } 
     }
     def t2 = Thread.startDaemon {
         for (int k = 61; k <= 120; k++) {
             int x = k % 10;
-            sql """insert into ${table_name} values(${x}, '{"k${x}" : ${x}, "x${k}" : 123}', '{"k${x}" : ${x}, "x${k}" : 123}')"""
+            sql """insert into ${table_name} values(${x}, parse_to_variant('{"k${x}" : ${x}, "x${k}" : 123}'), parse_to_variant('{"k${x}" : ${x}, "x${k}" : 123}'))"""
         }
     }
     def t3 = Thread.startDaemon {
         for (int k = 121; k <= 180; k++) {
             int x = k % 10;
-            sql """insert into ${table_name} values(${x}, '{"k${x}" : ${x}, "x${k}" : 123}', '{"k${x}" : ${x}, "x${k}" : 123}')"""
+            sql """insert into ${table_name} values(${x}, parse_to_variant('{"k${x}" : ${x}, "x${k}" : 123}'), parse_to_variant('{"k${x}" : ${x}, "x${k}" : 123}'))"""
         }
     }
     t1.join()

@@ -7,16 +7,22 @@
 2	null	false	null	false
 3	{"k":1}	false	{"k":1}	false
 
--- !strict_error_to_null --
-true	false
+-- !json_input --
+{"k":1}	[1,null,3]
 
--- !permissive_invalid_json_is_string --
-{	false	{	false
-
--- !key_too_long_error_to_null --
+-- !legacy_try_alias --
 true
 
--- !duplicate_key_error_to_null --
+-- !strict_error_to_null --
+true	true
+
+-- !parser_ignores_permissive_storage_config --
+true	true
+
+-- !key_too_long_try_parse --
+true
+
+-- !duplicate_key_try_parse --
 true
 
 -- !duplicate_key_first_wins --

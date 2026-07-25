@@ -45,14 +45,14 @@ class CountTest {
     }
 
     @Test
-    void testCountDistinctAllowsVariantWithDedicatedState() {
+    void testCountDistinctAllowsVariant() {
         Count count = new Count(true, SlotReference.of("v", VariantType.INSTANCE));
 
         Assertions.assertDoesNotThrow(count::checkLegalityAfterRewrite);
     }
 
     @Test
-    void testMultiDistinctCountAllowsVariantWithDedicatedState() {
+    void testMultiDistinctCountAllowsVariant() {
         MultiDistinctCount count = new MultiDistinctCount(SlotReference.of("v", VariantType.INSTANCE));
 
         Assertions.assertDoesNotThrow(count::checkLegalityAfterRewrite);

@@ -1181,23 +1181,11 @@ DEFINE_Int32(blocking_pipeline_executor_size, "0");
 DEFINE_mInt32(variant_max_json_key_length, "255");
 DEFINE_mBool(variant_throw_exeception_on_invalid_json, "false");
 DEFINE_mBool(variant_enable_duplicate_json_path_check, "false");
-// Controls storage-layer parse target for plain non-doc VARIANT columns:
-// 0 = auto, 1 = force parse-time subcolumns, 2 = force doc-value KV staging.
-// NestedGroup, deprecated flatten-nested, and persistent doc mode keep their required paths.
-DEFINE_mInt32(variant_storage_parse_mode, "0");
 DEFINE_mBool(enable_vertical_compact_variant_subcolumns, "true");
-DEFINE_mBool(enable_variant_doc_sparse_write_subcolumns, "true");
-// Maximum depth of nested arrays to track with NestedGroup
-// Reserved for future use when NestedGroup expansion moves to storage layer
-// Deeper arrays will be stored as JSONB
-DEFINE_mInt32(variant_nested_group_max_depth, "10");
 DEFINE_mBool(variant_nested_group_discard_scalar_on_conflict, "true");
 
 DEFINE_Validator(variant_max_json_key_length,
                  [](const int config) -> bool { return config > 0 && config <= 65535; });
-DEFINE_Validator(variant_storage_parse_mode,
-                 [](const int config) -> bool { return config >= 0 && config <= 2; });
-
 // block file cache
 DEFINE_Bool(enable_file_cache, "false");
 // format: [{"path":"/path/to/file_cache","total_size":21474836480,"query_limit":10737418240}]

@@ -63,8 +63,11 @@ public class ElementAt extends ScalarFunction
     public static final List<FunctionSignature> SIGNATURES = ImmutableList.of(
             FunctionSignature.ret(new FollowToAnyDataType(0))
                     .args(ArrayType.of(new AnyDataType(0)), BigIntType.INSTANCE),
-            VARIANT_KEY_SIGNATURE,
+            // Keep the integer overload before the string overload. Integer literals can also
+            // match the VARCHAR signature, and signature selection otherwise binds array indexes
+            // such as element_at(variant, 1) as the object key "1".
             VARIANT_INDEX_SIGNATURE,
+            VARIANT_KEY_SIGNATURE,
             FunctionSignature.ret(new FollowToAnyDataType(1))
                     .args(MapType.of(new AnyDataType(0), new AnyDataType(1)), new FollowToAnyDataType(0))
     );
@@ -166,17 +169,4 @@ public class ElementAt extends ScalarFunction
         }
     }
 
-    @Override
-    public FunctionSignature computeSignature(FunctionSignature signature) {
-        List<Expression> arguments = getArguments();
-        DataType expressionType = arguments.get(0).getDataType();
-        DataType sigType = signature.argumentsTypes.get(0);
-        if (expressionType instanceof VariantType && sigType instanceof VariantType) {
-            // Preserve predefinedFields for schema template matching
-            VariantType originalType = (VariantType) expressionType;
-            signature = signature.withArgumentType(0, originalType);
-            signature = signature.withReturnType(originalType);
-        }
-        return super.computeSignature(signature);
-    }
 }

@@ -161,8 +161,9 @@ public abstract class LogicalSetOperation extends AbstractLogicalPlan
         for (int i = 0; i < slots.size(); i++) {
             Slot slot = slots.get(i);
             ExprId exprId = i < outputs.size() ? outputs.get(i).getExprId() : StatementScopeIdGenerator.newExprId();
+            DataType outputType = TypeCoercionUtils.normalizeVariantForCompute(slot.getDataType());
             newOutputs.add(
-                    new SlotReference(exprId, slot.toSql(), slot.getDataType(), slot.nullable(), ImmutableList.of())
+                    new SlotReference(exprId, slot.toSql(), outputType, slot.nullable(), ImmutableList.of())
             );
         }
         return newOutputs.build();

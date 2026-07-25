@@ -16,8 +16,6 @@
 // under the License.
 
 suite("variant_parse_functions", "p0,nonConcurrent") {
-    sql "SET enable_variant_v2 = true"
-
     order_qt_valid_json """
         SELECT /*+SET_VAR(enable_fold_constant_by_be=false)*/
             CAST(parse_to_variant('{"object":{"k":1},"array":[true,null],"text":"v"}') AS STRING),
@@ -30,8 +28,8 @@ suite("variant_parse_functions", "p0,nonConcurrent") {
             id,
             CAST(parse_to_variant(payload) AS STRING),
             parse_to_variant(payload) IS NULL,
-            CAST(parse_to_variant_error_to_null(payload) AS STRING),
-            parse_to_variant_error_to_null(payload) IS NULL
+            CAST(try_parse_to_variant(payload) AS STRING),
+            try_parse_to_variant(payload) IS NULL
         FROM (
             SELECT 1 AS id, CAST(NULL AS STRING) AS payload
             UNION ALL
@@ -42,6 +40,26 @@ suite("variant_parse_functions", "p0,nonConcurrent") {
         ORDER BY id
     """
 
+    order_qt_json_input """
+        SELECT /*+SET_VAR(enable_fold_constant_by_be=false)*/
+            CAST(parse_to_variant(CAST('{"k":1}' AS JSON)) AS STRING),
+            CAST(try_parse_to_variant(CAST('[1,null,3]' AS JSON)) AS STRING)
+    """
+
+    // Keep the old function name as a compatibility alias.
+    order_qt_legacy_try_alias """
+        SELECT /*+SET_VAR(enable_fold_constant_by_be=false)*/
+            parse_to_variant_error_to_null('{') IS NULL
+    """
+
+    test {
+        sql """
+            SELECT /*+SET_VAR(enable_fold_constant_by_be=false)*/
+                parse_to_variant(1)
+        """
+        exception "parse_to_variant"
+    }
+
     setBeConfigTemporary([variant_throw_exeception_on_invalid_json: true]) {
         test {
             sql """
@@ -50,27 +68,25 @@ suite("variant_parse_functions", "p0,nonConcurrent") {
             """
             exception "Parse json document failed at row 0, error:"
         }
-        test {
-            sql """
-                SELECT /*+SET_VAR(enable_fold_constant_by_be=false)*/
-                    json_parse('{')
-            """
-            exception "Parse json document failed at row 0, error:"
-        }
         order_qt_strict_error_to_null """
             SELECT /*+SET_VAR(enable_fold_constant_by_be=false)*/
-                parse_to_variant_error_to_null('{') IS NULL,
-                parse_to_variant_error_to_null('') IS NULL
+                try_parse_to_variant('{') IS NULL,
+                try_parse_to_variant('') IS NULL
         """
     }
 
     setBeConfigTemporary([variant_throw_exeception_on_invalid_json: false]) {
-        order_qt_permissive_invalid_json_is_string """
+        test {
+            sql """
+                SELECT /*+SET_VAR(enable_fold_constant_by_be=false)*/
+                    parse_to_variant('{')
+            """
+            exception "Parse json document failed at row 0, error:"
+        }
+        order_qt_parser_ignores_permissive_storage_config """
             SELECT /*+SET_VAR(enable_fold_constant_by_be=false)*/
-                CAST(parse_to_variant('{') AS STRING),
-                parse_to_variant('{') IS NULL,
-                CAST(parse_to_variant_error_to_null('{') AS STRING),
-                parse_to_variant_error_to_null('{') IS NULL
+                try_parse_to_variant('{') IS NULL,
+                try_parse_to_variant('') IS NULL
         """
     }
 
@@ -85,9 +101,9 @@ suite("variant_parse_functions", "p0,nonConcurrent") {
             """
             exception "Parse json document failed at row 0, error:"
         }
-        order_qt_key_too_long_error_to_null """
+        order_qt_key_too_long_try_parse """
             SELECT /*+SET_VAR(enable_fold_constant_by_be=false)*/
-                parse_to_variant_error_to_null('{"long":1}') IS NULL
+                try_parse_to_variant('{"long":1}') IS NULL
         """
     }
 
@@ -102,9 +118,9 @@ suite("variant_parse_functions", "p0,nonConcurrent") {
             """
             exception "Parse json document failed at row 0, error:"
         }
-        order_qt_duplicate_key_error_to_null """
+        order_qt_duplicate_key_try_parse """
             SELECT /*+SET_VAR(enable_fold_constant_by_be=false)*/
-                parse_to_variant_error_to_null('{"dup":1,"dup":2}') IS NULL
+                try_parse_to_variant('{"dup":1,"dup":2}') IS NULL
         """
     }
 
@@ -115,7 +131,7 @@ suite("variant_parse_functions", "p0,nonConcurrent") {
         order_qt_duplicate_key_first_wins """
             SELECT /*+SET_VAR(enable_fold_constant_by_be=false)*/
                 CAST(parse_to_variant('{"dup":1,"dup":2}') AS STRING),
-                CAST(parse_to_variant_error_to_null('{"dup":1,"dup":2}') AS STRING)
+                CAST(try_parse_to_variant('{"dup":1,"dup":2}') AS STRING)
         """
     }
 }

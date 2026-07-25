@@ -44,6 +44,7 @@
 #include "exec/common/field_visitors.h"
 #include "exprs/function/cast/cast_to_basic_number_common.h"
 #include "exprs/function/cast/cast_to_boolean.h"
+#include "exprs/function/parse/variant_jsonb_parse.h"
 #include "util/jsonb_document.h"
 #include "util/jsonb_writer.h"
 
@@ -242,8 +243,17 @@ public:
     void operator()(const BitmapValue& x, JsonbWriter* writer) const {
         throw doris::Exception(doris::ErrorCode::NOT_IMPLEMENTED_ERROR, "Not implemeted");
     }
-    void operator()(const VariantMap& x, JsonbWriter* writer) const {
-        throw doris::Exception(doris::ErrorCode::NOT_IMPLEMENTED_ERROR, "Not implemeted");
+    void operator()(const VariantField& x, JsonbWriter* writer) const {
+        JsonbWriter converted;
+        variant_to_jsonb(x.ref(), converted);
+        const JsonbDocument* document = nullptr;
+        const auto* output = converted.getOutput();
+        THROW_IF_ERROR(JsonbDocument::checkAndCreateDocument(output->getBuffer(), output->getSize(),
+                                                             &document));
+        if (!writer->writeValue(document->getValue())) {
+            throw doris::Exception(doris::ErrorCode::INTERNAL_ERROR,
+                                   "Failed to append converted Variant JSONB value");
+        }
     }
     void operator()(const Map& x, JsonbWriter* writer) const {
         throw doris::Exception(doris::ErrorCode::NOT_IMPLEMENTED_ERROR, "Not implemeted");

@@ -678,6 +678,9 @@ void Field::destroy() {
 }
 
 std::strong_ordering Field::operator<=>(const Field& rhs) const {
+    if (type == PrimitiveType::TYPE_VARIANT || rhs.type == PrimitiveType::TYPE_VARIANT) {
+        throw Exception(Status::NotSupported("Comparison between Variant fields is not supported"));
+    }
     if (type == PrimitiveType::TYPE_NULL || rhs == PrimitiveType::TYPE_NULL) {
         return type <=> rhs.type;
     }
@@ -703,8 +706,9 @@ std::strong_ordering Field::operator<=>(const Field& rhs) const {
     case PrimitiveType::TYPE_ARRAY:
     case PrimitiveType::TYPE_MAP:
     case PrimitiveType::TYPE_STRUCT:
-    case PrimitiveType::TYPE_VARIANT:
         return std::strong_ordering::equal; //TODO: throw Exception?
+    case PrimitiveType::TYPE_VARIANT:
+        throw Exception(Status::NotSupported("Comparison between Variant fields is not supported"));
     case PrimitiveType::TYPE_DATETIMEV2:
         return get<PrimitiveType::TYPE_DATETIMEV2>().to_date_int_val() <=>
                rhs.get<PrimitiveType::TYPE_DATETIMEV2>().to_date_int_val();

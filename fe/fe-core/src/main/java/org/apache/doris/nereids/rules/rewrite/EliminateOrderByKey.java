@@ -34,6 +34,7 @@ import org.apache.doris.nereids.trees.expressions.WindowExpression;
 import org.apache.doris.nereids.trees.plans.Plan;
 import org.apache.doris.nereids.trees.plans.logical.LogicalSort;
 import org.apache.doris.nereids.trees.plans.logical.LogicalWindow;
+import org.apache.doris.nereids.types.VariantType;
 
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableSet;
@@ -81,6 +82,9 @@ public class EliminateOrderByKey implements RewriteRuleFactory {
             Alias alias = (Alias) expr;
             WindowExpression windowExpression = (WindowExpression) alias.child();
             List<OrderExpression> orderExpressions = windowExpression.getOrderKeys();
+            if (orderExpressions.stream().anyMatch(orderKey -> orderKey.getDataType().isVariantType())) {
+                throw new AnalysisException(VariantType.UNSUPPORTED_ORDERING_COMPARISON_MESSAGE);
+            }
             if (orderExpressions.stream().anyMatch((
                     orderKey -> orderKey.getDataType().isObjectOrVariantType()))) {
                 throw new AnalysisException(Type.OnlyMetricTypeErrorMsg);
@@ -116,6 +120,9 @@ public class EliminateOrderByKey implements RewriteRuleFactory {
     }
 
     private static Plan eliminateSort(LogicalSort<Plan> sort) {
+        if (sort.getOrderKeys().stream().anyMatch(orderKey -> orderKey.getExpr().getDataType().isVariantType())) {
+            throw new AnalysisException(VariantType.UNSUPPORTED_ORDERING_COMPARISON_MESSAGE);
+        }
         DataTrait dataTrait = sort.child().getLogicalProperties().getTrait();
         List<OrderKey> retainExpression = eliminate(dataTrait, sort.getOrderKeys());
         if (retainExpression.isEmpty()) {

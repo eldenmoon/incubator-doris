@@ -46,19 +46,19 @@ suite("test_variant_external_meta_integration", "nonConcurrent") {
         properties("replication_num" = "1", "disable_auto_compaction" = "true", "storage_format" = "V3");
     """
 
-    sql """insert into test_inverted_index_extracted values (1, '{"name": "Alice Smith", "age": 25}')"""
-    sql """insert into test_inverted_index_extracted values (2, '{"name": "Bob Johnson", "age": 30}')"""
-    sql """insert into test_inverted_index_extracted values (3, '{"name": "Charlie Smith", "age": 35}')"""
+    sql """insert into test_inverted_index_extracted values (1, parse_to_variant('{"name": "Alice Smith", "age": 25}'))"""
+    sql """insert into test_inverted_index_extracted values (2, parse_to_variant('{"name": "Bob Johnson", "age": 30}'))"""
+    sql """insert into test_inverted_index_extracted values (3, parse_to_variant('{"name": "Charlie Smith", "age": 35}'))"""
 
     // Test inverted index on name field (should work with external meta)
-    qt_inverted_1 "select k, v['name'] from test_inverted_index_extracted where v['name'] match 'Smith' order by k"
-    qt_inverted_2 "select k, v['name'] from test_inverted_index_extracted where v['name'] match 'Alice' order by k"
-    qt_inverted_3 "select k, v['age'] from test_inverted_index_extracted where cast(v['age'] as int) > 25 order by k"
+    qt_inverted_1 "select k, cast(v['name'] as string) from test_inverted_index_extracted where v['name'] match 'Smith' order by k"
+    qt_inverted_2 "select k, cast(v['name'] as string) from test_inverted_index_extracted where v['name'] match 'Alice' order by k"
+    qt_inverted_3 "select k, cast(v['age'] as int) from test_inverted_index_extracted where cast(v['age'] as int) > 25 order by k"
 
     // After compaction, inverted index should still work
     trigger_and_wait_compaction("test_inverted_index_extracted", "full", 1800)
 
-    qt_inverted_after_compact_1 "select k, v['name'] from test_inverted_index_extracted where v['name'] match 'Smith' order by k"
+    qt_inverted_after_compact_1 "select k, cast(v['name'] as string) from test_inverted_index_extracted where v['name'] match 'Smith' order by k"
     qt_inverted_after_compact_2 "select count(*) from test_inverted_index_extracted where v['name'] match 'Johnson'"
 
     // Test 2: External meta with parent column inverted index
@@ -74,13 +74,13 @@ suite("test_variant_external_meta_integration", "nonConcurrent") {
         properties("replication_num" = "1", "disable_auto_compaction" = "true", "storage_format" = "V3");
     """
 
-    sql """insert into test_parent_index values (1, '{"title": "Hello World", "content": "This is a test"}')"""
-    sql """insert into test_parent_index values (2, '{"title": "Test Document", "content": "Another test here"}')"""
-    sql """insert into test_parent_index values (3, '{"title": "World News", "content": "Breaking news today"}')"""
+    sql """insert into test_parent_index values (1, parse_to_variant('{"title": "Hello World", "content": "This is a test"}'))"""
+    sql """insert into test_parent_index values (2, parse_to_variant('{"title": "Test Document", "content": "Another test here"}'))"""
+    sql """insert into test_parent_index values (3, parse_to_variant('{"title": "World News", "content": "Breaking news today"}'))"""
 
     // Query with inherited inverted index
-    qt_parent_idx_1 "select k, v['title'] from test_parent_index where v['title'] match 'World' order by k"
-    qt_parent_idx_2 "select k, v['content'] from test_parent_index where v['content'] match 'test' order by k"
+    qt_parent_idx_1 "select k, cast(v['title'] as string) from test_parent_index where v['title'] match 'World' order by k"
+    qt_parent_idx_2 "select k, cast(v['content'] as string) from test_parent_index where v['content'] match 'test' order by k"
     qt_parent_idx_3 "select count(*) from test_parent_index where v['title'] match 'Document'"
 
     // Test 3: Multiple variant columns with external meta
@@ -96,19 +96,19 @@ suite("test_variant_external_meta_integration", "nonConcurrent") {
         properties("replication_num" = "1", "disable_auto_compaction" = "true", "storage_format" = "V3");
     """
 
-    sql """insert into test_multiple_variants values (1, '{"a": 1, "b": 2}', '{"x": 10, "y": 20}')"""
-    sql """insert into test_multiple_variants values (2, '{"a": 100, "c": 300}', '{"x": 1000, "z": 3000}')"""
-    sql """insert into test_multiple_variants values (3, '{"d": 4}', '{"w": 40}')"""
+    sql """insert into test_multiple_variants values (1, parse_to_variant('{"a": 1, "b": 2}'), parse_to_variant('{"x": 10, "y": 20}'))"""
+    sql """insert into test_multiple_variants values (2, parse_to_variant('{"a": 100, "c": 300}'), parse_to_variant('{"x": 1000, "z": 3000}'))"""
+    sql """insert into test_multiple_variants values (3, parse_to_variant('{"d": 4}'), parse_to_variant('{"w": 40}'))"""
 
     // Both variant columns should use external meta independently
-    qt_multi_var_1 "select k, v1['a'], v2['x'] from test_multiple_variants order by k"
-    qt_multi_var_2 "select k, v1['b'] from test_multiple_variants where cast(v1['b'] as int) is not null order by k"
-    qt_multi_var_3 "select k, v2['y'] from test_multiple_variants where cast(v2['y'] as int) is not null order by k"
-    qt_multi_var_4 "select k, v1['d'], v2['w'] from test_multiple_variants where cast(v1['d'] as int) is not null order by k"
+    qt_multi_var_1 "select k, cast(v1['a'] as int), cast(v2['x'] as int) from test_multiple_variants order by k"
+    qt_multi_var_2 "select k, cast(v1['b'] as int) from test_multiple_variants where cast(v1['b'] as int) is not null order by k"
+    qt_multi_var_3 "select k, cast(v2['y'] as int) from test_multiple_variants where cast(v2['y'] as int) is not null order by k"
+    qt_multi_var_4 "select k, cast(v1['d'] as int), cast(v2['w'] as int) from test_multiple_variants where cast(v1['d'] as int) is not null order by k"
 
     trigger_and_wait_compaction("test_multiple_variants", "full", 1800)
 
-    qt_multi_var_after_compact_1 "select k, v1['a'], v2['x'] from test_multiple_variants order by k"
+    qt_multi_var_after_compact_1 "select k, cast(v1['a'] as int), cast(v2['x'] as int) from test_multiple_variants order by k"
     qt_multi_var_after_compact_2 "select count(*) from test_multiple_variants"
 
     // Test 4: External meta with aggregation functions
@@ -124,10 +124,10 @@ suite("test_variant_external_meta_integration", "nonConcurrent") {
         properties("replication_num" = "1", "disable_auto_compaction" = "false", "storage_format" = "V3");
     """
 
-    sql """insert into test_aggregation values (1, 'A', '{"value": 100, "count": 1}')"""
-    sql """insert into test_aggregation values (2, 'A', '{"value": 200, "count": 2}')"""
-    sql """insert into test_aggregation values (3, 'B', '{"value": 150, "count": 1}')"""
-    sql """insert into test_aggregation values (4, 'B', '{"value": 250, "count": 3}')"""
+    sql """insert into test_aggregation values (1, 'A', parse_to_variant('{"value": 100, "count": 1}'))"""
+    sql """insert into test_aggregation values (2, 'A', parse_to_variant('{"value": 200, "count": 2}'))"""
+    sql """insert into test_aggregation values (3, 'B', parse_to_variant('{"value": 150, "count": 1}'))"""
+    sql """insert into test_aggregation values (4, 'B', parse_to_variant('{"value": 250, "count": 3}'))"""
 
     qt_agg_1 "select category, sum(cast(v['value'] as int)) from test_aggregation group by category order by category"
     qt_agg_2 "select category, avg(cast(v['count'] as double)) from test_aggregation group by category order by category"
@@ -157,15 +157,15 @@ suite("test_variant_external_meta_integration", "nonConcurrent") {
         properties("replication_num" = "1", "disable_auto_compaction" = "false", "storage_format" = "V3");
     """
 
-    sql """insert into test_join_left values (1, '{"name": "Alice", "dept_id": 10}')"""
-    sql """insert into test_join_left values (2, '{"name": "Bob", "dept_id": 20}')"""
-    sql """insert into test_join_left values (3, '{"name": "Charlie", "dept_id": 10}')"""
+    sql """insert into test_join_left values (1, parse_to_variant('{"name": "Alice", "dept_id": 10}'))"""
+    sql """insert into test_join_left values (2, parse_to_variant('{"name": "Bob", "dept_id": 20}'))"""
+    sql """insert into test_join_left values (3, parse_to_variant('{"name": "Charlie", "dept_id": 10}'))"""
 
-    sql """insert into test_join_right values (10, '{"dept_name": "Engineering", "location": "Building A"}')"""
-    sql """insert into test_join_right values (20, '{"dept_name": "Sales", "location": "Building B"}')"""
+    sql """insert into test_join_right values (10, parse_to_variant('{"dept_name": "Engineering", "location": "Building A"}'))"""
+    sql """insert into test_join_right values (20, parse_to_variant('{"dept_name": "Sales", "location": "Building B"}'))"""
 
     qt_join_1 """
-        select l.k, l.v['name'], r.v['dept_name']
+        select l.k, cast(l.v['name'] as string), cast(r.v['dept_name'] as string)
         from test_join_left l
         join test_join_right r on cast(l.v['dept_id'] as int) = r.k
         order by l.k
@@ -175,7 +175,7 @@ suite("test_variant_external_meta_integration", "nonConcurrent") {
         select count(*)
         from test_join_left l
         join test_join_right r on cast(l.v['dept_id'] as int) = r.k
-        where r.v['location'] = 'Building A'
+        where cast(r.v['location'] as string) = 'Building A'
     """
 
     // Test 6: External meta with UNION operations
@@ -202,16 +202,16 @@ suite("test_variant_external_meta_integration", "nonConcurrent") {
         properties("replication_num" = "1", "disable_auto_compaction" = "false", "storage_format" = "V3");
     """
 
-    sql """insert into test_union_1 values (1, '{"source": "table1", "value": 100}')"""
-    sql """insert into test_union_1 values (2, '{"source": "table1", "value": 200}')"""
+    sql """insert into test_union_1 values (1, parse_to_variant('{"source": "table1", "value": 100}'))"""
+    sql """insert into test_union_1 values (2, parse_to_variant('{"source": "table1", "value": 200}'))"""
 
-    sql """insert into test_union_2 values (3, '{"source": "table2", "value": 150}')"""
-    sql """insert into test_union_2 values (4, '{"source": "table2", "value": 250}')"""
+    sql """insert into test_union_2 values (3, parse_to_variant('{"source": "table2", "value": 150}'))"""
+    sql """insert into test_union_2 values (4, parse_to_variant('{"source": "table2", "value": 250}'))"""
 
     qt_union_1 """
-        select k, v['source'], v['value'] from test_union_1
+        select k, cast(v['source'] as string), cast(v['value'] as int) from test_union_1
         union all
-        select k, v['source'], v['value'] from test_union_2
+        select k, cast(v['source'] as string), cast(v['value'] as int) from test_union_2
         order by k
     """
 
@@ -239,11 +239,11 @@ suite("test_variant_external_meta_integration", "nonConcurrent") {
     """
 
     for (int i = 1; i <= 10; i++) {
-        sql """insert into test_subquery values (${i}, '{"score": ${i * 10}, "grade": "${i > 5 ? 'A' : 'B'}"}')"""
+        sql """insert into test_subquery values (${i}, parse_to_variant('{"score": ${i * 10}, "grade": "${i > 5 ? 'A' : 'B'}"}'))"""
     }
 
     qt_subquery_1 """
-        select k, v['score'], v['grade']
+        select k, cast(v['score'] as int), cast(v['grade'] as string)
         from test_subquery
         where cast(v['score'] as int) > (select avg(cast(v['score'] as int)) from test_subquery)
         order by k
@@ -270,11 +270,11 @@ suite("test_variant_external_meta_integration", "nonConcurrent") {
         properties("replication_num" = "1", "disable_auto_compaction" = "false", "storage_format" = "V3");
     """
 
-    sql """insert into test_having values (1, 'A', '{"amount": 100}')"""
-    sql """insert into test_having values (2, 'A', '{"amount": 200}')"""
-    sql """insert into test_having values (3, 'A', '{"amount": 300}')"""
-    sql """insert into test_having values (4, 'B', '{"amount": 50}')"""
-    sql """insert into test_having values (5, 'B', '{"amount": 60}')"""
+    sql """insert into test_having values (1, 'A', parse_to_variant('{"amount": 100}'))"""
+    sql """insert into test_having values (2, 'A', parse_to_variant('{"amount": 200}'))"""
+    sql """insert into test_having values (3, 'A', parse_to_variant('{"amount": 300}'))"""
+    sql """insert into test_having values (4, 'B', parse_to_variant('{"amount": 50}'))"""
+    sql """insert into test_having values (5, 'B', parse_to_variant('{"amount": 60}'))"""
 
     qt_having_1 """
         select category, sum(cast(v['amount'] as int)) as total
@@ -297,18 +297,18 @@ suite("test_variant_external_meta_integration", "nonConcurrent") {
     """
 
     for (int i = 1; i <= 20; i++) {
-        sql """insert into test_order_limit values (${i}, '{"priority": ${20 - i}, "name": "item_${i}"}')"""
+        sql """insert into test_order_limit values (${i}, parse_to_variant('{"priority": ${20 - i}, "name": "item_${i}"}'))"""
     }
 
     qt_order_limit_1 """
-        select k, v['priority'], v['name']
+        select k, cast(v['priority'] as int), cast(v['name'] as string)
         from test_order_limit
         order by cast(v['priority'] as int) desc
         limit 5
     """
 
     qt_order_limit_2 """
-        select k, v['name']
+        select k, cast(v['name'] as string)
         from test_order_limit
         where cast(v['priority'] as int) > 10
         order by cast(v['priority'] as int)
@@ -327,10 +327,10 @@ suite("test_variant_external_meta_integration", "nonConcurrent") {
         properties("replication_num" = "1", "disable_auto_compaction" = "false", "storage_format" = "V3");
     """
 
-    sql """insert into test_distinct values (1, '{"category": "A", "value": 100}')"""
-    sql """insert into test_distinct values (2, '{"category": "B", "value": 200}')"""
-    sql """insert into test_distinct values (3, '{"category": "A", "value": 150}')"""
-    sql """insert into test_distinct values (4, '{"category": "C", "value": 100}')"""
+    sql """insert into test_distinct values (1, parse_to_variant('{"category": "A", "value": 100}'))"""
+    sql """insert into test_distinct values (2, parse_to_variant('{"category": "B", "value": 200}'))"""
+    sql """insert into test_distinct values (3, parse_to_variant('{"category": "A", "value": 150}'))"""
+    sql """insert into test_distinct values (4, parse_to_variant('{"category": "C", "value": 100}'))"""
 
     qt_distinct_1 "select distinct cast(v['category'] as string) from test_distinct order by cast(v['category'] as string)"
     qt_distinct_2 "select distinct cast(v['value'] as int) from test_distinct order by cast(v['value'] as int)"
@@ -351,5 +351,3 @@ suite("test_variant_external_meta_integration", "nonConcurrent") {
     sql "DROP TABLE IF EXISTS test_distinct"
 
 }
-
-

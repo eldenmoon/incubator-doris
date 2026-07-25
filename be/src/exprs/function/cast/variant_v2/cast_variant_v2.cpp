@@ -111,9 +111,7 @@ Status execute_to_variant(const DataTypePtr& captured_from_type, FunctionContext
             output = std::move(nulls);
         } else if (primitive == TYPE_VARIANT) {
             if (check_and_get_column<ColumnVariantV2>(source) == nullptr) {
-                return Status::InvalidArgument(
-                        "ColumnVariantV2 CAST received a legacy Variant "
-                        "column in compute-only mode");
+                return Status::InvalidArgument("Variant V2 CAST received a non-V2 Variant column");
             }
             output = source_ptr;
         } else if (primitive == TYPE_JSONB) {
@@ -142,8 +140,7 @@ Status execute_from_variant(const DataTypePtr& captured_to_type, FunctionContext
     RETURN_IF_ERROR(require_materialized_source(block, arguments, rows, &source_column));
     const auto* source = check_and_get_column<ColumnVariantV2>(source_column);
     if (source == nullptr) {
-        return Status::InvalidArgument(
-                "ColumnVariantV2 CAST received a legacy Variant column in compute-only mode");
+        return Status::InvalidArgument("Variant V2 CAST received a non-V2 Variant column");
     }
 
     const DataTypePtr to_type = remove_nullable(captured_to_type);

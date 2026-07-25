@@ -66,18 +66,18 @@ suite("test_compaction_variant") {
             // 1. simple cases
             create_table.call(tableName, "1", key_types[i])
             def insert = {
-                sql """insert into ${tableName} values (1,  '{"x" : [1]}'),(13,  '{"a" : 1}');"""
-                sql """insert into ${tableName} values (2,  '{"a" : "1"}'),(14,  '{"a" : [[[1]]]}');"""
-                sql """insert into ${tableName} values (3,  '{"x" : [3]}'),(15,  '{"a" : 1}')"""
-                sql """insert into ${tableName} values (4,  '{"y": 1}'),(16,  '{"a" : "1223"}');"""
-                sql """insert into ${tableName} values (5,  '{"z" : 2.0}'),(17,  '{"a" : [1]}');"""
-                sql """insert into ${tableName} values (6,  '{"x" : 111}'),(18,  '{"a" : ["1", 2, 1.1]}');"""
-                sql """insert into ${tableName} values (7,  '{"m" : 1}'),(19,  '{"a" : 1, "b" : {"c" : 1}}');"""
-                sql """insert into ${tableName} values (8,  '{"l" : 2}'),(20,  '{"a" : 1, "b" : {"c" : [{"a" : 1}]}}');"""
-                sql """insert into ${tableName} values (9,  '{"g" : 1.11}'),(21,  '{"a" : 1, "b" : {"c" : [{"a" : 1}]}}');"""
-                sql """insert into ${tableName} values (10, '{"z" : 1.1111}'),(22,  '{"a" : 1, "b" : {"c" : [{"a" : 1}]}}');"""
-                sql """insert into ${tableName} values (11, '{"sala" : 0}'),(1999,  '{"a" : 1, "b" : {"c" : 1}}'),(19921,  '{"a" : 1, "b" : 10}');"""
-                sql """insert into ${tableName} values (12, '{"dddd" : 0.1}'),(1022,  '{"a" : 1, "b" : 10}'),(1029,  '{"a" : 1, "b" : {"c" : 1}}');"""
+                sql """insert into ${tableName} values (1, parse_to_variant('{"x" : [1]}')),(13, parse_to_variant('{"a" : 1}'));"""
+                sql """insert into ${tableName} values (2, parse_to_variant('{"a" : "1"}')),(14, parse_to_variant('{"a" : [[[1]]]}'));"""
+                sql """insert into ${tableName} values (3, parse_to_variant('{"x" : [3]}')),(15, parse_to_variant('{"a" : 1}'))"""
+                sql """insert into ${tableName} values (4, parse_to_variant('{"y": 1}')),(16, parse_to_variant('{"a" : "1223"}'));"""
+                sql """insert into ${tableName} values (5, parse_to_variant('{"z" : 2.0}')),(17, parse_to_variant('{"a" : [1]}'));"""
+                sql """insert into ${tableName} values (6, parse_to_variant('{"x" : 111}')),(18, parse_to_variant('{"a" : ["1", 2, 1.1]}'));"""
+                sql """insert into ${tableName} values (7, parse_to_variant('{"m" : 1}')),(19, parse_to_variant('{"a" : 1, "b" : {"c" : 1}}'));"""
+                sql """insert into ${tableName} values (8, parse_to_variant('{"l" : 2}')),(20, parse_to_variant('{"a" : 1, "b" : {"c" : [{"a" : 1}]}}'));"""
+                sql """insert into ${tableName} values (9, parse_to_variant('{"g" : 1.11}')),(21, parse_to_variant('{"a" : 1, "b" : {"c" : [{"a" : 1}]}}'));"""
+                sql """insert into ${tableName} values (10, parse_to_variant('{"z" : 1.1111}')),(22, parse_to_variant('{"a" : 1, "b" : {"c" : [{"a" : 1}]}}'));"""
+                sql """insert into ${tableName} values (11, parse_to_variant('{"sala" : 0}')),(1999, parse_to_variant('{"a" : 1, "b" : {"c" : 1}}')),(19921, parse_to_variant('{"a" : 1, "b" : 10}'));"""
+                sql """insert into ${tableName} values (12, parse_to_variant('{"dddd" : 0.1}')),(1022, parse_to_variant('{"a" : 1, "b" : 10}')),(1029, parse_to_variant('{"a" : 1, "b" : {"c" : 1}}'));"""
             }
             insert.call();
             insert.call();

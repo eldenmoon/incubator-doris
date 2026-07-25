@@ -40,15 +40,15 @@ suite("test_compaction_nokey_variant") {
 
     // Insert multiple batches to create multiple rowsets
     sql """INSERT INTO ${tableName} VALUES
-        ('{"name":"Alice","age":30}', '{"city":"Beijing","zip":100000}', '{"score":95.5,"passed":true}'),
-        ('{"name":"Bob","age":25}', '{"city":"Shanghai"}', '{"score":88.0,"passed":true}'),
-        ('{"name":"Charlie"}', '{"city":"Shenzhen","zip":518000}', '{"score":72.3,"passed":false}');"""
+        (parse_to_variant('{"name":"Alice","age":30}'), parse_to_variant('{"city":"Beijing","zip":100000}'), parse_to_variant('{"score":95.5,"passed":true}')),
+        (parse_to_variant('{"name":"Bob","age":25}'), parse_to_variant('{"city":"Shanghai"}'), parse_to_variant('{"score":88.0,"passed":true}')),
+        (parse_to_variant('{"name":"Charlie"}'), parse_to_variant('{"city":"Shenzhen","zip":518000}'), parse_to_variant('{"score":72.3,"passed":false}'));"""
 
-    sql """INSERT INTO ${tableName} VALUES ('{"name":"u1","age":10}', '{"city":"c1"}', '{"score":10.5}');"""
-    sql """INSERT INTO ${tableName} VALUES ('{"name":"u2","age":20}', '{"city":"c2"}', '{"score":20.5}');"""
-    sql """INSERT INTO ${tableName} VALUES ('{"name":"u3","age":30}', '{"city":"c3"}', '{"score":30.5}');"""
-    sql """INSERT INTO ${tableName} VALUES ('{"name":"u4","age":40}', '{"city":"c4"}', '{"score":40.5}');"""
-    sql """INSERT INTO ${tableName} VALUES ('{"name":"u5","age":50}', '{"city":"c5"}', '{"score":50.5}');"""
+    sql """INSERT INTO ${tableName} VALUES (parse_to_variant('{"name":"u1","age":10}'), parse_to_variant('{"city":"c1"}'), parse_to_variant('{"score":10.5}'));"""
+    sql """INSERT INTO ${tableName} VALUES (parse_to_variant('{"name":"u2","age":20}'), parse_to_variant('{"city":"c2"}'), parse_to_variant('{"score":20.5}'));"""
+    sql """INSERT INTO ${tableName} VALUES (parse_to_variant('{"name":"u3","age":30}'), parse_to_variant('{"city":"c3"}'), parse_to_variant('{"score":30.5}'));"""
+    sql """INSERT INTO ${tableName} VALUES (parse_to_variant('{"name":"u4","age":40}'), parse_to_variant('{"city":"c4"}'), parse_to_variant('{"score":40.5}'));"""
+    sql """INSERT INTO ${tableName} VALUES (parse_to_variant('{"name":"u5","age":50}'), parse_to_variant('{"city":"c5"}'), parse_to_variant('{"score":50.5}'));"""
 
     // Verify data before compaction
     qt_before_compaction """SELECT cast(v1 as string) c1, cast(v2 as string) c2, cast(v3 as string) c3

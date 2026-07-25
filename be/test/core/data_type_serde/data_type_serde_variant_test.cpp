@@ -19,23 +19,21 @@
 #include <arrow/array/builder_primitive.h>
 #include <gtest/gtest.h>
 
-#include "core/column/column_variant.h"
-#include "core/data_type_serde/data_type_variant_serde.h"
+#include "core/column/variant_v2/column_variant_v2.h"
+#include "core/data_type_serde/data_type_variant_v2_serde.h"
 #include "core/string_buffer.hpp"
 #include "gen_cpp/types.pb.h"
-#include "util/mysql_row_buffer.h"
 #include "util/slice.h"
 
 namespace doris {
 
 TEST(VariantSerdeTest, BasicUnsupportedAndArrowPaths) {
-    DataTypeVariantSerDe serde;
-    auto column = ColumnVariant::create(0, false);
+    DataTypeVariantV2SerDe serde;
+    auto column = ColumnVariantV2::create();
     DataTypeSerDe::FormatOptions options;
     std::string json = R"({"k": 1})";
     Slice slice(json.data(), json.size());
     ASSERT_TRUE(serde.deserialize_one_cell_from_json(*column, slice, options).ok());
-    column->finalize(ColumnVariant::FinalizeMode::WRITE_MODE);
 
     EXPECT_EQ(serde.get_name(), "Variant");
 
@@ -48,7 +46,7 @@ TEST(VariantSerdeTest, BasicUnsupportedAndArrowPaths) {
     VectorBufferWriter writer(*string_column);
     serde.to_string(*column, 0, writer, options);
     writer.commit();
-    EXPECT_FALSE(string_column->get_data_at(0).to_string().empty());
+    EXPECT_EQ(string_column->get_data_at(0).to_string(), R"({"k":1})");
 
     arrow::StringBuilder string_builder;
     EXPECT_TRUE(serde.write_column_to_arrow(*column, nullptr, &string_builder, 0, column->size(),

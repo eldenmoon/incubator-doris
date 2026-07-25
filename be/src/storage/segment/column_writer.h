@@ -32,14 +32,12 @@
 #include <vector>
 
 #include "common/status.h" // for Status
-#include "core/column/column_variant.h"
+#include "core/column/variant_v2/column_variant_v2.h"
 #include "storage/index/ann/ann_index_writer.h"
 #include "storage/index/bloom_filter/bloom_filter.h"
 #include "storage/index/inverted/inverted_index_writer.h"
 #include "storage/segment/common.h"
 #include "storage/segment/options.h"
-#include "storage/segment/variant/nested_group_provider.h"
-#include "storage/segment/variant/variant_statistics.h"
 #include "storage/tablet/tablet_schema.h" // for TabletColumnPtr
 #include "storage/types.h"                // for field_type_size
 #include "util/bitmap.h"                  // for BitmapChange
@@ -634,13 +632,11 @@ private:
     bool _is_finalized = false;
     ordinal_t _next_rowid = 0;
     size_t none_null_size = 0;
-    ColumnVariant::MutablePtr _column;
+    ColumnVariantV2::MutablePtr _column;
+    ColumnUInt8::MutablePtr _null_column;
     ColumnWriterOptions _opts;
     std::unique_ptr<ColumnWriter> _writer;
     TabletIndexes _indexes;
-
-    std::unique_ptr<NestedGroupWriteProvider> _nested_group_provider;
-    VariantStatistics _statistics;
 };
 
 class VariantColumnWriter : public ColumnWriter {

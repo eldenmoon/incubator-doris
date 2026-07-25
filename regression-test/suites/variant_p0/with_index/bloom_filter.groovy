@@ -27,17 +27,17 @@ suite("regression_test_variant_with_bf", ""){
         DISTRIBUTED BY HASH(k) BUCKETS 1
         properties("replication_num" = "1", "bloom_filter_columns" = "v");
     """
-    sql """insert into ${table_name} values (1, '{"a" : 123456}')"""
-    sql """insert into ${table_name} values (2, '{"a" : 789111}')"""
-    sql """insert into ${table_name} values (3, '{"a" : 789111}')"""
+    sql """insert into ${table_name} values (1, parse_to_variant('{"a" : 123456}'))"""
+    sql """insert into ${table_name} values (2, parse_to_variant('{"a" : 789111}'))"""
+    sql """insert into ${table_name} values (3, parse_to_variant('{"a" : 789111}'))"""
 
-    sql """insert into ${table_name} values (1, '{"b" : "xxxxxxx"}')"""
-    sql """insert into ${table_name} values (2, '{"b" : "yyyyyyy"}')"""
-    sql """insert into ${table_name} values (3, '{"b" : "zzzzzzz"}')"""
+    sql """insert into ${table_name} values (1, parse_to_variant('{"b" : "xxxxxxx"}'))"""
+    sql """insert into ${table_name} values (2, parse_to_variant('{"b" : "yyyyyyy"}'))"""
+    sql """insert into ${table_name} values (3, parse_to_variant('{"b" : "zzzzzzz"}'))"""
 
-    sql """insert into ${table_name} values (1, '{"b" : "xxxxxxx"}')"""
-    sql """insert into ${table_name} values (2, '{"b" : "yyyyyyy"}')"""
-    sql """insert into ${table_name} values (3, '{"b" : "zzzzzzz"}')"""
+    sql """insert into ${table_name} values (1, parse_to_variant('{"b" : "xxxxxxx"}'))"""
+    sql """insert into ${table_name} values (2, parse_to_variant('{"b" : "yyyyyyy"}'))"""
+    sql """insert into ${table_name} values (3, parse_to_variant('{"b" : "zzzzzzz"}'))"""
 
     qt_sql "select * from  var_with_bloom_filter where cast(v['a'] as int) = 789111"
     qt_sql "select * from  var_with_bloom_filter where cast(v['b'] as text) = 'yyyyyyy' ";

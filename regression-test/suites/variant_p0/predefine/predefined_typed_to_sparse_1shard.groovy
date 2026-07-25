@@ -94,7 +94,7 @@ suite("test_predefine_typed_to_sparse_1shard", "p0"){
           INSERT INTO ${tableName} (`id`, `var`) VALUES
           (
             ${i},
-              '{
+              parse_to_variant('{
                 "array_decimal_1": ["12345678901234567.123456789", "987.654321"],
                 "array_ipv6_1": ["2001:0db8:85a3:0000:0000:8a2e:0370:7334", "::1"],
                 "int_1": 42,
@@ -119,7 +119,7 @@ suite("test_predefine_typed_to_sparse_1shard", "p0"){
                 "ipv6_1": "::1",
                 "largeint_1": "12345678901234567890123456789012345678",
                 "char_1": "short text"
-              }'
+              }')
           );
       """
     }

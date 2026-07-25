@@ -45,8 +45,8 @@ suite("test_join_on", "query_p0") {
         exception "errCode = 2"
     }
 
-    test {
+    explain {
         sql """select * from (select cast('' as variant) as a) t1 join (select cast('' as variant) as a) t2 on t1.a = t2.a"""
-        exception "could not used in ComparisonPredicate (a = a)"
+        contains "HASH JOIN"
     }
 }

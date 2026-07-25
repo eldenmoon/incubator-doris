@@ -19,6 +19,7 @@ package org.apache.doris.nereids.load;
 
 import org.apache.doris.catalog.AggregateType;
 import org.apache.doris.catalog.Column;
+import org.apache.doris.catalog.FunctionSignature;
 import org.apache.doris.catalog.OlapTable;
 import org.apache.doris.catalog.Table;
 import org.apache.doris.catalog.info.PartitionNamesInfo;
@@ -50,6 +51,7 @@ import org.apache.doris.nereids.trees.expressions.StatementScopeIdGenerator;
 import org.apache.doris.nereids.trees.expressions.functions.scalar.EncryptKeyRef;
 import org.apache.doris.nereids.trees.expressions.functions.scalar.JsonbParseErrorToNull;
 import org.apache.doris.nereids.trees.expressions.functions.scalar.JsonbParseErrorToValue;
+import org.apache.doris.nereids.trees.expressions.functions.scalar.ParseToVariant;
 import org.apache.doris.nereids.trees.expressions.literal.Literal;
 import org.apache.doris.nereids.trees.plans.Plan;
 import org.apache.doris.nereids.trees.plans.commands.info.DMLCommandType;
@@ -63,10 +65,14 @@ import org.apache.doris.nereids.trees.plans.logical.LogicalPreFilter;
 import org.apache.doris.nereids.trees.plans.logical.LogicalProject;
 import org.apache.doris.nereids.trees.plans.visitor.DefaultPlanVisitor;
 import org.apache.doris.nereids.types.DataType;
+import org.apache.doris.nereids.types.VarcharType;
+import org.apache.doris.nereids.types.VariantField;
+import org.apache.doris.nereids.types.VariantType;
 import org.apache.doris.nereids.util.TypeCoercionUtils;
 import org.apache.doris.qe.ConnectContext;
 import org.apache.doris.thrift.TPartialUpdateNewRowPolicy;
 
+import com.google.common.base.Preconditions;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Lists;
 
@@ -74,6 +80,7 @@ import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.TreeSet;
 
@@ -188,7 +195,7 @@ public class NereidsLoadUtils {
                     castScanProjects.add(slotReference);
                 } else {
                     castScanProjects.add(new Alias(
-                            TypeCoercionUtils.castIfNotSameType(slotReference, DataType.fromCatalogType(col.getType())),
+                            castScanSlotForLoad(slotReference, col),
                             colName));
                 }
             } else {
@@ -310,6 +317,11 @@ public class NereidsLoadUtils {
                                 newProjects.add(
                                         new Alias(new JsonbParseErrorToValue(realExpr), expression.getName()));
                             }
+                        } else if (column.getType().isVariantType()
+                                && expression.getDataType().isStringLikeType()) {
+                            Expression realExpr = expression instanceof Alias ? ((Alias) expression).child()
+                                    : expression;
+                            newProjects.add(new Alias(parseVariantForLoad(realExpr, column), expression.getName()));
                         } else {
                             newProjects.add(expression);
                         }
@@ -320,6 +332,79 @@ public class NereidsLoadUtils {
                 }
                 return new LogicalProject(newProjects, project.child());
             }).toRule(RuleType.REWRITE_LOAD_PROJECT_FOR_STREAM_LOAD);
+        }
+    }
+
+    private static Expression castScanSlotForLoad(Expression expression, Column targetColumn) {
+        if (targetColumn.getType().isVariantType() && expression.getDataType().isStringLikeType()) {
+            return parseVariantForLoad(expression, targetColumn);
+        }
+        return TypeCoercionUtils.castIfNotSameType(
+                expression, DataType.fromCatalogType(targetColumn.getType()));
+    }
+
+    private static Expression parseVariantForLoad(Expression expression, Column targetColumn) {
+        DataType targetType = DataType.fromCatalogType(targetColumn.getType());
+        Preconditions.checkState(targetType instanceof VariantType,
+                "Load target column %s must be Variant, but was %s", targetColumn.getName(), targetType);
+        return new TargetTypedParseToVariant(expression, (VariantType) targetType);
+    }
+
+    /** parse_to_variant whose result carries the destination column's complete Variant configuration. */
+    private static final class TargetTypedParseToVariant extends ParseToVariant {
+        private final VariantType targetType;
+        private final List<Object> targetTypeKey;
+        private final List<FunctionSignature> signatures;
+
+        private TargetTypedParseToVariant(Expression argument, VariantType targetType) {
+            super(argument);
+            this.targetType = targetType;
+            this.targetTypeKey = variantTypeKey(targetType);
+            this.signatures = ImmutableList.of(
+                    FunctionSignature.ret(targetType).args(VarcharType.SYSTEM_DEFAULT));
+        }
+
+        private static List<Object> variantTypeKey(VariantType targetType) {
+            List<Object> key = new ArrayList<>();
+            key.add(targetType.getPredefinedFields().size());
+            for (VariantField field : targetType.getPredefinedFields()) {
+                key.add(field.getPattern());
+                key.add(field.getDataType());
+                key.add(field.toCatalogDataType().getPatternType());
+            }
+            org.apache.doris.catalog.VariantType catalogType
+                    = (org.apache.doris.catalog.VariantType) targetType.toCatalogDataType();
+            key.add(targetType.getVariantMaxSubcolumnsCount());
+            key.add(catalogType.getEnableTypedPathsToSparse());
+            key.add(targetType.getVariantMaxSparseColumnStatisticsSize());
+            key.add(targetType.getVariantSparseHashShardCount());
+            key.add(targetType.getEnableVariantDocMode());
+            key.add(targetType.getvariantDocMaterializationMinRows());
+            key.add(targetType.getVariantDocShardCount());
+            key.add(targetType.getEnableNestedGroup());
+            return ImmutableList.copyOf(key);
+        }
+
+        @Override
+        public List<FunctionSignature> getSignatures() {
+            return signatures;
+        }
+
+        @Override
+        public TargetTypedParseToVariant withChildren(List<Expression> children) {
+            Preconditions.checkArgument(children.size() == 1);
+            return new TargetTypedParseToVariant(children.get(0), targetType);
+        }
+
+        @Override
+        protected boolean extraEquals(Expression that) {
+            return super.extraEquals(that)
+                    && targetTypeKey.equals(((TargetTypedParseToVariant) that).targetTypeKey);
+        }
+
+        @Override
+        public int computeHashCode() {
+            return Objects.hash(super.computeHashCode(), targetTypeKey);
         }
     }
 

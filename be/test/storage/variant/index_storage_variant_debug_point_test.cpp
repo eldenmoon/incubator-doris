@@ -26,10 +26,11 @@
 #include "core/column/column_array.h"
 #include "core/column/column_nullable.h"
 #include "core/column/column_string.h"
-#include "core/column/column_variant.h"
+#include "core/column/variant_v2/column_variant_v2.h"
 #include "core/data_type/data_type_array.h"
 #include "core/data_type/data_type_nullable.h"
 #include "core/data_type/data_type_string.h"
+#include "core/value/variant/variant_batch_builder.h"
 #include "testutil/index_storage_test_util.h"
 
 namespace doris::index_storage_test {
@@ -58,39 +59,33 @@ VariantColumnSpec array_text_variant_column() {
 
 ColumnPtr single_array_variant_column(const std::vector<std::optional<std::string>>& elements,
                                       bool array_is_null = false) {
-    auto values = ColumnString::create();
-    auto item_null_map = ColumnUInt8::create();
-    if (!array_is_null) {
+    VariantBatchBuilder builder({.rows = 1, .metadata_keys = 1});
+    auto row = builder.begin_row();
+    auto object = row.start_object();
+    object.add_key(StringRef(kArrayPath.data(), kArrayPath.size()));
+    if (array_is_null) {
+        row.add_null();
+    } else {
+        auto array = row.start_array();
         for (const auto& element : elements) {
             if (element.has_value()) {
-                values->insert_data(element->data(), element->size());
-                item_null_map->insert_value(0);
+                row.add_string(StringRef(*element));
             } else {
-                values->insert_default();
-                item_null_map->insert_value(1);
+                row.add_null();
             }
         }
+        array.finish();
     }
-
-    auto nullable_items = ColumnNullable::create(std::move(values), std::move(item_null_map));
-    auto offsets = ColumnArray::ColumnOffsets::create();
-    offsets->insert_value(array_is_null ? 0 : elements.size());
-    auto array = ColumnArray::create(std::move(nullable_items), std::move(offsets));
-    auto array_null_map = ColumnUInt8::create();
-    array_null_map->insert_value(array_is_null ? 1 : 0);
-    auto nullable_array = ColumnNullable::create(std::move(array), std::move(array_null_map));
-
-    auto variant = ColumnVariant::create(10, false);
-    variant->insert_default();
-    auto array_type = std::make_shared<DataTypeNullable>(std::make_shared<DataTypeArray>(
-            std::make_shared<DataTypeNullable>(std::make_shared<DataTypeString>())));
-    CHECK(variant->add_sub_column(PathInData(std::string(kArrayPath), true),
-                                  std::move(nullable_array), array_type));
+    object.finish();
+    row.finish();
+    VariantBatchBuilder encoded = builder.finish_batch();
+    auto variant = ColumnVariantV2::create();
+    variant->insert_encoded_batch(encoded);
     return variant;
 }
 
 ColumnPtr single_null_variant_column() {
-    auto variant = ColumnVariant::create(10, false);
+    auto variant = ColumnVariantV2::create();
     variant->insert_default();
     auto null_map = ColumnUInt8::create();
     null_map->insert_value(1);

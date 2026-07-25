@@ -47,35 +47,35 @@ suite("test_array_index_write", "nonConcurrent"){
 
         try {
             GetDebugPoint().enableDebugPointForAllBEs(checkpoints_name, [single_array_field_count: 3])
-            sql "insert into ${indexTbName} values(1, '{\"c_arr\": [\"amory\", \"is\", \"committer\"]}')"
+            sql "insert into ${indexTbName} values(1, parse_to_variant('{\"c_arr\": [\"amory\", \"is\", \"committer\"]}'))"
         } finally {
             GetDebugPoint().disableDebugPointForAllBEs(checkpoints_name)
         }
 
         try {
             GetDebugPoint().enableDebugPointForAllBEs(checkpoints_name, [single_array_field_count: 2])
-            sql "insert into ${indexTbName} values(2, '{\"c_arr\": [\"amory\", \"better\"]}')"
+            sql "insert into ${indexTbName} values(2, parse_to_variant('{\"c_arr\": [\"amory\", \"better\"]}'))"
         } finally {
             GetDebugPoint().disableDebugPointForAllBEs(checkpoints_name)
         }
 
         try {
             GetDebugPoint().enableDebugPointForAllBEs(checkpoints_name, [single_array_field_count: 1])
-            sql "insert into ${indexTbName} values(3, '{\"c_arr\": [\"amory\", null]}')"
+            sql "insert into ${indexTbName} values(3, parse_to_variant('{\"c_arr\": [\"amory\", null]}'))"
         } finally {
             GetDebugPoint().disableDebugPointForAllBEs(checkpoints_name)
         }
 
         try {
             GetDebugPoint().enableDebugPointForAllBEs(checkpoints_name, [single_array_field_count: 0])
-            sql "insert into ${indexTbName} values(4, '{\"c_arr\": [null, null]}')"
+            sql "insert into ${indexTbName} values(4, parse_to_variant('{\"c_arr\": [null, null]}'))"
         } finally {
             GetDebugPoint().disableDebugPointForAllBEs(checkpoints_name)
         }
 
         try {
             GetDebugPoint().enableDebugPointForAllBEs(checkpoints_name, [single_array_field_count: 0])
-            sql "insert into ${indexTbName} values(5, '{\"c_arr\": []}')"
+            sql "insert into ${indexTbName} values(5, parse_to_variant('{\"c_arr\": []}'))"
         } finally {
             GetDebugPoint().disableDebugPointForAllBEs(checkpoints_name)
         }
@@ -88,10 +88,10 @@ suite("test_array_index_write", "nonConcurrent"){
         }
 
         // test multiple types
-        sql """insert into ${indexTbName} values(6, '{"c_arr" : ["text"]}')"""
-        sql """insert into ${indexTbName} values(6, '{"c_arr" : [1.1]}')"""
-        sql """insert into ${indexTbName} values(6, '{"c_arr" : [1.0]}')"""
-        sql """insert into ${indexTbName} values(6, '{"c_arr" : [90]}')"""
-        sql """insert into ${indexTbName} values(6, '{"c_arr" : [90999999999999]}')"""
+        sql """insert into ${indexTbName} values(6, parse_to_variant('{"c_arr" : ["text"]}'))"""
+        sql """insert into ${indexTbName} values(6, parse_to_variant('{"c_arr" : [1.1]}'))"""
+        sql """insert into ${indexTbName} values(6, parse_to_variant('{"c_arr" : [1.0]}'))"""
+        sql """insert into ${indexTbName} values(6, parse_to_variant('{"c_arr" : [90]}'))"""
+        sql """insert into ${indexTbName} values(6, parse_to_variant('{"c_arr" : [90999999999999]}'))"""
     }
 }

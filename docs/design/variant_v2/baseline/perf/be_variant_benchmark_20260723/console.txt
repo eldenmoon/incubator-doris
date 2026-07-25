@@ -1,0 +1,81 @@
+2026-07-23T13:39:24+08:00
+Running /mnt/disk1/claude-max/.codex/worktrees/b441/doris/be/build_RELEASE/bin/benchmark_test
+Run on (192 X 3800 MHz CPU s)
+CPU Caches:
+  L1 Data 48 KiB (x96)
+  L1 Instruction 32 KiB (x96)
+  L2 Unified 2048 KiB (x96)
+  L3 Unified 99840 KiB (x2)
+Load Average: 36.83, 123.77, 167.57
+***WARNING*** CPU scaling is enabled, the benchmark real time measurements may be noisy and will incur extra overhead.
+------------------------------------------------------------------------------------------------------------------------
+Benchmark                                                              Time             CPU   Iterations UserCounters...
+------------------------------------------------------------------------------------------------------------------------
+BM_VariantJson_ParseToV2_Mixed/real_time_mean                     190435 us       189308 us            5 bytes_per_second=110.882M/s items_per_second=344.148k/s
+BM_VariantJson_ParseToV2_Mixed/real_time_median                   190498 us       189330 us            5 bytes_per_second=110.842M/s items_per_second=344.024k/s
+BM_VariantJson_ParseToV2_Mixed/real_time_stddev                     1124 us         1150 us            5 bytes_per_second=669.745k/s items_per_second=2.02999k/s
+BM_VariantJson_ParseToV2_Mixed/real_time_cv                         0.59 %          0.61 %             5 bytes_per_second=0.59% items_per_second=0.59%
+BM_VariantJson_ParseToJsonb_Mixed/real_time_mean                  112804 us       112184 us            5 bytes_per_second=187.186M/s items_per_second=580.978k/s
+BM_VariantJson_ParseToJsonb_Mixed/real_time_median                113005 us       112393 us            5 bytes_per_second=186.851M/s items_per_second=579.938k/s
+BM_VariantJson_ParseToJsonb_Mixed/real_time_stddev                   324 us          317 us            5 bytes_per_second=550.984k/s items_per_second=1.67003k/s
+BM_VariantJson_ParseToJsonb_Mixed/real_time_cv                      0.29 %          0.28 %             5 bytes_per_second=0.29% items_per_second=0.29%
+BM_VariantJsonbToV2_PerRow/real_time_mean                         551623 us       547370 us            5 bytes_per_second=32.068M/s items_per_second=119.665k/s
+BM_VariantJsonbToV2_PerRow/real_time_median                       531246 us       526866 us            5 bytes_per_second=33.0591M/s items_per_second=123.363k/s
+BM_VariantJsonbToV2_PerRow/real_time_stddev                        54992 us        53007 us            5 bytes_per_second=2.8895M/s items_per_second=10.7824k/s
+BM_VariantJsonbToV2_PerRow/real_time_cv                             9.97 %          9.68 %             5 bytes_per_second=9.01% items_per_second=9.01%
+BM_VariantJsonbToV2_SharedBlock/real_time_mean                    402163 us       400040 us            5 bytes_per_second=43.6968M/s items_per_second=163.058k/s
+BM_VariantJsonbToV2_SharedBlock/real_time_median                  397615 us       395438 us            5 bytes_per_second=44.1696M/s items_per_second=164.823k/s
+BM_VariantJsonbToV2_SharedBlock/real_time_stddev                   11173 us        11092 us            5 bytes_per_second=1.2006M/s items_per_second=4.48014k/s
+BM_VariantJsonbToV2_SharedBlock/real_time_cv                        2.78 %          2.77 %             5 bytes_per_second=2.75% items_per_second=2.75%
+BM_VariantV2_InsertEncodedBlock/real_time_mean                      67.9 us         67.5 us            5 bytes_per_second=6.15493G/s items_per_second=60.347M/s
+BM_VariantV2_InsertEncodedBlock/real_time_median                    67.9 us         67.4 us            5 bytes_per_second=6.15699G/s items_per_second=60.3672M/s
+BM_VariantV2_InsertEncodedBlock/real_time_stddev                   0.501 us        0.509 us            5 bytes_per_second=46.485M/s items_per_second=445.088k/s
+BM_VariantV2_InsertEncodedBlock/real_time_cv                        0.74 %          0.75 %             5 bytes_per_second=0.74% items_per_second=0.74%
+BM_VariantV2_RootSerdeRow/real_time_mean                            3526 us         3507 us            5 bytes_per_second=130.197M/s items_per_second=1.16174M/s
+BM_VariantV2_RootSerdeRow/real_time_median                          3508 us         3487 us            5 bytes_per_second=130.87M/s items_per_second=1.16774M/s
+BM_VariantV2_RootSerdeRow/real_time_stddev                          57.7 us         57.5 us            5 bytes_per_second=2.08808M/s items_per_second=18.6319k/s
+BM_VariantV2_RootSerdeRow/real_time_cv                              1.64 %          1.64 %             5 bytes_per_second=1.60% items_per_second=1.60%
+BM_VariantV2_RootSerdeBatch/real_time_mean                          3635 us         3612 us            5 bytes_per_second=126.482M/s items_per_second=1.12859M/s
+BM_VariantV2_RootSerdeBatch/real_time_median                        3561 us         3540 us            5 bytes_per_second=128.912M/s items_per_second=1.15027M/s
+BM_VariantV2_RootSerdeBatch/real_time_stddev                         168 us          169 us            5 bytes_per_second=5.50117M/s items_per_second=49.0867k/s
+BM_VariantV2_RootSerdeBatch/real_time_cv                            4.62 %          4.67 %             5 bytes_per_second=4.35% items_per_second=4.35%
+BM_VariantV2_ExchangeSerializedSize/real_time_mean                  57.4 us         57.1 us            5 bytes_per_second=7.80624G/s items_per_second=71.3264M/s
+BM_VariantV2_ExchangeSerializedSize/real_time_median                57.2 us         56.7 us            5 bytes_per_second=7.84084G/s items_per_second=71.6426M/s
+BM_VariantV2_ExchangeSerializedSize/real_time_stddev               0.742 us        0.784 us            5 bytes_per_second=101.757M/s items_per_second=907.972k/s
+BM_VariantV2_ExchangeSerializedSize/real_time_cv                    1.29 %          1.37 %             5 bytes_per_second=1.27% items_per_second=1.27%
+BM_VariantV2_ExchangeSerialize/real_time_mean                       2478 us         2465 us            5 bytes_per_second=185.282M/s items_per_second=1.65326M/s
+BM_VariantV2_ExchangeSerialize/real_time_median                     2476 us         2466 us            5 bytes_per_second=185.38M/s items_per_second=1.65414M/s
+BM_VariantV2_ExchangeSerialize/real_time_stddev                     13.6 us         13.2 us            5 bytes_per_second=1041.85k/s items_per_second=9.07847k/s
+BM_VariantV2_ExchangeSerialize/real_time_cv                         0.55 %          0.53 %             5 bytes_per_second=0.55% items_per_second=0.55%
+BM_VariantV2_EncodedRootCastToString/real_time_mean                 3643 us         3626 us            5 bytes_per_second=126.028M/s items_per_second=1.12454M/s
+BM_VariantV2_EncodedRootCastToString/real_time_median               3635 us         3618 us            5 bytes_per_second=126.268M/s items_per_second=1.12668M/s
+BM_VariantV2_EncodedRootCastToString/real_time_stddev               33.5 us         33.3 us            5 bytes_per_second=1.16073M/s items_per_second=10.3572k/s
+BM_VariantV2_EncodedRootCastToString/real_time_cv                   0.92 %          0.92 %             5 bytes_per_second=0.92% items_per_second=0.92%
+BM_VariantV2_ExtractPath_Shallow/real_time_mean                      520 us          517 us            5 bytes_per_second=883.127M/s items_per_second=7.88011M/s
+BM_VariantV2_ExtractPath_Shallow/real_time_median                    518 us          515 us            5 bytes_per_second=886.69M/s items_per_second=7.9119M/s
+BM_VariantV2_ExtractPath_Shallow/real_time_stddev                   9.39 us         9.33 us            5 bytes_per_second=15.6641M/s items_per_second=139.77k/s
+BM_VariantV2_ExtractPath_Shallow/real_time_cv                       1.81 %          1.80 %             5 bytes_per_second=1.77% items_per_second=1.77%
+BM_VariantV2_ExtractPath_Deep/real_time_mean                         733 us          729 us            5 bytes_per_second=626.1M/s items_per_second=5.58666M/s
+BM_VariantV2_ExtractPath_Deep/real_time_median                       733 us          729 us            5 bytes_per_second=626.167M/s items_per_second=5.58726M/s
+BM_VariantV2_ExtractPath_Deep/real_time_stddev                      10.5 us         10.2 us            5 bytes_per_second=8.87476M/s items_per_second=79.1891k/s
+BM_VariantV2_ExtractPath_Deep/real_time_cv                          1.43 %          1.40 %             5 bytes_per_second=1.42% items_per_second=1.42%
+BM_VariantV2_TypedPathCastToString/real_time_mean                  0.104 us        0.103 us            5 bytes_per_second=404.021G/s items_per_second=39.4376G/s
+BM_VariantV2_TypedPathCastToString/real_time_median                0.104 us        0.103 us            5 bytes_per_second=403.75G/s items_per_second=39.4112G/s
+BM_VariantV2_TypedPathCastToString/real_time_stddev                0.000 us        0.000 us            5 bytes_per_second=916.256M/s items_per_second=87.3422M/s
+BM_VariantV2_TypedPathCastToString/real_time_cv                     0.22 %          0.26 %             5 bytes_per_second=0.22% items_per_second=0.22%
+BM_VariantV2_EncodedScalarCastToString/real_time_mean                594 us          591 us            5 bytes_per_second=92.1587M/s items_per_second=6.90554M/s
+BM_VariantV2_EncodedScalarCastToString/real_time_median              586 us          583 us            5 bytes_per_second=93.2588M/s items_per_second=6.98797M/s
+BM_VariantV2_EncodedScalarCastToString/real_time_stddev             19.7 us         19.7 us            5 bytes_per_second=2.94266M/s items_per_second=220.496k/s
+BM_VariantV2_EncodedScalarCastToString/real_time_cv                 3.32 %          3.34 %             5 bytes_per_second=3.19% items_per_second=3.19%
+BM_VariantV2_FlatJsonbCastToVariant/real_time_mean                  6485 us         6449 us            5 bytes_per_second=133.744M/s items_per_second=1.28661M/s
+BM_VariantV2_FlatJsonbCastToVariant/real_time_median                5990 us         5959 us            5 bytes_per_second=142.165M/s items_per_second=1.36762M/s
+BM_VariantV2_FlatJsonbCastToVariant/real_time_stddev                1082 us         1074 us            5 bytes_per_second=18.2682M/s items_per_second=175.74k/s
+BM_VariantV2_FlatJsonbCastToVariant/real_time_cv                   16.68 %         16.66 %             5 bytes_per_second=13.66% items_per_second=13.66%
+BM_VariantV2_ArrayJsonbCastToVariant/real_time_mean                18767 us        18658 us            5 bytes_per_second=45.3785M/s items_per_second=54.5675k/s leaf_rows_per_second=436.54k/s
+BM_VariantV2_ArrayJsonbCastToVariant/real_time_median              18708 us        18595 us            5 bytes_per_second=45.5185M/s items_per_second=54.7358k/s leaf_rows_per_second=437.887k/s
+BM_VariantV2_ArrayJsonbCastToVariant/real_time_stddev                196 us          191 us            5 bytes_per_second=482.098k/s items_per_second=566.133/s leaf_rows_per_second=4.52906k/s
+BM_VariantV2_ArrayJsonbCastToVariant/real_time_cv                   1.05 %          1.02 %             5 bytes_per_second=1.04% items_per_second=1.04% leaf_rows_per_second=1.04%
+BM_VariantV2_ImportPathBuilderHomogeneousInt/real_time_mean          403 us          400 us            5 bytes_per_second=28.8035M/s items_per_second=10.171M/s
+BM_VariantV2_ImportPathBuilderHomogeneousInt/real_time_median        403 us          401 us            5 bytes_per_second=28.7608M/s items_per_second=10.1559M/s
+BM_VariantV2_ImportPathBuilderHomogeneousInt/real_time_stddev       5.75 us         5.21 us            5 bytes_per_second=424.302k/s items_per_second=146.317k/s
+BM_VariantV2_ImportPathBuilderHomogeneousInt/real_time_cv           1.43 %          1.30 %             5 bytes_per_second=1.44% items_per_second=1.44%

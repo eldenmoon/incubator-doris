@@ -94,7 +94,7 @@ suite("test_predefine_type_multi_index", "p1"){
     sql """set enable_match_without_inverted_index = false"""
     sql """ set enable_segment_limit_pushdown = true """
 
-    qt_sql """select cast(v["repo"]["name"] as string) from github_events where v["repo"]["name"] match 'apache' order by k limit 10;"""
+    qt_sql """select cast(v["repo"]["name"] as string) from github_events where v["repo"]["name"] match 'apache' order by k, cast(v["repo"]["name"] as string) limit 10;"""
     qt_sql """select cast(v["repo"]["name"] as string) from github_events where cast(v["repo"]["name"] as string) match 'xpressengine/xe-core' order by 1 limit 10;"""
     qt_sql """select cast(v["repo"]["name"] as string) from github_events where cast(v["repo"]["name"] as string) = 'xpressengine/xe-core' order by 1 limit 10"""
 

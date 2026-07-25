@@ -100,12 +100,12 @@ suite("test_variant_custom_analyzer", "p0") {
         );
     """
 
-    sql """ insert into ${indexTbName1} values(1, '{"ch" : "abcDEF"}'); """
-    sql """ insert into ${indexTbName1} values(2, '{"ch" : "中国人民"}'); """
-    sql """ insert into ${indexTbName1} values(3, '{"ch" : "ǁŨǁe Language"}'); """
-    sql """ insert into ${indexTbName1} values(4, '{"ch" : "RX J1242−11"}'); """
-    sql """ insert into ${indexTbName1} values(5, '{"ch" : "clayfighter 63⅓"}'); """
-    sql """ insert into ${indexTbName1} values(6, '{"ch" : "β-carbon nitrid"}'); """
+    sql """ insert into ${indexTbName1} values(1, parse_to_variant('{"ch" : "abcDEF"}')); """
+    sql """ insert into ${indexTbName1} values(2, parse_to_variant('{"ch" : "中国人民"}')); """
+    sql """ insert into ${indexTbName1} values(3, parse_to_variant('{"ch" : "ǁŨǁe Language"}')); """
+    sql """ insert into ${indexTbName1} values(4, parse_to_variant('{"ch" : "RX J1242−11"}')); """
+    sql """ insert into ${indexTbName1} values(5, parse_to_variant('{"ch" : "clayfighter 63⅓"}')); """
+    sql """ insert into ${indexTbName1} values(6, parse_to_variant('{"ch" : "β-carbon nitrid"}')); """
 
     try {
         trigger_and_wait_compaction(indexTbName1, "full", 1800)
@@ -132,7 +132,7 @@ suite("test_variant_custom_analyzer", "p0") {
         );
     """
 
-    sql """ INSERT INTO ${indexTbName2} VALUES ('3', '{"ch" : "Wikipedia;Miscellaneous-Jj102786 / 3tle Born Oct 27th 1986 @ Blytheville, Arkansas @ 9:14pm 23 yrs of age male,white Cucassion American raised Religion:Pentocostal,Church of God"}'); """
+    sql """ INSERT INTO ${indexTbName2} VALUES ('3', parse_to_variant('{"ch" : "Wikipedia;Miscellaneous-Jj102786 / 3tle Born Oct 27th 1986 @ Blytheville, Arkansas @ 9:14pm 23 yrs of age male,white Cucassion American raised Religion:Pentocostal,Church of God"}')); """
 
     try {
         sql "sync"
@@ -156,7 +156,7 @@ suite("test_variant_custom_analyzer", "p0") {
         );
     """
 
-    sql """ INSERT INTO ${indexTbName3} VALUES ('4', '{"ch" : "1080º Avalanche"}'); """
+    sql """ INSERT INTO ${indexTbName3} VALUES ('4', parse_to_variant('{"ch" : "1080º Avalanche"}')); """
 
     try {
         sql "sync"

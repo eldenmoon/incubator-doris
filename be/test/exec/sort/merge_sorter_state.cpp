@@ -33,7 +33,6 @@
 #include "core/column/variant_v2/column_variant_v2.h"
 #include "core/data_type/data_type_nullable.h"
 #include "core/data_type/data_type_variant.h"
-#include "core/data_type/data_type_variant_v2.h"
 #include "exec/sort/heap_sorter.h"
 #include "exec/sort/sorter.h"
 #include "exec/sort/topn_sorter.h"
@@ -258,8 +257,8 @@ TEST_F(MergeSorterStateTest, test_reset_on_fresh_state) {
     EXPECT_EQ(state->data_size(), 0);
 }
 
-TEST_F(MergeSorterStateTest, variant_v2_state_uses_matching_physical_column) {
-    DataTypePtr type = make_nullable(std::make_shared<DataTypeVariantV2>());
+TEST_F(MergeSorterStateTest, variant_state_uses_matching_physical_column) {
+    DataTypePtr type = make_nullable(std::make_shared<DataTypeVariant>());
     MockRowDescriptor variant_row_desc({type}, &pool);
     state = std::make_shared<MergeSorterState>(variant_row_desc, 0);
 

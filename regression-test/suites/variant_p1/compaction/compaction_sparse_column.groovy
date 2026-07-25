@@ -112,36 +112,36 @@ suite("test_compaction_sparse_column", "p1") {
 
         // b is sparse
         // a is dense
-        sql """insert into test_compaction select 0, '{"a": 11245, "b" : 42000}'  as json_str
-            union  all select 0, '{"a": 1123}' as json_str union all (select 0, '{"a" : 1234, "xxxx" : "aaaaa"}' as json_str from numbers("number" = "4096") limit 4096) ;"""
+        sql """insert into test_compaction select 0, parse_to_variant('{"a": 11245, "b" : 42000}')  as json_str
+            union  all select 0, parse_to_variant('{"a": 1123}') as json_str union all (select 0, parse_to_variant('{"a" : 1234, "xxxx" : "aaaaa"}') as json_str from numbers("number" = "4096") limit 4096) ;"""
 
         // b is sparse 
         // a, xxxx is dense
-        sql """insert into ${tableName} select 1, '{"a": 11245, "b" : 42001}'  as json_str
-            union  all select 1, '{"a": 1123}' as json_str union all (select 1, '{"a" : 1234, "xxxx" : "bbbbb"}' as json_str from numbers("number" = "4096") limit 4096) ;"""
+        sql """insert into ${tableName} select 1, parse_to_variant('{"a": 11245, "b" : 42001}')  as json_str
+            union  all select 1, parse_to_variant('{"a": 1123}') as json_str union all (select 1, parse_to_variant('{"a" : 1234, "xxxx" : "bbbbb"}') as json_str from numbers("number" = "4096") limit 4096) ;"""
 
         // b is sparse        
         // xxxx is dense
-        sql """insert into ${tableName} select 2, '{"a": 11245, "b" : 42002}'  as json_str
-            union  all select 2, '{"a": 1123}' as json_str union all (select 2, '{"a" : 1234, "xxxx" : "ccccc"}' as json_str from numbers("number" = "4096") limit 4096) ;"""
+        sql """insert into ${tableName} select 2, parse_to_variant('{"a": 11245, "b" : 42002}')  as json_str
+            union  all select 2, parse_to_variant('{"a": 1123}') as json_str union all (select 2, parse_to_variant('{"a" : 1234, "xxxx" : "ccccc"}') as json_str from numbers("number" = "4096") limit 4096) ;"""
 
         // point, xxxx is sparse        
         // a, b is dense
-        sql """insert into ${tableName} select 3, '{"a" : 1234, "point" : 1, "xxxx" : "ddddd"}'  as json_str
-            union  all select 3, '{"a": 1123}' as json_str union all (select 3, '{"a": 11245, "b" : 42003}' as json_str from numbers("number" = "4096") limit 4096) ;"""
+        sql """insert into ${tableName} select 3, parse_to_variant('{"a" : 1234, "point" : 1, "xxxx" : "ddddd"}')  as json_str
+            union  all select 3, parse_to_variant('{"a": 1123}') as json_str union all (select 3, parse_to_variant('{"a": 11245, "b" : 42003}') as json_str from numbers("number" = "4096") limit 4096) ;"""
 
 
         // xxxx, eeeee is sparse
         // a, b is dense
-        sql """insert into ${tableName} select 4, '{"a" : 1234, "xxxx" : "eeeee", "point" : 5}'  as json_str
-            union  all select 4, '{"a": 1123}' as json_str union all (select 4, '{"a": 11245, "b" : 42004}' as json_str from numbers("number" = "4096") limit 4096) ;"""
+        sql """insert into ${tableName} select 4, parse_to_variant('{"a" : 1234, "xxxx" : "eeeee", "point" : 5}')  as json_str
+            union  all select 4, parse_to_variant('{"a": 1123}') as json_str union all (select 4, parse_to_variant('{"a": 11245, "b" : 42004}') as json_str from numbers("number" = "4096") limit 4096) ;"""
         
         //   xxxx, point is sparse
         // a, b is dense
-        sql """insert into ${tableName} select 5, '{"a" : 1234, "xxxx" : "fffff", "point" : 42000}'  as json_str
-            union  all select 5, '{"a": 1123}' as json_str union all (select 5, '{"a": 11245, "b" : 42005}' as json_str from numbers("number" = "4096") limit 4096) ;"""
+        sql """insert into ${tableName} select 5, parse_to_variant('{"a" : 1234, "xxxx" : "fffff", "point" : 42000}')  as json_str
+            union  all select 5, parse_to_variant('{"a": 1123}') as json_str union all (select 5, parse_to_variant('{"a": 11245, "b" : 42005}') as json_str from numbers("number" = "4096") limit 4096) ;"""
 
-        sql """insert into ${tableName} values (6, '{"b" : "789"}')"""
+        sql """insert into ${tableName} values (6, parse_to_variant('{"b" : "789"}'))"""
         
         qt_select_b_bfcompact """ SELECT count(cast(v['b'] as string)) FROM ${tableName};"""
         qt_select_xxxx_bfcompact """ SELECT count(cast(v['xxxx'] as string)) FROM ${tableName};"""
@@ -158,7 +158,7 @@ suite("test_compaction_sparse_column", "p1") {
         qt_select_4_1_bfcompact """ SELECT count(cast(v['b'] as int)) FROM ${tableName} where cast(v['b'] as int) = 42003;"""
         qt_select_5_1_bfcompact """ SELECT count(cast(v['b'] as int)) FROM ${tableName} where cast(v['b'] as int) = 42004;"""
         qt_select_6_1_bfcompact """ SELECT count(cast(v['b'] as int)) FROM ${tableName} where cast(v['b'] as int) = 42005;"""
-        qt_select_all_bfcompact """SELECT k, v['a'], v['b'], v['xxxx'], v['point'], v['ddddd'] from ${tableName} where (cast(v['point'] as int) = 1);"""
+        qt_select_all_bfcompact """SELECT k, cast(v['a'] as int), cast(v['b'] as int), cast(v['xxxx'] as string), cast(v['point'] as int), cast(v['ddddd'] as string) from ${tableName} where (cast(v['point'] as int) = 1);"""
 
         //TabletId,ReplicaId,BackendId,SchemaHash,Version,LstSuccessVersion,LstFailedVersion,LstFailedTime,LocalDataSize,RemoteDataSize,RowCount,State,LstConsistencyCheckTime,CheckVersion,VersionCount,PathHash,MetaUrl,CompactionStatus
         def tablets = sql_return_maparray """ show tablets from ${tableName}; """
@@ -181,13 +181,13 @@ suite("test_compaction_sparse_column", "p1") {
         qt_select_4_1 """ SELECT count(cast(v['b'] as int)) FROM ${tableName} where cast(v['b'] as int) = 42003;"""
         qt_select_5_1 """ SELECT count(cast(v['b'] as int)) FROM ${tableName} where cast(v['b'] as int) = 42004;"""
         qt_select_6_1 """ SELECT count(cast(v['b'] as int)) FROM ${tableName} where cast(v['b'] as int) = 42005;"""
-        qt_select_all """SELECT k, v['a'], v['b'], v['xxxx'], v['point'], v['ddddd'] from ${tableName} where (cast(v['point'] as int) = 1);"""
+        qt_select_all """SELECT k, cast(v['a'] as int), cast(v['b'] as int), cast(v['xxxx'] as string), cast(v['point'] as int), cast(v['ddddd'] as string) from ${tableName} where (cast(v['point'] as int) = 1);"""
 
         sql "truncate table ${tableName}"
-        sql """insert into ${tableName} values (1, '{"1" : 1, "2" : 2, "3" : 3, "4": "4", "a" : 1, "aa":2, "aaa" : 3,"aaaaaa":1234, ".a." : 1}')"""
-        sql """insert into ${tableName} values (1, '{"1" : 1, "2" : 2, "3" : 3, "4": "4", "a" : 1, "aa":2, "aaa" : 3,"aaaaaa":1234, ".a." : 1}')"""
-        sql """insert into ${tableName} values (1, '{"1" : 1, "2" : 2, "3" : 3, "4": "4", "a" : 1, "aa":2, "aaa" : 3,"aaaaaa":1234, ".a." : 1}')"""
-        sql """insert into ${tableName} values (1, '{"1" : 1, "2" : 2, "3" : 3, "4": "4", "a" : 1, "aa":2, "aaa" : 3,"aaaaaa":1234, ".a." : 1}')"""
+        sql """insert into ${tableName} values (1, parse_to_variant('{"1" : 1, "2" : 2, "3" : 3, "4": "4", "a" : 1, "aa":2, "aaa" : 3,"aaaaaa":1234, ".a." : 1}'))"""
+        sql """insert into ${tableName} values (1, parse_to_variant('{"1" : 1, "2" : 2, "3" : 3, "4": "4", "a" : 1, "aa":2, "aaa" : 3,"aaaaaa":1234, ".a." : 1}'))"""
+        sql """insert into ${tableName} values (1, parse_to_variant('{"1" : 1, "2" : 2, "3" : 3, "4": "4", "a" : 1, "aa":2, "aaa" : 3,"aaaaaa":1234, ".a." : 1}'))"""
+        sql """insert into ${tableName} values (1, parse_to_variant('{"1" : 1, "2" : 2, "3" : 3, "4": "4", "a" : 1, "aa":2, "aaa" : 3,"aaaaaa":1234, ".a." : 1}'))"""
         qt_sql """select v['aaaa'] from ${tableName}"""
         qt_sql """select v['aaa'] from ${tableName}"""
         qt_sql """select v['aa'] from ${tableName}"""

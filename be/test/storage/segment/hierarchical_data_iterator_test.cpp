@@ -20,118 +20,225 @@
 #include <gtest/gtest.h>
 
 #include <cstring>
+#include <memory>
+#include <string>
+#include <utility>
+#include <vector>
 
 #include "core/column/column_map.h"
 #include "core/column/column_string.h"
-#include "core/column/column_variant.h"
-#include "core/data_type/data_type_nothing.h"
-#include "util/json/path_in_data.h"
+#include "core/column/variant_v2/column_variant_v2.h"
+#include "core/data_type/data_type_string.h"
+#include "storage/segment/variant/binary_column_extract_iterator.h"
 
-using doris::Status;
-using doris::segment_v2::ColumnIterator;
-using doris::segment_v2::ColumnIteratorOptions;
-using doris::segment_v2::HierarchicalDataIterator;
-using doris::ColumnMap;
-using doris::ColumnString;
-using doris::ColumnVariant;
-using doris::MutableColumnPtr;
-using doris::PathInData;
+namespace doris::segment_v2 {
 
 class DummySparseIterator final : public ColumnIterator {
 public:
     Status init(const ColumnIteratorOptions&) override { return Status::OK(); }
     Status seek_to_ordinal(ordinal_t) override { return Status::OK(); }
     ordinal_t get_current_ordinal() const override { return 0; }
-    Status next_batch(size_t*, MutableColumnPtr&, bool*) override { return Status::OK(); }
-    Status read_by_rowids(const doris::segment_v2::rowid_t*, const size_t,
-                          MutableColumnPtr&) override {
+
+    Status next_batch(size_t* rows, MutableColumnPtr& dst, bool*) override {
+        if (*rows < 2) {
+            return Status::InvalidArgument("Dummy sparse reader requires room for two rows");
+        }
+        *rows = 2;
+        return fill(dst);
+    }
+
+    Status read_by_rowids(const rowid_t*, const size_t count, MutableColumnPtr& dst) override {
+        if (count != 2) {
+            return Status::InvalidArgument("Dummy sparse reader requires two rows");
+        }
+        return fill(dst);
+    }
+
+private:
+    static Status fill(MutableColumnPtr& dst) {
+        auto* map = check_and_get_column<ColumnMap>(dst.get());
+        if (map == nullptr) {
+            return Status::InvalidArgument("Dummy sparse destination is not a map");
+        }
+        auto& keys = assert_cast<ColumnString&>(map->get_keys());
+        auto& values = assert_cast<ColumnString&>(map->get_values());
+        auto& offsets = map->get_offsets();
+
+        DataTypePtr string_type = std::make_shared<DataTypeString>();
+        auto strings = string_type->create_column();
+        auto serde = string_type->get_serde();
+        strings->insert_data("abcvalues", strlen("abcvalues"));
+        strings->insert_data("abdvalues", strlen("abdvalues"));
+        strings->insert_data("abcvalues", strlen("abcvalues"));
+        strings->insert_data("abevalues", strlen("abevalues"));
+        strings->insert_data("axvalues", strlen("axvalues"));
+        ColumnString::Chars& chars = values.get_chars();
+        for (size_t index = 0; index < 5; ++index) {
+            serde->write_one_cell_to_binary(*strings, chars, index);
+            values.get_offsets().push_back(chars.size());
+        }
+
+        keys.insert_data("a.b.c", strlen("a.b.c"));
+        keys.insert_data("a.b.d", strlen("a.b.d"));
+        offsets.push_back(keys.size());
+        keys.insert_data("a.b.c", strlen("a.b.c"));
+        keys.insert_data("a.b.e", strlen("a.b.e"));
+        keys.insert_data("a.x", strlen("a.x"));
+        offsets.push_back(keys.size());
         return Status::OK();
     }
 };
 
-TEST(HierarchicalDataIteratorTest, ProcessSparseExtractSubpaths) {
-    std::unique_ptr<ColumnIterator> sparse_reader = std::make_unique<DummySparseIterator>();
-    doris::segment_v2::ColumnIteratorUPtr iter;
-    auto sparse_iter = std::make_unique<SubstreamIterator>(
-            doris::ColumnVariant::create_binary_column_fn(), std::move(sparse_reader), nullptr);
-    ASSERT_TRUE(HierarchicalDataIterator::create(
-                        &iter, /*col_uid*/ 0, PathInData("a.b"), /*node*/ nullptr,
-                        /*root*/ std::move(sparse_iter), nullptr, nullptr, nullptr,
-                        HierarchicalDataIterator::ReadType::SUBCOLUMNS_AND_SPARSE)
-                        .ok());
+class MalformedSparseIterator final : public ColumnIterator {
+public:
+    explicit MalformedSparseIterator(std::vector<std::string> paths) : _paths(std::move(paths)) {}
 
-    ColumnIteratorOptions opts;
-    ASSERT_TRUE(iter->init(opts).ok());
-    ASSERT_TRUE(iter->seek_to_ordinal(0).ok());
+    Status init(const ColumnIteratorOptions&) override { return Status::OK(); }
+    Status seek_to_ordinal(ordinal_t) override { return Status::OK(); }
+    ordinal_t get_current_ordinal() const override { return 0; }
 
-    auto* hiter = static_cast<HierarchicalDataIterator*>(iter.get());
-    auto& map = assert_cast<ColumnMap&>(*hiter->_binary_column_reader->column);
-    auto& keys = assert_cast<ColumnString&>(map.get_keys());
-    auto& vals = assert_cast<ColumnString&>(map.get_values());
-    auto& offs = map.get_offsets();
-
-    doris::DataTypePtr str_type = std::make_shared<doris::DataTypeString>();
-    auto str_col = str_type->create_column();
-    auto serde = str_type->get_serde();
-    str_col->insert_data("abcvalues", strlen("abcvalues"));
-    str_col->insert_data("abdvalues", strlen("abdvalues"));
-    str_col->insert_data("abcvalues", strlen("abcvalues"));
-    str_col->insert_data("abevalues", strlen("abevalues"));
-    str_col->insert_data("axvalues", strlen("axvalues"));
-    ColumnString::Chars& chars = vals.get_chars();
-    for (size_t i = 0; i < 5; ++i) {
-        serde->write_one_cell_to_binary(*str_col, chars, i);
-        vals.get_offsets().push_back(chars.size());
+    Status next_batch(size_t* rows, MutableColumnPtr& dst, bool*) override {
+        if (*rows == 0) {
+            return Status::InvalidArgument("Malformed sparse reader requires one row");
+        }
+        *rows = 1;
+        return fill(dst);
     }
 
-    // row0: {"a.b.c": "abcvalues", "a.b.d": "abdvalues"}
-    keys.insert_data("a.b.c", strlen("a.b.c"));
-    keys.insert_data("a.b.d", strlen("a.b.d"));
-    offs.push_back(keys.size());
+    Status read_by_rowids(const rowid_t*, const size_t count, MutableColumnPtr& dst) override {
+        if (count != 1) {
+            return Status::InvalidArgument("Malformed sparse reader requires one row");
+        }
+        return fill(dst);
+    }
 
-    // row1: {"a.b.c": "abcvalues", "a.b.e": "abevalues", "a.x": "axvalues"}
-    keys.insert_data("a.b.c", strlen("a.b.c"));
-    keys.insert_data("a.b.e", strlen("a.b.e"));
-    keys.insert_data("a.x", strlen("a.x"));
-    offs.push_back(keys.size());
+private:
+    Status fill(MutableColumnPtr& dst) const {
+        auto* map = check_and_get_column<ColumnMap>(dst.get());
+        if (map == nullptr) {
+            return Status::InvalidArgument("Malformed sparse destination is not a map");
+        }
+        auto& keys = assert_cast<ColumnString&>(map->get_keys());
+        auto& values = assert_cast<ColumnString&>(map->get_values());
+        for (const std::string& path : _paths) {
+            keys.insert_data(path.data(), path.size());
+            values.insert_data("x", 1);
+        }
+        map->get_offsets().push_back(keys.size());
+        return Status::OK();
+    }
 
-    const size_t nrows = 2;
-    MutableColumnPtr dst = ColumnVariant::create(/*max_subcolumns_count*/ 2, false, nrows);
+    std::vector<std::string> _paths;
+};
 
-    auto& variant = assert_cast<ColumnVariant&>(*dst);
-    ASSERT_TRUE(hiter->_process_binary_column(variant, nrows).ok());
-
-    // root column + 2 subcolumns
-    EXPECT_EQ(variant.get_subcolumns().size(), 3);
-
-    auto* abc_subcolumn = variant.get_subcolumn(PathInData("c"));
-    auto* abd_subcolumn = variant.get_subcolumn(PathInData("d"));
-
-    EXPECT_TRUE(abc_subcolumn);
-    EXPECT_TRUE(abd_subcolumn);
-
-    EXPECT_EQ(abc_subcolumn->get_non_null_value_size(), 2);
-    EXPECT_EQ(abd_subcolumn->get_non_null_value_size(), 1);
-
-    const auto& abc_subcolumn_data =
-            assert_cast<const doris::ColumnNullable&>(*abc_subcolumn->get_finalized_column_ptr());
-    const auto& abd_subcolumn_data =
-            assert_cast<const doris::ColumnNullable&>(*abd_subcolumn->get_finalized_column_ptr());
-    EXPECT_EQ(abc_subcolumn_data.get_nested_column_ptr()->get_data_at(0).to_string(), "abcvalues");
-    EXPECT_EQ(abc_subcolumn_data.get_nested_column_ptr()->get_data_at(1).to_string(), "abcvalues");
-    EXPECT_EQ(abd_subcolumn_data.get_nested_column_ptr()->get_data_at(0).to_string(), "abdvalues");
-
-    const auto& read_map = assert_cast<const ColumnMap&>(*variant.get_sparse_column());
-    const auto& read_keys = assert_cast<const ColumnString&>(read_map.get_keys());
-    const auto& read_vals = assert_cast<const ColumnString&>(read_map.get_values());
-    const auto& read_offs = read_map.get_offsets();
-
-    EXPECT_EQ(read_offs.size(), 2);
-
-    EXPECT_EQ(read_keys.get_data_at(0).to_string(), "e");
-    auto val = read_vals.get_data_at(0).to_string();
-    EXPECT_EQ(val.substr(val.size() - 9, 9), "abevalues");
-
-    EXPECT_EQ(read_offs[0], 0);
-    EXPECT_EQ(read_offs[1], 1);
+static BinaryColumnCacheSPtr make_binary_cache(ColumnIteratorUPtr iterator) {
+    return std::make_shared<BinaryColumnCache>(
+            std::move(iterator), ColumnMap::create(ColumnString::create(), ColumnString::create(),
+                                                   ColumnArray::ColumnOffsets::create()));
 }
+
+TEST(HierarchicalDataIteratorTest, ProcessSparseExtractSubpathsIntoVariantV2) {
+    auto sparse = std::make_unique<SubstreamIterator>(
+            ColumnMap::create(ColumnString::create(), ColumnString::create(),
+                              ColumnArray::ColumnOffsets::create()),
+            std::make_unique<DummySparseIterator>(), nullptr);
+    ColumnIteratorUPtr iterator;
+    OlapReaderStatistics stats;
+    ASSERT_TRUE(HierarchicalDataIterator::create(
+                        &iterator, 0, PathInData("a.b"), nullptr, std::move(sparse), nullptr,
+                        nullptr, &stats, HierarchicalDataIterator::ReadType::SUBCOLUMNS_AND_SPARSE)
+                        .ok());
+
+    ColumnIteratorOptions options;
+    options.stats = &stats;
+    ASSERT_TRUE(iterator->init(options).ok());
+    ASSERT_TRUE(iterator->seek_to_ordinal(0).ok());
+    MutableColumnPtr dst = ColumnVariantV2::create();
+    size_t rows = 2;
+    bool has_null = false;
+    ASSERT_TRUE(iterator->next_batch(&rows, dst, &has_null).ok());
+
+    const auto& variant = assert_cast<const ColumnVariantV2&>(*dst);
+    VariantRef value;
+    const VariantRef row0 = variant.get_value_ref(0);
+    ASSERT_TRUE(row0.object_find(StringRef("c"), &value));
+    EXPECT_EQ(value.get_string(), StringRef("abcvalues"));
+    ASSERT_TRUE(row0.object_find(StringRef("d"), &value));
+    EXPECT_EQ(value.get_string(), StringRef("abdvalues"));
+    EXPECT_FALSE(row0.object_find(StringRef("e"), &value));
+
+    const VariantRef row1 = variant.get_value_ref(1);
+    ASSERT_TRUE(row1.object_find(StringRef("c"), &value));
+    EXPECT_EQ(value.get_string(), StringRef("abcvalues"));
+    ASSERT_TRUE(row1.object_find(StringRef("e"), &value));
+    EXPECT_EQ(value.get_string(), StringRef("abevalues"));
+    EXPECT_FALSE(row1.object_find(StringRef("x"), &value));
+}
+
+TEST(HierarchicalDataIteratorTest, NextBatchUsesActualShortFinalBatchSize) {
+    auto sparse = std::make_unique<SubstreamIterator>(
+            ColumnMap::create(ColumnString::create(), ColumnString::create(),
+                              ColumnArray::ColumnOffsets::create()),
+            std::make_unique<DummySparseIterator>(), nullptr);
+    ColumnIteratorUPtr iterator;
+    OlapReaderStatistics stats;
+    ASSERT_TRUE(HierarchicalDataIterator::create(
+                        &iterator, 0, PathInData("a.b"), nullptr, std::move(sparse), nullptr,
+                        nullptr, &stats, HierarchicalDataIterator::ReadType::SUBCOLUMNS_AND_SPARSE)
+                        .ok());
+
+    ColumnIteratorOptions options;
+    options.stats = &stats;
+    ASSERT_TRUE(iterator->init(options).ok());
+    ASSERT_TRUE(iterator->seek_to_ordinal(0).ok());
+    MutableColumnPtr dst = ColumnVariantV2::create();
+    size_t rows = 8;
+    ASSERT_TRUE(iterator->next_batch(&rows, dst).ok());
+    EXPECT_EQ(rows, 2);
+    EXPECT_EQ(dst->size(), 2);
+}
+
+TEST(BinaryColumnExtractIteratorTest, NextBatchUsesActualShortFinalBatchSize) {
+    OlapReaderStatistics stats;
+    StorageReadOptions read_options;
+    read_options.stats = &stats;
+    BinaryColumnExtractIterator iterator(
+            "a.b.c", make_binary_cache(std::make_unique<DummySparseIterator>()), &read_options);
+    ColumnIteratorOptions iterator_options;
+    iterator_options.stats = &stats;
+    ASSERT_TRUE(iterator.init(iterator_options).ok());
+    ASSERT_TRUE(iterator.seek_to_ordinal(0).ok());
+
+    MutableColumnPtr dst = ColumnVariantV2::create();
+    size_t rows = 8;
+    ASSERT_TRUE(iterator.next_batch(&rows, dst, nullptr).ok());
+    EXPECT_EQ(rows, 2);
+    EXPECT_EQ(dst->size(), 2);
+    EXPECT_EQ(assert_cast<const ColumnVariantV2&>(*dst).get_value_ref(0).get_string(),
+              StringRef("abcvalues"));
+}
+
+TEST(BinaryColumnExtractIteratorTest, RejectsUnsortedAndDuplicateSparsePaths) {
+    for (const std::vector<std::string>& paths :
+         {std::vector<std::string> {"b", "a"}, std::vector<std::string> {"a", "a"}}) {
+        SCOPED_TRACE(testing::PrintToString(paths));
+        OlapReaderStatistics stats;
+        StorageReadOptions read_options;
+        read_options.stats = &stats;
+        BinaryColumnExtractIterator iterator(
+                "a", make_binary_cache(std::make_unique<MalformedSparseIterator>(paths)),
+                &read_options);
+        ColumnIteratorOptions iterator_options;
+        iterator_options.stats = &stats;
+        ASSERT_TRUE(iterator.init(iterator_options).ok());
+        ASSERT_TRUE(iterator.seek_to_ordinal(0).ok());
+
+        MutableColumnPtr dst = ColumnVariantV2::create();
+        size_t rows = 1;
+        const Status status = iterator.next_batch(&rows, dst, nullptr);
+        EXPECT_TRUE(status.is<ErrorCode::CORRUPTION>()) << status;
+        EXPECT_EQ(dst->size(), 0);
+    }
+}
+
+} // namespace doris::segment_v2

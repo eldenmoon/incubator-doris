@@ -36,14 +36,14 @@ suite("test_schema_change_txn_conflict", "nonConcurrent") {
                 DISTRIBUTED BY HASH(k) BUCKETS 4
                 properties("replication_num" = "1");
             """
-            sql """INSERT INTO ${tableName} SELECT *, '{"k1":1, "k2": "hello world", "k3" : [1234], "k4" : 1.10000, "k5" : [[123]]}' FROM numbers("number" = "1")"""
+            sql """INSERT INTO ${tableName} SELECT *, parse_to_variant('{"k1":1, "k2": "hello world", "k3" : [1234], "k4" : 1.10000, "k5" : [[123]]}') FROM numbers("number" = "1")"""
             sql """ALTER TABLE ${tableName} SET("bloom_filter_columns" = "v")"""
 
             waitForSchemaChangeDone {
                 sql """SHOW ALTER TABLE COLUMN WHERE IndexName='${tableName}' ORDER BY createtime DESC LIMIT 1"""
                 time 600
             }
-            sql """insert into ${tableName} values (2, '{"a" : 12345}')"""
+            sql """insert into ${tableName} values (2, parse_to_variant('{"a" : 12345}'))"""
         } catch (Exception e) {
             GetDebugPoint().disableDebugPointForAllBEs("CloudSchemaChangeJob::_convert_historical_rowsets.test_conflict")
         } finally {

@@ -35,28 +35,24 @@
 #include "core/column/column_decimal.h"
 #include "core/column/column_nullable.h"
 #include "core/column/column_string.h"
-#include "core/column/column_variant.h"
 #include "core/column/column_vector.h"
 #include "core/column/variant_v2/column_variant_v2.h"
 #include "core/data_type/data_type_date.h"
 #include "core/data_type/data_type_date_or_datetime_v2.h"
 #include "core/data_type/data_type_date_time.h"
 #include "core/data_type/data_type_decimal.h"
-#include "core/data_type/data_type_factory.hpp"
 #include "core/data_type/data_type_ipv4.h"
 #include "core/data_type/data_type_ipv6.h"
 #include "core/data_type/data_type_number.h"
 #include "core/data_type/data_type_string.h"
 #include "core/data_type/data_type_timestamptz.h"
 #include "core/data_type/data_type_variant.h"
-#include "core/data_type/data_type_variant_v2.h"
 #include "core/value/decimalv2_value.h"
 #include "core/value/variant/variant_batch_builder.h"
 #include "core/value/variant/variant_canonical.h"
 #include "core/value/variant/variant_parquet_encoding.h"
 #include "exprs/function/parse/variant_jsonb_parse.h"
 #include "exprs/function/parse/variant_string_parse.h"
-#include "gen_cpp/data.pb.h"
 #include "util/variant/variant_test_utils.h"
 
 namespace doris {
@@ -114,7 +110,7 @@ VariantField noncanonical_object() {
 }
 
 std::vector<char> serialize(const IColumn& source) {
-    const DataTypeVariantV2 type;
+    const DataTypeVariant type;
     const int64_t max_size = type.get_uncompressed_serialized_bytes(source, 10);
     EXPECT_GT(max_size, 0);
     std::vector<char> bytes(max_size);
@@ -146,7 +142,7 @@ struct DecodedVariant {
 };
 
 DecodedVariant round_trip(const IColumn& source) {
-    const DataTypeVariantV2 type;
+    const DataTypeVariant type;
     const std::vector<char> bytes = serialize(source);
     MutableColumnPtr destination = type.create_column();
     EXPECT_EQ(type.deserialize(bytes.data(), &destination, 10), bytes.data() + bytes.size());
@@ -237,52 +233,6 @@ TEST(DataTypeVariantV2SerDeBinaryRoundTripTest, ComputeVariantTypeRoundTripsEnco
     ASSERT_EQ(destination->size(), source->size());
     EXPECT_TRUE(canonical_equals(source->read_view().value_at(0),
                                  destination->read_view().value_at(0)));
-}
-
-TEST(DataTypeVariantV2SerDeBinaryRoundTripTest, ExecutionTypeSelectsPhysicalColumn) {
-    DataTypeVariant legacy;
-    DataTypeVariantV2 compute_v2;
-
-    MutableColumnPtr legacy_column = legacy.create_column();
-    MutableColumnPtr compute_v2_column = compute_v2.create_column();
-    EXPECT_NE(dynamic_cast<ColumnVariant*>(legacy_column.get()), nullptr);
-    EXPECT_EQ(dynamic_cast<ColumnVariantV2*>(legacy_column.get()), nullptr);
-    EXPECT_NE(dynamic_cast<ColumnVariantV2*>(compute_v2_column.get()), nullptr);
-    EXPECT_TRUE(legacy.check_column(*legacy_column).ok());
-    EXPECT_FALSE(legacy.check_column(*compute_v2_column).ok());
-    EXPECT_TRUE(compute_v2.check_column(*compute_v2_column).ok());
-    EXPECT_FALSE(compute_v2.check_column(*legacy_column).ok());
-    EXPECT_FALSE(legacy.equals(compute_v2));
-    EXPECT_FALSE(compute_v2.equals(legacy));
-    EXPECT_TRUE(compute_v2.equals(DataTypeVariantV2 {}));
-}
-
-TEST(DataTypeVariantV2SerDeBinaryRoundTripTest, ExecutionMarkerRoundTripsThroughDescriptors) {
-    DataTypeVariantV2 compute_v2(12, true);
-
-    PColumnMeta column_meta;
-    compute_v2.to_pb_column_meta(&column_meta);
-    DataTypePtr from_protobuf = DataTypeFactory::instance().create_data_type(column_meta);
-    ASSERT_NE(from_protobuf, nullptr);
-    const auto* protobuf_variant = dynamic_cast<const DataTypeVariantV2*>(from_protobuf.get());
-    ASSERT_NE(protobuf_variant, nullptr);
-    EXPECT_NE(dynamic_cast<ColumnVariantV2*>(from_protobuf->create_column().get()), nullptr);
-
-    TScalarType scalar_type;
-    scalar_type.__set_type(TPrimitiveType::VARIANT);
-    scalar_type.__set_variant_max_subcolumns_count(12);
-    scalar_type.__set_variant_enable_doc_mode(true);
-    scalar_type.__set_variant_is_v2(true);
-    TTypeNode type_node;
-    type_node.__set_type(TTypeNodeType::SCALAR);
-    type_node.__set_scalar_type(scalar_type);
-    TTypeDesc type_desc;
-    type_desc.types.push_back(type_node);
-    DataTypePtr from_thrift = DataTypeFactory::instance().create_data_type(type_desc);
-    ASSERT_NE(from_thrift, nullptr);
-    const auto* thrift_variant = dynamic_cast<const DataTypeVariantV2*>(from_thrift.get());
-    ASSERT_NE(thrift_variant, nullptr);
-    EXPECT_NE(dynamic_cast<ColumnVariantV2*>(from_thrift->create_column().get()), nullptr);
 }
 
 TEST(DataTypeVariantV2SerDeBinaryRoundTripTest, EncodedRowsPreserveStateOrderAndRowBytes) {

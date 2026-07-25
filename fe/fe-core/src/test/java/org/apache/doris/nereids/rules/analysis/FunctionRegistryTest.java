@@ -26,16 +26,22 @@ import org.apache.doris.nereids.trees.expressions.functions.BuiltinFunctionBuild
 import org.apache.doris.nereids.trees.expressions.functions.ExplicitlyCastableSignature;
 import org.apache.doris.nereids.trees.expressions.functions.FunctionBuilder;
 import org.apache.doris.nereids.trees.expressions.functions.PropagateNullable;
+import org.apache.doris.nereids.trees.expressions.functions.scalar.GetVariantType;
 import org.apache.doris.nereids.trees.expressions.functions.scalar.ParseToVariant;
 import org.apache.doris.nereids.trees.expressions.functions.scalar.ParseToVariantErrorToNull;
 import org.apache.doris.nereids.trees.expressions.functions.scalar.ScalarFunction;
 import org.apache.doris.nereids.trees.expressions.functions.scalar.Substring;
+import org.apache.doris.nereids.trees.expressions.functions.scalar.TryParseToVariant;
+import org.apache.doris.nereids.trees.expressions.functions.scalar.VariantContains;
+import org.apache.doris.nereids.trees.expressions.functions.scalar.VariantExistsPath;
+import org.apache.doris.nereids.trees.expressions.functions.scalar.VariantGet;
+import org.apache.doris.nereids.trees.expressions.functions.scalar.VariantIsNull;
+import org.apache.doris.nereids.trees.expressions.functions.scalar.VariantKeys;
+import org.apache.doris.nereids.trees.expressions.functions.scalar.VariantLength;
 import org.apache.doris.nereids.trees.expressions.functions.scalar.Year;
 import org.apache.doris.nereids.trees.expressions.literal.Literal;
 import org.apache.doris.nereids.trees.expressions.shape.UnaryExpression;
-import org.apache.doris.nereids.types.ArrayType;
 import org.apache.doris.nereids.types.IntegerType;
-import org.apache.doris.nereids.types.VariantType;
 import org.apache.doris.nereids.util.MemoPatternMatchSupported;
 import org.apache.doris.nereids.util.MemoTestUtils;
 import org.apache.doris.nereids.util.PlanChecker;
@@ -94,46 +100,104 @@ public class FunctionRegistryTest implements MemoPatternMatchSupported {
     @Test
     public void testVariantParseFunctions() {
         PlanChecker.from(connectContext)
-                .analyze("select parse_to_variant('{\"a\":1}'), parse_to_variant_error_to_null('{')")
+                .analyze("select parse_to_variant('{\"a\":1}'), try_parse_to_variant('{'), "
+                        + "parse_to_variant_error_to_null('{')")
                 .matches(
                         logicalOneRowRelation().when(oneRowRelation -> {
                             Expression fail = oneRowRelation.getProjects().get(0).child(0);
-                            Expression errorToNull = oneRowRelation.getProjects().get(1).child(0);
+                            Expression tryParse = oneRowRelation.getProjects().get(1).child(0);
+                            Expression legacyAlias = oneRowRelation.getProjects().get(2).child(0);
                             Assertions.assertInstanceOf(ParseToVariant.class, fail);
-                            Assertions.assertInstanceOf(ParseToVariantErrorToNull.class, errorToNull);
+                            Assertions.assertInstanceOf(TryParseToVariant.class, tryParse);
+                            Assertions.assertInstanceOf(ParseToVariantErrorToNull.class, legacyAlias);
                             Assertions.assertTrue(fail.getDataType().isVariantType());
-                            Assertions.assertTrue(errorToNull.getDataType().isVariantType());
+                            Assertions.assertTrue(tryParse.getDataType().isVariantType());
+                            Assertions.assertTrue(legacyAlias.getDataType().isVariantType());
                             Assertions.assertFalse(fail.nullable());
-                            Assertions.assertTrue(errorToNull.nullable());
+                            Assertions.assertTrue(tryParse.nullable());
+                            Assertions.assertTrue(legacyAlias.nullable());
+                            return true;
+                        })
+                );
+
+        PlanChecker.from(connectContext)
+                .analyze("select parse_to_variant(cast('{\"a\":1}' as json)), "
+                        + "try_parse_to_variant(cast('[1,2]' as json))");
+        Assertions.assertThrows(AnalysisException.class,
+                () -> PlanChecker.from(connectContext).analyze("select parse_to_variant(1)"));
+        Assertions.assertThrows(AnalysisException.class,
+                () -> PlanChecker.from(connectContext).analyze("select try_parse_to_variant(true)"));
+    }
+
+    @Test
+    public void testVariantNativeFunctions() {
+        PlanChecker.from(connectContext)
+                .analyze("select "
+                        + "variant_get(parse_to_variant('{\"a\":[1]}'), '$.a[0]'), "
+                        + "variant_exists_path(parse_to_variant('{\"a\":1}'), '$.a'), "
+                        + "variant_is_null(parse_to_variant('null')), "
+                        + "variant_keys(parse_to_variant('{\"a\":1}')), "
+                        + "variant_length(parse_to_variant('[1,2]')), "
+                        + "variant_contains(parse_to_variant('[1,2]'), parse_to_variant('2'))")
+                .matches(
+                        logicalOneRowRelation().when(oneRowRelation -> {
+                            List<Expression> expressions = oneRowRelation.getProjects().stream()
+                                    .map(project -> project.child(0))
+                                    .toList();
+                            Assertions.assertInstanceOf(VariantGet.class, expressions.get(0));
+                            Assertions.assertInstanceOf(VariantExistsPath.class, expressions.get(1));
+                            Assertions.assertInstanceOf(VariantIsNull.class, expressions.get(2));
+                            Assertions.assertInstanceOf(VariantKeys.class, expressions.get(3));
+                            Assertions.assertInstanceOf(VariantLength.class, expressions.get(4));
+                            Assertions.assertInstanceOf(VariantContains.class, expressions.get(5));
+                            Assertions.assertTrue(expressions.get(0).getDataType().isVariantType());
+                            Assertions.assertTrue(expressions.get(1).getDataType().isBooleanType());
+                            Assertions.assertTrue(expressions.get(2).getDataType().isBooleanType());
+                            Assertions.assertTrue(expressions.get(3).getDataType().isArrayType());
+                            Assertions.assertTrue(expressions.get(4).getDataType().isIntegerType());
+                            Assertions.assertTrue(expressions.get(5).getDataType().isBooleanType());
+                            expressions.forEach(expression -> Assertions.assertTrue(expression.nullable()));
                             return true;
                         })
                 );
     }
 
     @Test
-    public void testVariantV2SessionSelectsComputeResultType() {
-        connectContext.getSessionVariable().enableVariantV2 = true;
-        try {
-            PlanChecker.from(connectContext)
-                    .analyze("select parse_to_variant('{\"a\":1}'), cast(1 as variant), "
-                            + "cast(parse_to_variant('[1]') as array<variant>)")
-                    .matches(
-                            logicalOneRowRelation().when(oneRowRelation -> {
-                                VariantType parsed = (VariantType) oneRowRelation.getProjects().get(0)
-                                        .child(0).getDataType();
-                                VariantType cast = (VariantType) oneRowRelation.getProjects().get(1)
-                                        .child(0).getDataType();
-                                ArrayType array = (ArrayType) oneRowRelation.getProjects().get(2)
-                                        .child(0).getDataType();
-                                Assertions.assertTrue(parsed.isComputeV2());
-                                Assertions.assertTrue(cast.isComputeV2());
-                                Assertions.assertTrue(((VariantType) array.getItemType()).isComputeV2());
-                                return true;
-                            })
-                    );
-        } finally {
-            connectContext.getSessionVariable().enableVariantV2 = false;
-        }
+    public void testVariantJsonP1AliasesRouteNative() {
+        PlanChecker.from(connectContext)
+                .analyze("select "
+                        + "json_extract(parse_to_variant('{\"a\":1}'), '$.a'), "
+                        + "jsonb_extract(parse_to_variant('{\"a\":1}'), '$.a'), "
+                        + "json_extract_no_quotes(parse_to_variant('{\"a\":1}'), '$.a'), "
+                        + "json_extract_isnull(parse_to_variant('{\"a\":null}'), '$.a'), "
+                        + "json_extract_int(parse_to_variant('{\"a\":1}'), '$.a'), "
+                        + "get_json_int(parse_to_variant('{\"a\":1}'), '$.a'), "
+                        + "json_extract_bigint(parse_to_variant('{\"a\":1}'), '$.a'), "
+                        + "get_json_bigint(parse_to_variant('{\"a\":1}'), '$.a'), "
+                        + "json_extract_largeint(parse_to_variant('{\"a\":1}'), '$.a'), "
+                        + "json_extract_double(parse_to_variant('{\"a\":1.5}'), '$.a'), "
+                        + "get_json_double(parse_to_variant('{\"a\":1.5}'), '$.a'), "
+                        + "json_extract_string(parse_to_variant('{\"a\":\"x\"}'), '$.a'), "
+                        + "get_json_string(parse_to_variant('{\"a\":\"x\"}'), '$.a'), "
+                        + "json_extract_bool(parse_to_variant('{\"a\":true}'), '$.a'), "
+                        + "json_exists_path(parse_to_variant('{\"a\":1}'), '$.a'), "
+                        + "json_type(parse_to_variant('{\"a\":1}'), '$.a')")
+                .matches(
+                        logicalOneRowRelation().when(oneRowRelation -> {
+                            List<Expression> expressions = oneRowRelation.getProjects().stream()
+                                    .map(project -> project.child(0))
+                                    .toList();
+                            for (int index = 0; index < 14; ++index) {
+                                Assertions.assertTrue(expressions.get(index).containsType(VariantGet.class),
+                                        "alias at index " + index + " did not route through variant_get");
+                            }
+                            Assertions.assertTrue(expressions.get(3).containsType(VariantIsNull.class));
+                            Assertions.assertTrue(expressions.get(14).containsType(VariantExistsPath.class));
+                            Assertions.assertTrue(expressions.get(15).containsType(GetVariantType.class));
+                            Assertions.assertTrue(expressions.get(15).containsType(VariantGet.class));
+                            return true;
+                        })
+                );
     }
 
     @Test

@@ -318,11 +318,6 @@ ValidatedTypedInput validate_typed_input(ColumnPtr column, DataTypePtr scalar_ty
     return {.column = std::move(column), .type = std::move(scalar_type)};
 }
 
-[[noreturn]] void throw_deferred(std::string_view method, std::string_view task) {
-    throw Exception(ErrorCode::NOT_IMPLEMENTED_ERROR,
-                    "ColumnVariantV2::{} is deferred until {} is complete", method, task);
-}
-
 [[noreturn]] void throw_unsupported(std::string_view method) {
     throw Exception(ErrorCode::NOT_IMPLEMENTED_ERROR,
                     "ColumnVariantV2::{} is intentionally unsupported for Variant values", method);
@@ -666,16 +661,60 @@ VariantRef ColumnVariantV2::get_value_ref(size_t row) const {
     return {.metadata = {.data = metadata.data, .size = metadata.size}, .value = value};
 }
 
-Field ColumnVariantV2::operator[](size_t) const {
-    throw_deferred("operator[]", "T1.7b Field rebind");
+Field ColumnVariantV2::operator[](size_t row) const {
+    Field result;
+    get(row, result);
+    return result;
 }
 
-void ColumnVariantV2::get(size_t, Field&) const {
-    throw_deferred("get", "T1.7b Field rebind");
+void ColumnVariantV2::get(size_t row, Field& result) const {
+    if (UNLIKELY(row >= size())) {
+        throw Exception(ErrorCode::OUT_OF_BOUND,
+                        "Index ({}) for getting Variant field is out of range for size {}", row,
+                        size());
+    }
+
+    VariantField value;
+    visit_variant_v2_values(
+            *this, row, row + 1, {},
+            [](size_t) { DORIS_CHECK(false) << "ColumnVariantV2 has no outer SQL null map"; },
+            [&](size_t, VariantRef row_value) { value = VariantField::from_ref(row_value); });
+    result = Field::create_field<TYPE_VARIANT>(std::move(value));
 }
 
-void ColumnVariantV2::insert(const Field&) {
-    throw_deferred("insert(Field)", "T1.7b Field rebind");
+void ColumnVariantV2::insert(const Field& field) {
+    auto insert_value = [&](VariantRef value) {
+        if (value.metadata.size > std::numeric_limits<uint32_t>::max() ||
+            value.value.size > std::numeric_limits<uint32_t>::max()) {
+            throw Exception(ErrorCode::INVALID_ARGUMENT,
+                            "Variant row exceeds the ColumnString uint32 byte limit");
+        }
+        const std::array<uint32_t, 2> metadata_offsets {0,
+                                                        static_cast<uint32_t>(value.metadata.size)};
+        const std::array<uint32_t, 2> value_offsets {0, static_cast<uint32_t>(value.value.size)};
+        insert_encoded_rows({.metadata_bytes = {value.metadata.data, value.metadata.size},
+                             .metadata_offsets = metadata_offsets,
+                             .meta_ids = {},
+                             .value_bytes = value.value,
+                             .value_offsets = value_offsets});
+    };
+
+    if (field.get_type() == TYPE_VARIANT) {
+        insert_value(field.get<TYPE_VARIANT>().ref());
+        return;
+    }
+    if (field.get_type() == TYPE_NULL) {
+        const VariantScalarEncodingPlan plan = VariantScalarEncodingPlan::null_value();
+        std::string value(plan.size(), '\0');
+        plan.write(value.data(), value.size());
+        insert_value({.metadata = {.data = VARIANT_EMPTY_METADATA.data(),
+                                   .size = VARIANT_EMPTY_METADATA.size()},
+                      .value = {value.data(), value.size()}});
+        return;
+    }
+    throw Exception(ErrorCode::INVALID_ARGUMENT,
+                    "ColumnVariantV2 only accepts Variant or NULL Field values, got {}",
+                    field.get_type_name());
 }
 
 void ColumnVariantV2::insert_default() {
