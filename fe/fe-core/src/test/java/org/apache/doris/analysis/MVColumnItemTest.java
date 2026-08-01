@@ -17,15 +17,24 @@
 
 package org.apache.doris.analysis;
 
+import org.apache.doris.catalog.AggStateType;
+import org.apache.doris.catalog.AggregateFunction;
 import org.apache.doris.catalog.Column;
+import org.apache.doris.catalog.FunctionName;
 import org.apache.doris.catalog.PrimitiveType;
+import org.apache.doris.catalog.ScalarFunction;
 import org.apache.doris.catalog.ScalarType;
 import org.apache.doris.catalog.Type;
 import org.apache.doris.catalog.VariantType;
 import org.apache.doris.common.Config;
+import org.apache.doris.thrift.TExpr;
+import org.apache.doris.thrift.TFunction;
+import org.apache.doris.thrift.TTypeDesc;
 
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
+
+import java.util.List;
 
 class MVColumnItemTest {
     @Test
@@ -52,6 +61,56 @@ class MVColumnItemTest {
 
         Assertions.assertFalse(((VariantType) item.getType()).isComputeV2());
         Assertions.assertFalse(((VariantType) column.getType()).isComputeV2());
+    }
+
+    @Test
+    void testDefineExpressionTreeDoesNotKeepVariantV2ExecutionType() {
+        VariantType type = (VariantType) org.apache.doris.nereids.types.VariantType.COMPUTE_V2_INSTANCE
+                .toCatalogDataType();
+        SlotRef slot = new SlotRef(type, true);
+        ScalarFunction function = new ScalarFunction(new FunctionName("element_at"),
+                List.of(type, Type.STRING), type, false, true);
+        FunctionCallExpr defineExpr = new FunctionCallExpr(function,
+                new FunctionParams(List.of(slot, new StringLiteral("k"))), true);
+
+        MVColumnItem item = new MVColumnItem("v", type, null, defineExpr);
+
+        Assertions.assertFalse(((VariantType) item.getDefineExpr().getType()).isComputeV2());
+        Assertions.assertFalse(((VariantType) item.getDefineExpr().getChild(0).getType()).isComputeV2());
+        TExpr thriftExpr = ExprToThriftVisitor.treeToThrift(item.getDefineExpr());
+        Assertions.assertFalse(isVariantV2(thriftExpr.getNodes().get(0).getType()));
+        Assertions.assertFalse(isVariantV2(thriftExpr.getNodes().get(1).getType()));
+        TFunction thriftFunction = thriftExpr.getNodes().get(0).getFn();
+        Assertions.assertFalse(isVariantV2(thriftFunction.getArgTypes().get(0)));
+        Assertions.assertFalse(isVariantV2(thriftFunction.getRetType()));
+    }
+
+    @Test
+    void testAggregateStateDoesNotKeepVariantV2ExecutionType() {
+        VariantType type = (VariantType) org.apache.doris.nereids.types.VariantType.COMPUTE_V2_INSTANCE
+                .toCatalogDataType();
+        AggStateType aggStateType = new AggStateType("any_value", true, List.of(type), List.of(true));
+        SlotRef slot = new SlotRef(type, true);
+        AggregateFunction function = new AggregateFunction(new FunctionName("any_value_state"),
+                new Type[] {type}, aggStateType, false, aggStateType, null,
+                "init", "update", "merge", null, null, null, null);
+        FunctionCallExpr defineExpr = new FunctionCallExpr(function,
+                new FunctionParams(List.of(slot)), true);
+
+        MVColumnItem item = new MVColumnItem("v", aggStateType, null, defineExpr);
+
+        AggStateType itemType = (AggStateType) item.getType();
+        Assertions.assertFalse(((VariantType) itemType.getSubTypes().get(0)).isComputeV2());
+        TFunction thriftFunction = ExprToThriftVisitor.treeToThrift(item.getDefineExpr())
+                .getNodes().get(0).getFn();
+        Assertions.assertFalse(isVariantV2(thriftFunction.getArgTypes().get(0)));
+        Assertions.assertFalse(isVariantV2(thriftFunction.getRetType().getSubTypes().get(0)));
+        Assertions.assertFalse(isVariantV2(thriftFunction.getAggregateFn()
+                .getIntermediateType().getSubTypes().get(0)));
+    }
+
+    private static boolean isVariantV2(TTypeDesc type) {
+        return type.getTypes().get(0).getScalarType().isVariantIsV2();
     }
 
     @Test

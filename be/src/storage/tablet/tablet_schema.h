@@ -148,6 +148,8 @@ public:
                                                       int current_be_exec_version) const;
     AggregateFunctionPtr get_aggregate_function(std::string suffix,
                                                 int current_be_exec_version) const;
+    AggregateFunctionPtr get_aggregate_function(std::string suffix, int current_be_exec_version,
+                                                DataTypePtr runtime_type) const;
     int precision() const { return _precision; }
     int frac() const { return _frac; }
     inline bool visible() const { return _visible; }

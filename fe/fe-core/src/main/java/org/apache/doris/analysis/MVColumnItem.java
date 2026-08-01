@@ -52,7 +52,8 @@ public class MVColumnItem {
         this.type = clearVariantV2ExecutionType(type);
         this.aggregationType = aggregateType;
         this.isAggregationTypeImplicit = false;
-        this.defineExpr = Objects.requireNonNull(defineExpr, "defineExpr is null");
+        this.defineExpr = clearVariantV2ExecutionType(
+                Objects.requireNonNull(defineExpr, "defineExpr is null"));
         baseColumnNames = extractBaseColumnNames(defineExpr);
     }
 
@@ -63,7 +64,8 @@ public class MVColumnItem {
     public MVColumnItem(String name, Expr defineExpr) {
         this.name = name;
         this.isAggregationTypeImplicit = false;
-        this.defineExpr = Objects.requireNonNull(defineExpr, "defineExpr is null");
+        this.defineExpr = clearVariantV2ExecutionType(
+                Objects.requireNonNull(defineExpr, "defineExpr is null"));
 
         this.type = clearVariantV2ExecutionType(defineExpr.getType());
         if (this.type instanceof ScalarType && this.type.isStringType()) {
@@ -78,6 +80,14 @@ public class MVColumnItem {
         return VariantType.containsVariant(dataType)
                 ? VariantType.withComputeV2(dataType, false).toCatalogDataType()
                 : type;
+    }
+
+    private static Expr clearVariantV2ExecutionType(Expr expr) {
+        expr.setType(clearVariantV2ExecutionType(expr.getType()));
+        for (Expr child : expr.getChildren()) {
+            clearVariantV2ExecutionType(child);
+        }
+        return expr;
     }
 
     public String getName() {

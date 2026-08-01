@@ -21,11 +21,16 @@
 
 #include "common/exception.h"
 #include "core/assert_cast.h"
+#include "core/column/column_nullable.h"
+#include "core/column/column_string.h"
+#include "core/column/column_variant.h"
 #include "core/column/variant_v2/column_variant_v2.h"
 #include "core/custom_allocator.h"
 #include "core/data_type/data_type_array.h"
 #include "core/data_type/data_type_jsonb.h"
 #include "core/data_type/data_type_nullable.h"
+#include "core/data_type/data_type_variant.h"
+#include "core/string_buffer.hpp"
 #include "core/value/variant/variant_batch_builder.h"
 #include "exprs/function/cast/variant_v2/cast_variant_v2_internal.h"
 #include "exprs/function/parse/variant_string_parse.h"
@@ -50,6 +55,69 @@ using namespace variant_v2_internal;
 
 ForcedNulls forced_nulls(const NullMap::value_type* null_map, size_t rows) {
     return null_map == nullptr ? ForcedNulls {} : ForcedNulls {null_map, rows};
+}
+
+Status cast_variant_v2_to_legacy(FunctionContext* context, const ColumnVariantV2& source,
+                                 const DataTypeVariant& target_type, size_t rows,
+                                 ForcedNulls outer_nulls, ColumnPtr* output) {
+    if (source.size() != rows || (!outer_nulls.empty() && outer_nulls.size() != rows)) {
+        return Status::InvalidArgument("Invalid Variant V2 input shape for legacy Variant CAST");
+    }
+    if (source.is_typed() && !is_string_type(source.typed_type()->get_primitive_type())) {
+        ColumnPtr root;
+        RETURN_IF_ERROR(apply_forced_nulls(source.typed_column().get_ptr(), outer_nulls, &root));
+        *output = ColumnVariant::create(
+                target_type.variant_max_subcolumns_count(), target_type.enable_doc_mode(),
+                make_nullable(source.typed_type()), IColumn::mutate(std::move(root)));
+        return Status::OK();
+    }
+
+    ColumnPtr jsonb;
+    if (source.is_typed()) {
+        const auto& typed = assert_cast<const ColumnNullable&>(source.typed_column());
+        const auto& strings = assert_cast<const ColumnString&>(typed.get_nested_column());
+        const NullMap& inner_nulls = typed.get_null_map_data();
+        auto json_literals = ColumnString::create();
+        BufferWritable json_literal_writer(*json_literals);
+        VariantBatchBuilder builder(VariantBatchBuilder::ReserveHint {.rows = rows});
+        for (size_t row_index = 0; row_index < rows; ++row_index) {
+            auto row = builder.begin_row();
+            if (inner_nulls[row_index] != 0 ||
+                (!outer_nulls.empty() && outer_nulls[row_index] != 0)) {
+                row.add_null();
+            } else {
+                // The V1 storage boundary parses a scalar JSONB root once more. Preserve a typed
+                // string as a string by carrying its JSON literal through that extra parse.
+                json_literal_writer.write_json_string(strings.get_data_at(row_index));
+                json_literal_writer.commit();
+                row.add_string(json_literals->get_data_at(json_literals->size() - 1));
+            }
+            row.finish();
+        }
+        VariantBatchBuilder protected_batch = builder.finish_batch();
+        auto protected_strings = ColumnVariantV2::create();
+        protected_strings->insert_encoded_batch(protected_batch);
+        RETURN_IF_ERROR(
+                cast_variant_to_jsonb(context, *protected_strings, rows, outer_nulls, &jsonb));
+    } else {
+        RETURN_IF_ERROR(cast_variant_to_jsonb(context, source, rows, outer_nulls, &jsonb));
+    }
+    auto result = ColumnVariant::create(
+            target_type.variant_max_subcolumns_count(), target_type.enable_doc_mode(),
+            make_nullable(std::make_shared<DataTypeJsonb>()), IColumn::mutate(std::move(jsonb)));
+    *output = std::move(result);
+    return Status::OK();
+}
+
+Status cast_variant_v2_to_variant(FunctionContext* context, const ColumnPtr& source_column,
+                                  const ColumnVariantV2& source, const DataTypePtr& target_type,
+                                  size_t rows, ForcedNulls outer_nulls, ColumnPtr* output) {
+    const auto* legacy_target = dynamic_cast<const DataTypeVariant*>(target_type.get());
+    if (legacy_target == nullptr) {
+        *output = source_column;
+        return Status::OK();
+    }
+    return cast_variant_v2_to_legacy(context, source, *legacy_target, rows, outer_nulls, output);
 }
 
 Status require_materialized_source(const Block& block, const ColumnNumbers& arguments, size_t rows,
@@ -151,7 +219,9 @@ Status execute_from_variant(const DataTypePtr& captured_to_type, FunctionContext
     ColumnPtr output;
     try {
         if (primitive == TYPE_VARIANT) {
-            output = block.get_by_position(arguments[0]).column;
+            RETURN_IF_ERROR(cast_variant_v2_to_variant(
+                    context, block.get_by_position(arguments[0]).column, *source, to_type, rows,
+                    forced_nulls(null_map, rows), &output));
         } else if (primitive == TYPE_STRING || primitive == TYPE_CHAR ||
                    primitive == TYPE_VARCHAR) {
             RETURN_IF_ERROR(cast_variant_to_string(context, *source, rows,

@@ -101,7 +101,7 @@ Status HierarchicalDataIterator::create(ColumnIteratorUPtr* reader, int32_t col_
             return Status::OK();
         }));
         stream_iter->_variant_v2_assembler =
-                variant_v2::VariantAssembler::create(std::move(assembler_options));
+                DORIS_TRY(variant_v2::VariantAssembler::create(std::move(assembler_options)));
     }
     *reader = std::move(stream_iter);
 

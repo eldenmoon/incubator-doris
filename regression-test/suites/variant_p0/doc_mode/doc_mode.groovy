@@ -16,6 +16,7 @@
 // under the License.
 
 suite("regression_test_variant_doc_mode", "p0"){
+    def enableVariantV2 = (sql "select @@enable_variant_v2")[0][0].toString().toBoolean()
     sql """ set default_variant_enable_doc_mode = true """
 
   
@@ -49,7 +50,11 @@ suite("regression_test_variant_doc_mode", "p0"){
 
     // runtime proof that doc snapshot column exists in variant map
     def vtype_min0 = sql """select variant_type(v) from ${table_min0} where k = 1"""
-    assertTrue(vtype_min0.toString().contains("__DORIS_VARIANT_DOC_VALUE__"))
+    if (enableVariantV2) {
+        assertEquals([["object"]], vtype_min0)
+    } else {
+        assertTrue(vtype_min0.toString().contains("__DORIS_VARIANT_DOC_VALUE__"))
+    }
 
     def before_min0 = sql_return_maparray """
         select
@@ -89,7 +94,11 @@ suite("regression_test_variant_doc_mode", "p0"){
     """
     sql """insert into ${table_ins} select * from ${table_min0}"""
     def vtype_ins = sql """select variant_type(v) from ${table_ins} where k = 1"""
-    assertTrue(vtype_ins.toString().contains("__DORIS_VARIANT_DOC_VALUE__"))
+    if (enableVariantV2) {
+        assertEquals([["object"]], vtype_ins)
+    } else {
+        assertTrue(vtype_ins.toString().contains("__DORIS_VARIANT_DOC_VALUE__"))
+    }
 
     def before_ins = sql_return_maparray """
         select
@@ -130,7 +139,11 @@ suite("regression_test_variant_doc_mode", "p0"){
 
     sql """insert into ${table_like} select * from ${table_min0}"""
     def vtype_like = sql """select variant_type(v) from ${table_like} where k = 1"""
-    assertTrue(vtype_like.toString().contains("__DORIS_VARIANT_DOC_VALUE__"))
+    if (enableVariantV2) {
+        assertEquals([["object"]], vtype_like)
+    } else {
+        assertTrue(vtype_like.toString().contains("__DORIS_VARIANT_DOC_VALUE__"))
+    }
 
     def before_like = sql_return_maparray """
         select
@@ -187,7 +200,11 @@ suite("regression_test_variant_doc_mode", "p0"){
         (6, '{"a":6,"b":{"c":"z2"},"arr":[8,9]}');"""
 
     def vtype_min_big = sql """select variant_type(v) from ${table_min_big} where k = 1"""
-    assertTrue(vtype_min_big.toString().contains("__DORIS_VARIANT_DOC_VALUE__"))
+    if (enableVariantV2) {
+        assertEquals([["object"]], vtype_min_big)
+    } else {
+        assertTrue(vtype_min_big.toString().contains("__DORIS_VARIANT_DOC_VALUE__"))
+    }
 
     def before_min_big = sql_return_maparray """
         select
@@ -245,7 +262,11 @@ suite("regression_test_variant_doc_mode", "p0"){
     sql """insert into ${table_override} values
         (6, '{"a":6,"b":{"c":"z2"},"arr":[8,9]}');"""
     def vtype_override = sql """select variant_type(v) from ${table_override} where k = 1"""
-    assertTrue(vtype_override.toString().contains("__DORIS_VARIANT_DOC_VALUE__"))
+    if (enableVariantV2) {
+        assertEquals([["object"]], vtype_override)
+    } else {
+        assertTrue(vtype_override.toString().contains("__DORIS_VARIANT_DOC_VALUE__"))
+    }
 
     def before_override = sql_return_maparray """
         select

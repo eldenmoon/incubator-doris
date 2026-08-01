@@ -16,7 +16,10 @@
 // under the License.
 #include <map>
 #include <span>
+#include <string_view>
 
+#include "common/exception.h"
+#include "core/assert_cast.h"
 #include "core/column/column_nullable.h"
 #include "core/column/column_string.h"
 #include "core/column/column_variant.h"
@@ -34,6 +37,90 @@ namespace doris {
 namespace {
 
 using TypeInfo = std::map<std::string, std::string>;
+
+std::string_view encoded_variant_type_word(VariantRef value) {
+    switch (value.basic_type()) {
+    case VariantBasicType::SHORT_STRING:
+        return "string";
+    case VariantBasicType::OBJECT:
+        return "object";
+    case VariantBasicType::ARRAY:
+        return "array";
+    case VariantBasicType::PRIMITIVE:
+        break;
+    }
+
+    switch (value.primitive_id()) {
+    case VariantPrimitiveId::NULL_VALUE:
+        return "null";
+    case VariantPrimitiveId::TRUE_VALUE:
+    case VariantPrimitiveId::FALSE_VALUE:
+        return "bool";
+    case VariantPrimitiveId::INT8:
+        return "tinyint";
+    case VariantPrimitiveId::INT16:
+        return "smallint";
+    case VariantPrimitiveId::INT32:
+        return "int";
+    case VariantPrimitiveId::INT64:
+        return "bigint";
+    case VariantPrimitiveId::DOUBLE:
+        return "double";
+    case VariantPrimitiveId::DECIMAL4:
+    case VariantPrimitiveId::DECIMAL8:
+    case VariantPrimitiveId::DECIMAL16:
+        static_cast<void>(value.get_decimal());
+        return "decimal";
+    case VariantPrimitiveId::DATE:
+        return "date";
+    case VariantPrimitiveId::TIMESTAMP_MICROS:
+    case VariantPrimitiveId::TIMESTAMP_NANOS:
+        return "timestamp";
+    case VariantPrimitiveId::TIMESTAMP_NTZ_MICROS:
+    case VariantPrimitiveId::TIMESTAMP_NTZ_NANOS:
+        return "timestamp_ntz";
+    case VariantPrimitiveId::FLOAT:
+        return "float";
+    case VariantPrimitiveId::BINARY:
+        return "binary";
+    case VariantPrimitiveId::STRING:
+        return "string";
+    case VariantPrimitiveId::TIME_NTZ_MICROS:
+        return "time";
+    case VariantPrimitiveId::UUID:
+        return "uuid";
+    }
+    DORIS_CHECK(false) << "validated Variant primitive id has no type word";
+    return {};
+}
+
+ColumnPtr execute_variant_type_v2(const ColumnVariantV2& source,
+                                  std::span<const NullMap::value_type> outer_nulls) {
+    auto values = ColumnString::create();
+    auto nulls = ColumnUInt8::create();
+    values->reserve(source.size());
+    nulls->reserve(source.size());
+
+    visit_variant_v2_values(
+            source, 0, source.size(), outer_nulls,
+            [&](size_t) {
+                values->insert_default();
+                nulls->insert_value(1);
+            },
+            [&](size_t, VariantRef value) {
+                const std::string_view word = encoded_variant_type_word(value);
+                values->insert_data(word.data(), word.size());
+                nulls->insert_value(0);
+            });
+    return ColumnNullable::create(std::move(values), std::move(nulls));
+}
+
+Status variant_v2_exception_status(const Exception& exception) {
+    if (exception.code() == ErrorCode::CORRUPTION) {
+        return Status::InvalidArgument("Invalid Variant V2 input: {}", exception.message());
+    }
+    return exception.to_status();
+}
 
 void append_type_info_json(ColumnString& output, const TypeInfo& type_info) {
     VectorBufferWriter writer(output);
@@ -97,18 +184,19 @@ public:
             outer_nulls = nullable->get_null_map_data();
             physical = &nullable->get_nested_column();
         }
+        if (const auto* variant_v2 = check_and_get_column<ColumnVariantV2>(physical)) {
+            try {
+                block.replace_by_position(result,
+                                          execute_variant_type_v2(*variant_v2, outer_nulls));
+                return Status::OK();
+            } catch (const Exception& exception) {
+                return variant_v2_exception_status(exception);
+            }
+        }
+
         auto result_column = ColumnString::create();
         auto result_nulls = ColumnUInt8::create();
         result_nulls->reserve(input_rows_count);
-
-        if (check_and_get_column<ColumnVariantV2>(physical) != nullptr) {
-            // Encoded V2 values do not retain every V1 declared type distinction (for example,
-            // integer widths, LARGEINT/DECIMAL, DATE, and IP types), so a partial implementation
-            // would silently change the path-to-type contract.
-            return Status::NotSupported(
-                    "function variant_type does not support ColumnVariantV2 execution");
-        }
-
         const auto& arg_column = assert_cast<const ColumnVariant&>(*physical);
         for (size_t i = 0; i < input_rows_count; ++i) {
             if (!outer_nulls.empty() && outer_nulls[i] != 0) {

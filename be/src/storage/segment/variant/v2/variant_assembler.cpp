@@ -156,7 +156,6 @@ struct ObjectEmitter {
     using ObjectScope = VariantBatchBuilder::Row::ObjectScope;
 
     VariantBatchBuilder::Row* row = nullptr;
-    bool* is_null = nullptr;
     bool emitted = false;
     bool previous_logical_root = false;
     uint32_t previous_depth = 0;
@@ -165,9 +164,8 @@ struct ObjectEmitter {
 
     ObjectEmitter() { scopes.reserve(8); }
 
-    void start_row(VariantBatchBuilder::Row* output, bool* output_is_null) {
+    void start_row(VariantBatchBuilder::Row* output) {
         row = output;
-        is_null = output_is_null;
         previous_path = {};
         previous_logical_root = false;
         previous_depth = 0;
@@ -265,8 +263,7 @@ struct ObjectEmitter {
     // NOLINTNEXTLINE(readability-make-member-function-const)
     Status append_cell(StringRef path, bool logical_root, uint32_t depth, StringRef value) {
         prepare(path, logical_root, depth);
-        return variant_assembler_detail::append_storage_cell(value, *row, depth,
-                                                             logical_root ? is_null : nullptr);
+        return variant_assembler_detail::append_storage_cell(value, *row, depth);
     }
 
     void finish_row_object() {
@@ -290,11 +287,13 @@ struct PreparedHierarchicalBatch {
 
 bool has_materialized_value(
         std::span<const variant_assembler_detail::PreparedMaterializedColumn> materialized,
-        std::span<const MaterializedPath> materialized_paths, size_t row) {
+        std::span<const MaterializedPath> materialized_paths, size_t row,
+        bool requested_is_root) {
     DORIS_CHECK_EQ(materialized.size(), materialized_paths.size());
     for (size_t index = 0; index < materialized.size(); ++index) {
         if (variant_assembler_detail::is_materialized_value_visible(
-                    materialized[index], row, materialized_paths[index].path.empty())) {
+                    materialized[index], row,
+                    requested_is_root && materialized_paths[index].path.empty())) {
             return true;
         }
     }
@@ -451,7 +450,7 @@ Status emit_merged_row(
         while (materialized_index < materialized.size()) {
             if (variant_assembler_detail::is_materialized_value_visible(
                         materialized[materialized_index], row,
-                        materialized_paths[materialized_index].path.empty())) {
+                        requested_is_root && materialized_paths[materialized_index].path.empty())) {
                 break;
             }
             ++materialized_index;
@@ -499,27 +498,27 @@ Status assemble_hierarchical_row(bool has_sparse, bool has_root, bool has_doc,
                                  const PreparedHierarchicalBatch& batch, size_t row_index,
                                  VariantBatchBuilder::Row* row, StorageMapRowCursor* map_cursor,
                                  DorisVector<MergeValue>* pending, MergeValue* current,
-                                 ObjectEmitter* emitter, bool* is_null) {
+                                 ObjectEmitter* emitter, bool* is_outer_null) {
     const bool row_has_root = has_root &&
                               (batch.root_nulls == nullptr || batch.root_nulls[row_index] == 0) &&
                               batch.root_values->get_data_at(row_index).size != 0;
     const bool row_has_doc = has_doc && !map_cursor->row_empty(row_index);
-    const bool row_has_materialized =
-            has_materialized_value(batch.materialized, materialized_paths, row_index);
+    const bool requested_is_root = requested.empty();
+    const bool row_has_materialized = has_materialized_value(
+            batch.materialized, materialized_paths, row_index, requested_is_root);
 
     // Doc keeps its row-exclusive priority. A root-only row retains the direct JSONB fast path;
     // otherwise materialized and sparse values define the visible object without the legacy root
     // sidecar.
     if (row_has_root && !row_has_materialized && !row_has_doc &&
         (!has_sparse || map_cursor->row_empty(row_index))) {
-        jsonb_to_variant(batch.root_values->get_data_at(row_index), *row, 0, is_null);
+        jsonb_to_variant(batch.root_values->get_data_at(row_index), *row, 0, nullptr);
         return Status::OK();
     }
 
     const std::string& requested_path = requested.get_path();
     const StringRef requested_raw {requested_path.data(), requested_path.size()};
-    const bool requested_is_root = requested.empty();
-    emitter->start_row(row, is_null);
+    emitter->start_row(row);
     if (row_has_doc) {
         RETURN_IF_ERROR(emit_doc_row(row_index, requested_raw, requested_is_root, map_cursor,
                                      pending, current, emitter));
@@ -536,7 +535,7 @@ Status assemble_hierarchical_row(bool has_sparse, bool has_root, bool has_doc,
             return Status::OK();
         }
         row->add_null();
-        *is_null = true;
+        *is_outer_null = true;
         return Status::OK();
     }
     emitter->finish_row_object();
@@ -568,21 +567,33 @@ Status assemble_hierarchical(bool has_sparse, bool has_root, bool has_doc,
             row.finish();
             continue;
         }
-        bool is_null = false;
+        bool is_outer_null = false;
         RETURN_IF_ERROR(assemble_hierarchical_row(
                 has_sparse, has_root, has_doc, requested, materialized_paths, prepared, row_index,
-                &row, &map_cursor, &pending, &current, &emitter, &is_null));
-        outer->insert_value(is_null ? 1 : 0);
+                &row, &map_cursor, &pending, &current, &emitter, &is_outer_null));
+        outer->insert_value(is_outer_null ? 1 : 0);
         row.finish();
     }
     variant_assembler_detail::publish_encoded(&builder, std::move(outer), output);
     return Status::OK();
 }
 
-void check_options(const VariantAssemblerOptions& options) {
-    DORIS_CHECK(!options.requested_path.has_nested_part());
+Status check_options(const VariantAssemblerOptions& options) {
+    if (options.requested_path.has_nested_part()) {
+        return Status::NotSupported(
+                "ColumnVariantV2 does not support assembling nested array path '{}'",
+                options.requested_path.get_path());
+    }
+    for (const auto& materialized : options.materialized_paths) {
+        if (materialized.path.has_nested_part()) {
+            return Status::NotSupported(
+                    "ColumnVariantV2 does not support assembling nested array path '{}'",
+                    materialized.path.get_path());
+        }
+    }
     DORIS_CHECK(options.requested_path.empty() || !options.has_root);
     DORIS_CHECK(!(options.has_sparse && options.has_doc));
+    return Status::OK();
 }
 
 // Normalize the materialized streams once when the iterator is created. The relative paths are
@@ -604,7 +615,6 @@ void build_materialized_paths(
         // Legacy ColumnVariant segments may materialize a scalar/array root at the empty path.
         // The ordered row merge retains it when it is the only value and drops it when descendants
         // from another physical stream form the visible object.
-        DORIS_CHECK(!source.path.has_nested_part());
         DORIS_CHECK(source.type != nullptr);
         DORIS_CHECK_LE(options.requested_path.get_parts().size(), source.path.get_parts().size());
         for (size_t part = 0; part < options.requested_path.get_parts().size(); ++part) {
@@ -638,8 +648,9 @@ void build_materialized_paths(
 
 } // namespace
 
-std::unique_ptr<VariantAssembler> VariantAssembler::create(VariantAssemblerOptions options) {
-    check_options(options);
+Result<std::unique_ptr<VariantAssembler>> VariantAssembler::create(
+        VariantAssemblerOptions options) {
+    RETURN_IF_ERROR_RESULT(check_options(options));
     DorisVector<MaterializedPath> materialized;
     DorisVector<size_t> materialized_source_indices;
     build_materialized_paths(options, &materialized, &materialized_source_indices);

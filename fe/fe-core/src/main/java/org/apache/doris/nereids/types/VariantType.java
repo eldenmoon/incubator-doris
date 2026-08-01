@@ -350,6 +350,9 @@ public class VariantType extends PrimitiveType {
         } else if (dataType instanceof StructType) {
             return ((StructType) dataType).getFields().stream()
                     .anyMatch(field -> containsVariant(field.getDataType()));
+        } else if (dataType instanceof AggStateType) {
+            return ((AggStateType) dataType).getSubTypes().stream()
+                    .anyMatch(VariantType::containsVariant);
         }
         return false;
     }
@@ -368,6 +371,12 @@ public class VariantType extends PrimitiveType {
             return new StructType(((StructType) dataType).getFields().stream()
                     .map(field -> field.withDataType(withComputeV2(field.getDataType(), enabled)))
                     .collect(Collectors.toList()));
+        } else if (dataType instanceof AggStateType) {
+            AggStateType aggStateType = (AggStateType) dataType;
+            return new AggStateType(aggStateType.getFunctionName(), aggStateType.getSubTypes().stream()
+                    .map(subType -> withComputeV2(subType, enabled))
+                    .collect(Collectors.toList()), aggStateType.getSubTypeNullables(),
+                    aggStateType.getResultIsNullable());
         }
         return dataType;
     }

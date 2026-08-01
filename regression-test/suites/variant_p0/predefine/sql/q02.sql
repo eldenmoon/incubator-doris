@@ -1,3 +1,4 @@
+set enable_variant_v2 = true;
 select * from test_predefine2 order by id limit 10;
 select * from test_predefine2 where array_contains(cast(v1['array_int'] as array<int>), 1) order by id limit 4;
 select * from test_predefine2 where array_contains(cast(v1['array_string'] as array<string>), 'b') order by id limit 4;
@@ -21,4 +22,4 @@ select * from test_predefine2 where cast(v1['ipv4_'] as ipv4) = '127.0.0.1' orde
 select * from test_predefine2 where cast(v1['ipv6_'] as ipv6) = 'ffff:ffff:ffff:ffff:ffff:ffff:ffff:fffe' order by id limit 4; 
 select * from test_predefine2 where cast(v1['float_'] as float) >= 128.11 order by id limit 4; 
 select * from test_predefine2 where cast(v1['boolean_'] as boolean) = 1 order by id limit 4; 
-select * from test_predefine2 where cast(v1['varchar_'] as varchar) = 'hello world' order by id limit 4; 
+select * from test_predefine2 where cast(v1['varchar_'] as varchar) = 'hello world' order by id limit 4;

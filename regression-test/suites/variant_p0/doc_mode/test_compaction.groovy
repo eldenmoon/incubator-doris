@@ -19,7 +19,9 @@ import org.codehaus.groovy.runtime.IOGroovyMethods
 import org.awaitility.Awaitility
 
 suite("compaction_variant_doc_value", "p0") {
-     sql """ set default_variant_enable_doc_mode = true; """
+    // ColumnVariantV2 intentionally does not support nested arrays yet.
+    sql "set enable_variant_v2 = false"
+    sql """ set default_variant_enable_doc_mode = true; """
     try {
         String backend_id;
         def backendId_to_backendIP = [:]

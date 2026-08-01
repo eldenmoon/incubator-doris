@@ -15,7 +15,8 @@
 // specific language governing permissions and limitations
 // under the License.
 
-suite("test_predefine_typed_sparse", "p0"){ 
+suite("test_predefine_typed_sparse", "p0"){
+    sql "SET enable_variant_v2 = true"
 
     def tableName = "test_predefine_typed_sparse"
     sql """ set default_variant_enable_typed_paths_to_sparse = false """

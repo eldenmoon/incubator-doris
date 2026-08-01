@@ -26,6 +26,8 @@ import org.apache.doris.thrift.TScalarFunction;
 import com.google.common.base.Strings;
 import com.google.common.collect.Lists;
 
+import java.util.ArrayList;
+
 /**
  * Converts {@link Function} and its subclasses to their Thrift representations.
  */
@@ -132,6 +134,8 @@ public class FunctionToThriftConverter {
         }
         if (fn.getIntermediateType() != null) {
             aggFn.setIntermediateType(fn.getIntermediateType().toThrift());
+        } else if (realReturnType.typeContainsVariant()) {
+            aggFn.setIntermediateType(realReturnType.toThrift());
         } else {
             aggFn.setIntermediateType(fn.getReturnType().toThrift());
         }
@@ -167,7 +171,13 @@ public class FunctionToThriftConverter {
         // precision and scale.
         Type[] argTypes = fn.getArgs();
         if (realArgTypes.length != argTypes.length) {
-            tfn.setArgTypes(Type.toThrift(Lists.newArrayList(argTypes)));
+            ArrayList<Type> resolvedArgTypes = Lists.newArrayList(argTypes);
+            for (int i = 0; i < Math.min(realArgTypes.length, resolvedArgTypes.size()); ++i) {
+                if (realArgTypes[i].typeContainsVariant()) {
+                    resolvedArgTypes.set(i, realArgTypes[i]);
+                }
+            }
+            tfn.setArgTypes(Type.toThrift(resolvedArgTypes));
         } else {
             tfn.setArgTypes(Type.toThrift(Lists.newArrayList(argTypes), Lists.newArrayList(realArgTypes)));
         }
@@ -175,7 +185,8 @@ public class FunctionToThriftConverter {
         // For types with different precisions and scales, return type only indicates a
         // type with default
         // precision and scale so we need to transform it to the correct type.
-        if (realReturnType.typeContainsPrecision() || realReturnType.isAggStateType()) {
+        if (realReturnType.typeContainsPrecision() || realReturnType.isAggStateType()
+                || realReturnType.typeContainsVariant()) {
             tfn.setRetType(realReturnType.toThrift());
         } else {
             tfn.setRetType(fn.getReturnType().toThrift());

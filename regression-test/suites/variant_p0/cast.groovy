@@ -18,8 +18,8 @@
 import org.codehaus.groovy.runtime.IOGroovyMethods
 
 suite("test_variant_cast", "p0") {
-    qt_sql1 """select cast(cast('{"a" : 1}' as variant) as jsonb);"""
-    qt_sql2 """select json_type(cast(cast('{"a" : 1}' as variant) as jsonb), "\$.a");"""
+    qt_sql1 """select cast(parse_to_variant('{"a" : 1}') as jsonb);"""
+    qt_sql2 """select json_type(cast(parse_to_variant('{"a" : 1}') as jsonb), "\$.a");"""
     sql "DROP TABLE IF EXISTS var_cast"
     sql """
         CREATE TABLE `var_cast` (

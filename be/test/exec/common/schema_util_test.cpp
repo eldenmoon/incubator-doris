@@ -1000,7 +1000,7 @@ TEST_F(SchemaUtilTest, TestCastColumnPropagatesVariantV2Failure) {
     EXPECT_NE(status.to_string().find("to Variant V2 is not supported"), std::string::npos);
 }
 
-TEST_F(SchemaUtilTest, TestCastColumnRejectsVariantV2ToLegacy) {
+TEST_F(SchemaUtilTest, TestCastColumnBridgesVariantV2ToLegacy) {
     auto source_type = std::make_shared<DataTypeVariantV2>();
     auto source_column = source_type->create_column();
     source_column->insert_default();
@@ -1010,11 +1010,13 @@ TEST_F(SchemaUtilTest, TestCastColumnRejectsVariantV2ToLegacy) {
     const Status status =
             variant_util::cast_column(source, std::make_shared<DataTypeVariant>(), &result);
 
-    EXPECT_TRUE(status.is<ErrorCode::INVALID_ARGUMENT>()) << status;
-    EXPECT_NE(status.to_string().find(
-                      "Cast between legacy Variant and compute-only Variant V2 is not supported"),
-              std::string::npos);
-    EXPECT_EQ(result.get(), nullptr);
+    ASSERT_TRUE(status.ok()) << status;
+    const auto& legacy = assert_cast<const ColumnVariant&>(*result);
+    ASSERT_EQ(legacy.size(), 1);
+    DataTypeSerDe::FormatOptions options;
+    std::string json;
+    legacy.serialize_one_row_to_string(0, &json, options);
+    EXPECT_EQ(json, "{}");
 }
 
 TEST_F(SchemaUtilTest, TestGetColumnByTypeEdgeCases) {

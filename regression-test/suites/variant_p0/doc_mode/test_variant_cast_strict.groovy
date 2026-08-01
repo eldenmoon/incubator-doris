@@ -19,6 +19,7 @@
 // conversion. V2 allows these casts under enable_variant_v2 and is covered by
 // variant_compute_v2.
 suite("test_variant_cast_strict", "p0") {
+    def enableVariantV2 = (sql "select @@enable_variant_v2")[0][0].toString().toBoolean()
     // Use session variables to set variant defaults (column-level properties
     // forbid setting max_subcolumns_count and enable_doc_mode together).
     sql """ set default_variant_enable_doc_mode = true """
@@ -40,14 +41,18 @@ suite("test_variant_cast_strict", "p0") {
 
     def jsonValue = '{"anchors":{"common_int":150025,"phase_marker":"phase_a","present":true,"row_id":15001},"dynamic":{"path_00000":15001000,"path_00001":15001001},"parent":{"child":{"name":"phase_a_15001"}},"phase_a_small":{"leaf":15001}}'
 
-    // ---- Case 1: V1 rejects an implicit Variant-to-Variant cast with different properties.
-    test {
-        sql """ insert into ${t} values (15001, cast('${jsonValue}' as variant<properties(
-            "variant_enable_doc_mode" = "true",
-            "variant_doc_materialization_min_rows" = "999",
-            "variant_doc_hash_shard_count" = "7"
-        )>)); """
-        exception "cast"
+    // ---- Case 1: V1 checks Variant properties. V2 parses the JSON text directly.
+    if (enableVariantV2) {
+        sql """ insert into ${t} values (15001, parse_to_variant('${jsonValue}')); """
+    } else {
+        test {
+            sql """ insert into ${t} values (15001, cast('${jsonValue}' as variant<properties(
+                "variant_enable_doc_mode" = "true",
+                "variant_doc_materialization_min_rows" = "999",
+                "variant_doc_hash_shard_count" = "7"
+            )>)); """
+            exception "cast"
+        }
     }
 
     // ---- Case 2: GOOD — drop the cast, let FE coerce String -> target Variant directly.
@@ -56,7 +61,11 @@ suite("test_variant_cast_strict", "p0") {
 
     // ---- Case 3: GOOD — explicit cast with matching parameters (from same session).
     // Bare `as variant` reads session-default config and matches target exactly.
-    sql """ insert into ${t} values (15003, cast('${jsonValue}' as variant)); """
+    if (enableVariantV2) {
+        sql """ insert into ${t} values (15003, parse_to_variant('${jsonValue}')); """
+    } else {
+        sql """ insert into ${t} values (15003, cast('${jsonValue}' as variant)); """
+    }
     qt_case3 """ select id, cast(v['anchors']['row_id'] as bigint) from ${t} where id = 15003; """
 
     // ---- Case 4: cross-table — different variant configs need an explicit JSONB hop.
@@ -79,34 +88,49 @@ suite("test_variant_cast_strict", "p0") {
     sql """ set default_variant_enable_doc_mode = true """
     sql """ set default_variant_max_subcolumns_count = 37 """
 
-    // 4a: direct copy is rejected (configs differ).
-    test {
+    // 4a: V2 can copy the encoded value directly; V1 rejects different configs.
+    if (enableVariantV2) {
         sql """ insert into ${t} select id, v from ${t_src}; """
-        exception "cast"
+    } else {
+        test {
+            sql """ insert into ${t} select id, v from ${t_src}; """
+            exception "cast"
+        }
     }
 
-    // 4b: routing through JSONB works.
-    sql """ insert into ${t} select id, cast(cast(v as JSONB) as variant) from ${t_src}; """
+    // 4b: V1 routes through JSONB; V2 already copied the row directly above.
+    if (!enableVariantV2) {
+        sql """ insert into ${t} select id, cast(cast(v as JSONB) as variant) from ${t_src}; """
+    }
     qt_case4b """ select id, cast(v['anchors']['row_id'] as bigint) from ${t} where id = 15004; """
 
-    // ---- Case 5: the same V1 check also applies to batch insert in a transaction.
+    // ---- Case 5: transactional INSERT accepts literals only. Let V2 coerce the JSON
+    // text literal directly and retain the V1 property check.
     sql """ begin """
     try {
-        test {
+        if (enableVariantV2) {
             sql """
                 insert into ${t} values
-                    (15005, cast('${jsonValue}' as variant<properties(
-                        "variant_enable_doc_mode" = "true",
-                        "variant_doc_materialization_min_rows" = "999",
-                        "variant_doc_hash_shard_count" = "7"
-                    )>)),
-                    (15006, cast('${jsonValue}' as variant<properties(
-                        "variant_enable_doc_mode" = "true",
-                        "variant_doc_materialization_min_rows" = "999",
-                        "variant_doc_hash_shard_count" = "7"
-                    )>));
+                    (15005, '${jsonValue}'),
+                    (15006, '${jsonValue}');
             """
-            exception "cast"
+        } else {
+            test {
+                sql """
+                    insert into ${t} values
+                        (15005, cast('${jsonValue}' as variant<properties(
+                            "variant_enable_doc_mode" = "true",
+                            "variant_doc_materialization_min_rows" = "999",
+                            "variant_doc_hash_shard_count" = "7"
+                        )>)),
+                        (15006, cast('${jsonValue}' as variant<properties(
+                            "variant_enable_doc_mode" = "true",
+                            "variant_doc_materialization_min_rows" = "999",
+                            "variant_doc_hash_shard_count" = "7"
+                        )>));
+                """
+                exception "cast"
+            }
         }
     } finally {
         sql """ rollback """

@@ -16,6 +16,7 @@
 // under the License.
 
 suite("variant_predefine_with_mow") {
+    sql "SET enable_variant_v2 = true"
     sql """ set default_variant_enable_doc_mode = false """
     sql "DROP TABLE IF EXISTS var_mow"
     sql """

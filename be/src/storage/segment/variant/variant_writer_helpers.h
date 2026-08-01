@@ -17,7 +17,10 @@
 
 #pragma once
 
+#include <cstdint>
 #include <memory>
+#include <span>
+#include <string_view>
 
 #include "common/status.h"
 #include "core/column/column.h"
@@ -29,10 +32,38 @@
 namespace doris {
 
 class OlapBlockDataConvertor;
+struct VariantColumnData;
 
 namespace segment_v2 {
 
+class VariantShredder;
+enum class VariantShredderPhysicalLayout : uint8_t;
+struct VariantShredderOptions;
+
 namespace variant_writer_helpers {
+
+Status make_variant_shredder_options(const TabletSchema& tablet_schema,
+                                     const TabletColumn& parent_column,
+                                     VariantShredderPhysicalLayout physical_layout,
+                                     PathInData logical_root_path, VariantShredderOptions* options);
+
+Status classify_variant_writer_input(const VariantColumnData& column,
+                                     VariantWriterInputFormat current_format,
+                                     std::string_view writer_description,
+                                     VariantWriterInputFormat* input_format);
+
+Status append_variant_v2_to_shredder(VariantShredder* shredder, const VariantColumnData& column,
+                                     size_t num_rows, std::span<const uint8_t> outer_nulls);
+
+void init_column_meta(ColumnMetaPB* meta, uint32_t column_id, const TabletColumn& column,
+                      const ColumnWriterOptions& opts);
+
+Status create_column_writer(uint32_t cid, const TabletColumn& column,
+                            const TabletSchemaSPtr& tablet_schema,
+                            IndexFileWriter* inverted_index_file_writer,
+                            std::unique_ptr<ColumnWriter>* writer, TabletIndexes& subcolumn_indexes,
+                            ColumnWriterOptions* opt, int64_t none_null_value_size,
+                            bool need_record_none_null_value_size);
 
 Status convert_and_write_column(OlapBlockDataConvertor* converter, const TabletColumn& column,
                                 DataTypePtr data_type, ColumnWriter* writer,

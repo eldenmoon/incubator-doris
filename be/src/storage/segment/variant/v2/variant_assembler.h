@@ -67,7 +67,7 @@ struct VariantAssemblerBatchView {
 // borrowed batch. A failed batch does not alter later calls or publish a partial result.
 class VariantAssembler final {
 public:
-    static std::unique_ptr<VariantAssembler> create(VariantAssemblerOptions options);
+    static Result<std::unique_ptr<VariantAssembler>> create(VariantAssemblerOptions options);
 
     VariantAssembler(const VariantAssembler&) = delete;
     VariantAssembler& operator=(const VariantAssembler&) = delete;

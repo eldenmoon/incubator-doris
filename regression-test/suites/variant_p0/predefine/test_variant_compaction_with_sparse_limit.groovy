@@ -19,6 +19,9 @@ import org.codehaus.groovy.runtime.IOGroovyMethods
 import org.awaitility.Awaitility
 
 suite("test_compaction_variant_predefine_with_sparse_limit", "nonConcurrent") {
+    // Nested arrays are intentionally unsupported by Variant V2.
+    sql "set enable_variant_v2 = false"
+
     def backendId_to_backendIP = [:]
     def backendId_to_backendHttpPort = [:]
     getBackendIpHttpPort(backendId_to_backendIP, backendId_to_backendHttpPort);

@@ -153,7 +153,9 @@ std::string dotted_path(size_t parts) {
 }
 
 std::unique_ptr<VariantAssembler> create_assembler(VariantAssemblerOptions options) {
-    return VariantAssembler::create(std::move(options));
+    auto result = VariantAssembler::create(std::move(options));
+    DORIS_CHECK(result.has_value()) << result.error();
+    return std::move(result).value();
 }
 
 Status assemble_binary_cells(std::span<const StringRef> cells, ColumnNullable::MutablePtr* output,
@@ -261,7 +263,7 @@ TEST(VariantAssemblerLegacyTest, BinaryExtractPublishesHomogeneousLegacyCellsAsT
     LegacyCells source;
     expect_typed_cells(source.date_cells, TYPE_DATE, {R"("1970-01-02")", R"("1970-01-03")"});
     expect_typed_cells(source.datetime_cells, TYPE_DATETIME,
-                       {R"("1970-01-01 00:00:01.000000")", R"("1970-01-01 00:00:02.000000")"});
+                       {R"("1970-01-01 00:00:01")", R"("1970-01-01 00:00:02")"});
     expect_typed_cells(source.decimal_cells, TYPE_DECIMALV2, {"12.340000000", "-56.780000000"});
 }
 
@@ -326,7 +328,7 @@ TEST(VariantAssemblerLegacyTest, BinaryExtractScalarTypeMatrixPreservesTypedStat
                      FieldType::OLAP_FIELD_TYPE_DATETIMEV2, 6,
                      binary_cast<DateV2Value<DateTimeV2ValueType>, UInt64>(datetime_two))},
             TYPE_DATETIMEV2,
-            {R"("1970-01-01 00:00:01.000000")", R"("1970-01-01 00:00:02.000000")"});
+            {R"("1970-01-01 00:00:01")", R"("1970-01-01 00:00:02")"});
 
     TimestampTzValue timestamp_one;
     timestamp_one.unchecked_set_time(1970, 1, 1, 0, 0, 1, 0);
@@ -338,7 +340,7 @@ TEST(VariantAssemblerLegacyTest, BinaryExtractScalarTypeMatrixPreservesTypedStat
              scaled_storage_cell<UInt64>(FieldType::OLAP_FIELD_TYPE_TIMESTAMPTZ, 6,
                                          binary_cast<TimestampTzValue, UInt64>(timestamp_two))},
             TYPE_TIMESTAMPTZ,
-            {R"("1970-01-01 00:00:01.000000+00:00")", R"("1970-01-01 00:00:02.000000+00:00")"});
+            {R"("1970-01-01 00:00:01+00:00")", R"("1970-01-01 00:00:02+00:00")"});
 
     expect_typed_cells(
             {decimal_storage_cell<int32_t>(FieldType::OLAP_FIELD_TYPE_DECIMAL32, 9, 2, 1234),
@@ -406,7 +408,7 @@ TEST(VariantAssemblerLegacyTest, BinaryExtractSameTagDifferentScaleFallsBackToCa
     }
 }
 
-TEST(VariantAssemblerLegacyTest, BinaryExtractPublishesStorageNullsAsOuterNulls) {
+TEST(VariantAssemblerLegacyTest, BinaryExtractKeepsPresentVariantNullsInsidePayload) {
     const std::array<std::string, 3> owned_cells {
             std::string(1, static_cast<char>(FieldType::OLAP_FIELD_TYPE_NONE)),
             jsonb_storage_cell("null"),
@@ -421,12 +423,12 @@ TEST(VariantAssemblerLegacyTest, BinaryExtractPublishesStorageNullsAsOuterNulls)
     EXPECT_EQ(json_at(values, 0), "null");
     EXPECT_EQ(json_at(values, 1), "null");
     EXPECT_EQ(json_at(values, 2), R"({"a":7,"b":[true,null]})");
-    EXPECT_EQ(output->get_null_map_data(), (PaddedPODArray<uint8_t> {1, 1, 0}));
+    EXPECT_EQ(output->get_null_map_data(), (PaddedPODArray<uint8_t> {0, 0, 0}));
 
     MutableColumnPtr non_nullable_destination = ColumnVariantV2::create();
     const Status status = append_assembled_variant(non_nullable_destination, std::move(output));
-    EXPECT_TRUE(status.is<ErrorCode::CORRUPTION>()) << status;
-    EXPECT_TRUE(non_nullable_destination->empty());
+    EXPECT_TRUE(status.ok()) << status;
+    EXPECT_EQ(non_nullable_destination->size(), 3);
 }
 
 TEST(VariantAssemblerLegacyTest, BinaryExtractDoesNotDecodeMaskedMalformedCells) {
@@ -550,7 +552,7 @@ TEST(VariantAssemblerLegacyTest, HierarchicalMaterializedDecimal256ReturnsNotSup
     EXPECT_EQ(output.get(), nullptr);
 }
 
-TEST(VariantAssemblerLegacyTest, MaterializedEmptyNestedArraysMatchLegacyVisibility) {
+TEST(VariantAssemblerLegacyTest, MaterializedArraysPreserveExplicitValues) {
     auto values = ColumnString::create();
     auto nulls = ColumnUInt8::create();
     auto insert_jsonb = [&](std::string_view json) {
@@ -597,7 +599,8 @@ TEST(VariantAssemblerLegacyTest, MaterializedEmptyNestedArraysMatchLegacyVisibil
     ColumnNullable::MutablePtr whole_output;
     ASSERT_TRUE(whole_assembler->assemble(whole_batch, &whole_output).ok());
     const std::array<std::string_view, 7> expected_whole {
-            "{}", "{}", "{}", "{}", R"({"a":[1]})", R"({"a":[null,{"x":1}]})", "null"};
+            "{}", R"({"a":[null]})", R"({"a":[{}]})", R"({"a":[{"L2":[]}]})",
+            R"({"a":[1]})", R"({"a":[null,{"x":1}]})", "null"};
     for (size_t row = 0; row < expected_whole.size(); ++row) {
         EXPECT_EQ(json_at(assembled_values(whole_output), row), expected_whole[row])
                 << "row=" << row;
@@ -616,12 +619,14 @@ TEST(VariantAssemblerLegacyTest, MaterializedEmptyNestedArraysMatchLegacyVisibil
     ColumnNullable::MutablePtr subtree_output;
     ASSERT_TRUE(subtree_assembler->assemble(subtree_batch, &subtree_output).ok());
     const std::array<std::string_view, 7> expected_subtree {
-            "null", "null", "[{}]", R"([{"L2":[]}])", "[1]", R"([null,{"x":1}])", "null"};
+            "null", "[null]", "[{}]", R"([{"L2":[]}])", "[1]", R"([null,{"x":1}])",
+            "null"};
     for (size_t row = 0; row < expected_subtree.size(); ++row) {
         EXPECT_EQ(json_at(assembled_values(subtree_output), row), expected_subtree[row])
                 << "row=" << row;
     }
-    EXPECT_EQ(subtree_output->get_null_map_data(), (PaddedPODArray<uint8_t> {1, 1, 0, 0, 0, 0, 1}));
+    EXPECT_EQ(subtree_output->get_null_map_data(),
+              (PaddedPODArray<uint8_t> {1, 0, 0, 0, 0, 0, 1}));
 }
 
 TEST(VariantAssemblerLegacyTest, HierarchicalMaterializedLegacyDateTimeAndDecimalV2) {
@@ -644,9 +649,9 @@ TEST(VariantAssemblerLegacyTest, HierarchicalMaterializedLegacyDateTimeAndDecima
     ASSERT_TRUE(status.ok()) << status;
     ASSERT_FALSE(assembled_values(output).is_typed());
     EXPECT_EQ(json_at(assembled_values(output), 0),
-              R"({"dt":"1970-01-01 00:00:01.000000","m":12.340000000})");
+              R"({"dt":"1970-01-01 00:00:01","m":12.340000000})");
     EXPECT_EQ(json_at(assembled_values(output), 1),
-              R"({"dt":"1970-01-01 00:00:02.000000","m":-56.780000000})");
+              R"({"dt":"1970-01-01 00:00:02","m":-56.780000000})");
 }
 
 TEST(VariantAssemblerLegacyTest, DepthBoundaries) {
@@ -762,7 +767,7 @@ TEST(VariantAssemblerLegacyTest, SparseAndDocDecodeLegacyCellsToCanonicalEncodin
     };
     auto values = map_column(entries);
     constexpr std::string_view EXPECTED = R"({"a":["1970-01-02","1970-01-03"],"d":"1970-01-02",)"
-                                          R"("dt":"1970-01-01 00:00:01.000000",)"
+                                          R"("dt":"1970-01-01 00:00:01",)"
                                           R"("m":12.340000000})";
 
     VariantAssemblerOptions sparse_options;
@@ -1102,7 +1107,7 @@ TEST(VariantAssemblerLegacyTest, EmptyPhysicalRowsPublishAsNull) {
     EXPECT_EQ(subtree_output->get_null_map_data(), (PaddedPODArray<uint8_t> {1}));
 }
 
-TEST(VariantAssemblerLegacyTest, HierarchicalStorageNullsPublishAsOuterNulls) {
+TEST(VariantAssemblerLegacyTest, HierarchicalStorageKeepsPresentVariantNullsInsidePayload) {
     VariantAssemblerOptions root_options;
     root_options.has_root = true;
     auto root_assembler = create_assembler(std::move(root_options));
@@ -1114,7 +1119,7 @@ TEST(VariantAssemblerLegacyTest, HierarchicalStorageNullsPublishAsOuterNulls) {
     ColumnNullable::MutablePtr root_output;
     ASSERT_TRUE(root_assembler->assemble(root_batch, &root_output).ok());
     EXPECT_EQ(json_at(assembled_values(root_output), 0), "null");
-    EXPECT_EQ(root_output->get_null_map_data(), (PaddedPODArray<uint8_t> {1}));
+    EXPECT_EQ(root_output->get_null_map_data(), (PaddedPODArray<uint8_t> {0}));
 
     VariantAssemblerOptions doc_options;
     doc_options.has_doc = true;
@@ -1128,7 +1133,7 @@ TEST(VariantAssemblerLegacyTest, HierarchicalStorageNullsPublishAsOuterNulls) {
     ColumnNullable::MutablePtr doc_output;
     ASSERT_TRUE(doc_assembler->assemble(doc_batch, &doc_output).ok());
     EXPECT_EQ(json_at(assembled_values(doc_output), 0), "null");
-    EXPECT_EQ(doc_output->get_null_map_data(), (PaddedPODArray<uint8_t> {1}));
+    EXPECT_EQ(doc_output->get_null_map_data(), (PaddedPODArray<uint8_t> {0}));
 }
 
 TEST(VariantAssemblerLegacyTest, EmptyHierarchicalRootRowRemainsAnObject) {
@@ -1144,6 +1149,33 @@ TEST(VariantAssemblerLegacyTest, EmptyHierarchicalRootRowRemainsAnObject) {
     ASSERT_TRUE(assembler->assemble(batch, &output).ok());
     EXPECT_EQ(json_at(assembled_values(output), 0), "{}");
     EXPECT_EQ(output->get_null_map_data(), (PaddedPODArray<uint8_t> {0}));
+}
+
+TEST(VariantAssemblerLegacyTest, NestedArrayPathReturnsNotSupported) {
+    PathInDataBuilder requested_builder;
+    requested_builder.append("items", false);
+    requested_builder.append("id", true);
+    VariantAssemblerOptions requested_options;
+    requested_options.requested_path = requested_builder.build();
+    auto requested = VariantAssembler::create(std::move(requested_options));
+    ASSERT_FALSE(requested.has_value());
+    EXPECT_TRUE(requested.error().is<ErrorCode::NOT_IMPLEMENTED_ERROR>()) << requested.error();
+    EXPECT_NE(requested.error().to_string().find("nested array path 'items.id'"),
+              std::string::npos);
+
+    PathInDataBuilder materialized_builder;
+    materialized_builder.append("items", false);
+    materialized_builder.append("id", true);
+    VariantAssemblerOptions materialized_options;
+    materialized_options.materialized_paths.push_back(
+            {.path = materialized_builder.build(),
+             .type = std::make_shared<DataTypeInt32>()});
+    auto materialized = VariantAssembler::create(std::move(materialized_options));
+    ASSERT_FALSE(materialized.has_value());
+    EXPECT_TRUE(materialized.error().is<ErrorCode::NOT_IMPLEMENTED_ERROR>())
+            << materialized.error();
+    EXPECT_NE(materialized.error().to_string().find("nested array path 'items.id'"),
+              std::string::npos);
 }
 
 } // namespace

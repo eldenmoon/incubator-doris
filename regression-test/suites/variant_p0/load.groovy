@@ -16,6 +16,8 @@
 // under the License.
 
 suite("regression_test_variant", "p0"){
+    // ColumnVariantV2 intentionally does not support nested arrays yet.
+    sql "set enable_variant_v2 = false"
 
     def load_json_data = {table_name, file_name ->
         // load the json data

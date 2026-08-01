@@ -16,6 +16,7 @@
 // under the License.
 
 suite("regression_test_variant_types", "var_view") {
+    sql "SET enable_variant_v2 = true"
 
     sql " set default_variant_enable_doc_mode = false "
     sql """ set default_variant_enable_typed_paths_to_sparse = false """
@@ -48,28 +49,34 @@ suite("regression_test_variant_types", "var_view") {
     
     sql """ insert into ${table_name} (id, var) values (2, '{"g": [1, 2, 3], "h": [1.1, 2.2], "i": ["string", "string2"], "j": [true, false], "l": [18446744073709551615, 18446744073709551605]}'); """
     
-    qt_sql "select * from ${table_name} order by id"
+    qt_sql """select id, sort_json_object_keys(cast(var as json)) from ${table_name}
+        order by id"""
 
     qt_sql_array "desc ${table_name}"
 
     sql """ insert into ${table_name} (id, var) values (3, '{"m": [1, 18446744073709551605]}'); """
 
-    qt_sql "select * from ${table_name} order by id"
+    qt_sql """select id, sort_json_object_keys(cast(var as json)) from ${table_name}
+        order by id"""
 
     qt_sql_array_largeint "desc ${table_name}"
 
     sql """ insert into ${table_name} (id, var) values (4, '{"n": [2, "string", null, true, 1.1, 18446744073709551615]}'); """
     
-    qt_sql "select * from ${table_name} order by id"
+    qt_sql """select id, sort_json_object_keys(cast(var as json)) from ${table_name}
+        order by id"""
 
     qt_sql_array_json "desc ${table_name}"
     
     sql """ insert into ${table_name} (id, var) values (5, '{"o": [18446744073709551615, ["string", null]]}'); """
     
-    qt_sql "select * from ${table_name} order by id"
+    qt_sql """select id, sort_json_object_keys(cast(var as json)) from ${table_name}
+        order by id"""
 
     qt_sql_json "desc ${table_name}"
 
+     // Nested array paths are outside the V2 support boundary.
+     sql "SET enable_variant_v2 = false"
      sql "drop table if exists ${table_name}"
 
      sql """ set enable_variant_flatten_nested = true """
@@ -88,21 +95,24 @@ suite("regression_test_variant_types", "var_view") {
 
     sql """ insert into ${table_name} (id, var) values (1, '{"a": [{"b" : 18446744073709551615}]}'); """
 
-    qt_sql "select * from ${table_name} order by id"
+    qt_sql """select id, sort_json_object_keys(cast(var as json)) from ${table_name}
+        order by id"""
 
     qt_sql_array_largeint "desc ${table_name}"
     
     // Avoid relying on bool-to-number rendering when this path evolves to array<json>.
     sql """ insert into ${table_name} (id, var) values (2, '{"a": [{"b" : 2}]}'); """
 
-    qt_sql "select * from ${table_name} order by id"
+    qt_sql """select id, sort_json_object_keys(cast(var as json)) from ${table_name}
+        order by id"""
 
     qt_sql_array_largeint "desc ${table_name}"
 
     sql """ insert into ${table_name} (id, var) values (3, '{"a": [{"b" : 1.1}]}'); """
 
 
-    qt_sql "select * from ${table_name} order by id"
+    qt_sql """select id, sort_json_object_keys(cast(var as json)) from ${table_name}
+        order by id"""
 
     qt_sql_array_json "desc ${table_name}"
 }
