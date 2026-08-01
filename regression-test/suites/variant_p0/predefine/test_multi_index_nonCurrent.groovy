@@ -396,11 +396,30 @@ suite("test_variant_multi_index_nonCurrent", "p0, nonConcurrent") {
       queryAndCheck("select count() from ${tableName} where cast(var['largeint_1'] as largeint) = 12345678901234567890123456789012345678", 90000)
     }
 
+    def typedOutputQuery = """
+        select id,
+               cast(var['array_decimal_1'] as array<decimalv3(26,9)>),
+               cast(var['array_ipv6_1'] as array<ipv6>),
+               cast(var['int_1'] as int),
+               cast(var['int_nested']['level1_num_1'] as int),
+               cast(var['string_1'] as string),
+               cast(var['decimal_1'] as decimalv3(26,9)),
+               cast(var['datetime_1'] as datetime),
+               cast(var['datetimev2_1'] as datetimev2(6)),
+               cast(var['date_1'] as date),
+               cast(var['datev2_1'] as datev2),
+               cast(var['ipv4_1'] as ipv4),
+               cast(var['ipv6_1'] as ipv6),
+               cast(var['largeint_1'] as largeint),
+               cast(var['char_1'] as string)
+        from ${tableName}
+        where id = 1
+    """
     sql "set enable_two_phase_read_opt = false"
-    qt_sql "select * from ${tableName} order by id limit 10"
+    qt_sql "${typedOutputQuery}"
     trigger_and_wait_compaction(tableName, "cumulative", 1800)
     sql "set enable_two_phase_read_opt = true"
-    qt_sql "select * from ${tableName} order by id limit 10"
+    qt_sql "${typedOutputQuery}"
     //qt_sql "select variant_type(var) from ${tableName} where id = 1"
     accurateCheckIndexWithQueries()
     findException = false

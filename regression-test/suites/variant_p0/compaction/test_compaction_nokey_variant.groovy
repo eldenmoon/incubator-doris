@@ -21,6 +21,7 @@
 // which incorrectly excluded subcolumns whose parent has unique_id=0.
 
 suite("test_compaction_nokey_variant") {
+    sql "SET enable_variant_v2 = true"
     def tableName = "test_compaction_nokey_variant"
 
     sql "DROP TABLE IF EXISTS ${tableName}"
@@ -51,7 +52,8 @@ suite("test_compaction_nokey_variant") {
     sql """INSERT INTO ${tableName} VALUES ('{"name":"u5","age":50}', '{"city":"c5"}', '{"score":50.5}');"""
 
     // Verify data before compaction
-    qt_before_compaction """SELECT cast(v1 as string) c1, cast(v2 as string) c2, cast(v3 as string) c3
+    qt_before_compaction """SELECT sort_json_object_keys(cast(v1 as json)) c1,
+        sort_json_object_keys(cast(v2 as json)) c2, sort_json_object_keys(cast(v3 as json)) c3
         FROM ${tableName} ORDER BY c1;"""
 
     def rowCountBefore = sql "SELECT count() FROM ${tableName}"
@@ -61,7 +63,8 @@ suite("test_compaction_nokey_variant") {
     trigger_and_wait_compaction(tableName, "cumulative")
 
     // Verify data after compaction
-    qt_after_compaction """SELECT cast(v1 as string) c1, cast(v2 as string) c2, cast(v3 as string) c3
+    qt_after_compaction """SELECT sort_json_object_keys(cast(v1 as json)) c1,
+        sort_json_object_keys(cast(v2 as json)) c2, sort_json_object_keys(cast(v3 as json)) c3
         FROM ${tableName} ORDER BY c1;"""
 
     def rowCountAfter = sql "SELECT count() FROM ${tableName}"

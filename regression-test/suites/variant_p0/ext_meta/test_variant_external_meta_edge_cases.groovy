@@ -16,6 +16,7 @@
 // under the License.
 
 suite("test_variant_external_meta_edge_cases", "nonConcurrent") {
+    sql "SET enable_variant_v2 = true"
     def set_be_config = { key, value ->
         String backend_id;
         def backendId_to_backendIP = [:]
@@ -155,7 +156,7 @@ suite("test_variant_external_meta_edge_cases", "nonConcurrent") {
     sql """insert into test_array_external values (3, '{"arr": []}')"""
     sql """insert into test_array_external values (4, '{"arr": null}')"""
     
-    qt_array_1 "select k, v['arr'] from test_array_external order by k"
+    qt_array_1 "select k, sort_json_object_keys(cast(v['arr'] as json)) from test_array_external order by k"
     qt_array_2 "select k from test_array_external where v['arr'] is not null order by k"
 
     // Test 6: Schema evolution - adding subcolumns over time

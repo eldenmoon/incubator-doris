@@ -96,6 +96,10 @@ public class AggStateType extends DataType {
         return functionName;
     }
 
+    public boolean getResultIsNullable() {
+        return returnNullable;
+    }
+
     @Override
     public Type toCatalogDataType() {
         List<Type> types = subTypes.stream().map(DataType::toCatalogDataType).collect(Collectors.toList());

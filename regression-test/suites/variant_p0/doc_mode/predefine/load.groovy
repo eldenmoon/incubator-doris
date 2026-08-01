@@ -16,6 +16,7 @@
 // under the License.
 
 suite("test_variant_predefine_doc_value", "nonConcurrent"){
+    sql "SET enable_variant_v2 = true"
     sql """ set default_variant_enable_doc_mode = true """
     sql """ set default_variant_doc_materialization_min_rows = 0 """
     //sql """ set default_variant_doc_hash_shard_count = 0"""
@@ -195,7 +196,7 @@ suite("test_variant_predefine_doc_value", "nonConcurrent"){
     sql "insert into test_predefine2 values(3, '${json3}')"
     sql "insert into test_predefine2 values(4, '${json4}')"
        
-    qt_sql """select * from test_predefine2 order by id"""
+    qt_sql """select id, sort_json_object_keys(cast(v1 as json)) from test_predefine2 order by id"""
 
     for (int i = 10; i < 100; i++) {
         sql "insert into test_predefine2 values(${i}, '${json4}')"
@@ -214,6 +215,8 @@ suite("test_variant_predefine_doc_value", "nonConcurrent"){
     // 3. drop column
     sql "alter table test_predefine1 drop column v3"
 
+    // Nested array paths are outside the V2 support boundary.
+    sql "SET enable_variant_v2 = false"
     sql "DROP TABLE IF EXISTS test_predefine3"
     sql """CREATE TABLE `test_predefine3` (
             `id` bigint NOT NULL,
@@ -246,6 +249,7 @@ suite("test_variant_predefine_doc_value", "nonConcurrent"){
     sql """insert into test_predefine3 values (1, '{"auto_type" : 12345}')"""
     sql """insert into test_predefine3 values (1, '{"auto_type" : 1.0}')"""
     trigger_and_wait_compaction("test_predefine3", "full")
+    sql "SET enable_variant_v2 = true"
 
     // test array
     sql "DROP TABLE IF EXISTS region_insert"

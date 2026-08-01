@@ -16,6 +16,7 @@
 // under the License.
 
 suite("regression_test_variant_predefine_schema", "p0"){
+    sql "SET enable_variant_v2 = true"
     sql """ set default_variant_enable_doc_mode = false """
     sql """DROP TABLE IF EXISTS test_predefine"""
     def count = new Random().nextInt(10);
@@ -217,6 +218,8 @@ suite("regression_test_variant_predefine_schema", "p0"){
     // 3. drop column
     sql "alter table test_predefine1 drop column v3"
 
+    // Nested array paths are outside the V2 support boundary.
+    sql "SET enable_variant_v2 = false"
     sql "DROP TABLE IF EXISTS test_predefine3"
     sql """CREATE TABLE `test_predefine3` (
             `id` bigint NOT NULL,
@@ -250,6 +253,7 @@ suite("regression_test_variant_predefine_schema", "p0"){
     sql """insert into test_predefine3 values (1, '{"auto_type" : 1.0}')"""
     trigger_and_wait_compaction("test_predefine3", "full", 1800)
     qt_sql """select variant_type(v) from test_predefine3"""
+    sql "SET enable_variant_v2 = true"
 
     // test array
     sql "DROP TABLE IF EXISTS region_insert"

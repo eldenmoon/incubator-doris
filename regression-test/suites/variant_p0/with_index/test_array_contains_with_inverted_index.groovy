@@ -18,6 +18,7 @@
 suite("test_array_contains_with_inverted_index") {
     // prepare test table
     def indexTblName = "tai"
+    def resultColumns = "apply_date, id, sort_json_object_keys(cast(inventors as json))"
     setFeConfigTemporary([enable_inverted_index_v1_for_variant: true]) {
 
         // Pin enable_segment_limit_pushdown to keep inverted-index pushdown stable under fuzzy testing
@@ -53,8 +54,8 @@ suite("test_array_contains_with_inverted_index") {
     );
     """
 
-        sql """ INSERT INTO `${indexTblName}`(`apply_date`, `id`, `inventors`) VALUES ('2017-01-01', '6afef581285b6608bf80d5a4e46cf839', '{"inventors":["a", "b", "c"]}'); """
-        sql """ INSERT INTO `${indexTblName}`(`apply_date`, `id`, `inventors`) VALUES ('2017-01-01', 'd93d942d985a8fb7547c72dada8d332d', '{"inventors":["d", "e", "f", "g", "h", "i", "j", "k", "l"]}'); """
+        sql """ INSERT INTO `${indexTblName}`(`apply_date`, `id`, `inventors`) VALUES ('2017-01-01', '6afef581285b6608bf80d5a4e46cf839', '{"inventors":["a","b","c"]}'); """
+        sql """ INSERT INTO `${indexTblName}`(`apply_date`, `id`, `inventors`) VALUES ('2017-01-01', 'd93d942d985a8fb7547c72dada8d332d', '{"inventors":["d","e","f","g","h","i","j","k","l"]}'); """
         sql """ INSERT INTO `${indexTblName}`(`apply_date`, `id`, `inventors`) VALUES ('2017-01-01', '48a33ec3453a28bce84b8f96fe161956', '{"inventors":["m"]}'); """
         sql """ INSERT INTO `${indexTblName}`(`apply_date`, `id`, `inventors`) VALUES ('2017-01-01', '021603e7dcfe65d44af0efd0e5aee154', '{"inventors":["n"]}'); """
         sql """ INSERT INTO `${indexTblName}`(`apply_date`, `id`, `inventors`) VALUES ('2017-01-01', '9fcb57ae675f0af4d613d9e6c0e8a2a2', '{"inventors":["o"]}'); """
@@ -64,8 +65,8 @@ suite("test_array_contains_with_inverted_index") {
         sql """ INSERT INTO `${indexTblName}`(`apply_date`, `id`, `inventors`) VALUES ('2017-01-01', '8fcb57ae675f0af4d613d9e6c0e8a2a6', '{"inventors":[null,null,null]}'); """
         sql """ INSERT INTO `${indexTblName}`(`apply_date`, `id`, `inventors`) VALUES ('2017-01-01', '8fcb57ae675f0af4d613d9e6c0e8a2a7', '{"inventors":[null,null,null]}'); """
         sql """ INSERT INTO `${indexTblName}`(`apply_date`, `id`, `inventors`) VALUES ('2017-01-01', '8fcb57ae675f0af4d613d9e6c0e8a2a8', '{"inventors":[]}'); """
-        sql """ INSERT INTO `${indexTblName}`(`apply_date`, `id`, `inventors`) VALUES ('2019-01-01', 'a648a447b8f71522f11632eba4b4adde', '{"inventors":["p", "q", "r", "s", "t"]}'); """
-        sql """ INSERT INTO `${indexTblName}`(`apply_date`, `id`, `inventors`) VALUES ('2019-01-01', 'a9fb5c985c90bf05f3bee5ca3ae95260', '{"inventors":["u", "v"]}'); """
+        sql """ INSERT INTO `${indexTblName}`(`apply_date`, `id`, `inventors`) VALUES ('2019-01-01', 'a648a447b8f71522f11632eba4b4adde', '{"inventors":["p","q","r","s","t"]}'); """
+        sql """ INSERT INTO `${indexTblName}`(`apply_date`, `id`, `inventors`) VALUES ('2019-01-01', 'a9fb5c985c90bf05f3bee5ca3ae95260', '{"inventors":["u","v"]}'); """
         sql """ INSERT INTO `${indexTblName}`(`apply_date`, `id`, `inventors`) VALUES ('2019-01-01', '0974e7a82e30d1af83205e474fadd0a2', '{"inventors":["w"]}'); """
         sql """ INSERT INTO `${indexTblName}`(`apply_date`, `id`, `inventors`) VALUES ('2019-01-01', '26823b3995ee38bd145ddd910b2f6300', '{"inventors":["x"]}'); """
         sql """ INSERT INTO `${indexTblName}`(`apply_date`, `id`, `inventors`) VALUES ('2019-01-01', 'ee27ee1da291e46403c408e220bed6e1', '{"inventors":["y"]}'); """
@@ -76,15 +77,15 @@ suite("test_array_contains_with_inverted_index") {
         for (int i = 0 ; i < param_contains.size(); ++i) {
             def p = param_contains[i]
             log.info("param: ${p}")
-            order_qt_sql """ select * from tai where array_contains(cast(inventors['inventors'] as array<text>), ${p}) order by id; """
-            order_qt_sql """ select * from tai where array_contains(cast(inventors['inventors'] as array<text>), ${p}) and apply_date = '2017-01-01' order by id; """
-            order_qt_sql """ select * from tai where array_contains(cast(inventors['inventors'] as array<text>), ${p}) and apply_date = '2019-01-01' order by id; """
-            order_qt_sql """ select * from tai where array_contains(cast(inventors['inventors'] as array<text>), ${p}) or apply_date = '2017-01-01' order by id; """
-            order_qt_sql """ select * from tai where !array_contains(cast(inventors['inventors'] as array<text>), ${p}) order by id; """
-            order_qt_sql """ select * from tai where !array_contains(cast(inventors['inventors'] as array<text>), ${p}) and apply_date = '2017-01-01' order by id; """
-            order_qt_sql """ select * from tai where !array_contains(cast(inventors['inventors'] as array<text>), ${p}) and apply_date = '2019-01-01' order by id; """
-            order_qt_sql """ select * from tai where !array_contains(cast(inventors['inventors'] as array<text>), ${p}) or apply_date = '2017-01-01' order by id; """
-            order_qt_sql """ select * from tai where (array_contains(cast(inventors['inventors'] as array<text>), ${p}) and apply_date = '2017-01-01') or apply_date = '2019-01-01' order by id; """
+            order_qt_sql """ select ${resultColumns} from tai where array_contains(cast(inventors['inventors'] as array<text>), ${p}) order by id; """
+            order_qt_sql """ select ${resultColumns} from tai where array_contains(cast(inventors['inventors'] as array<text>), ${p}) and apply_date = '2017-01-01' order by id; """
+            order_qt_sql """ select ${resultColumns} from tai where array_contains(cast(inventors['inventors'] as array<text>), ${p}) and apply_date = '2019-01-01' order by id; """
+            order_qt_sql """ select ${resultColumns} from tai where array_contains(cast(inventors['inventors'] as array<text>), ${p}) or apply_date = '2017-01-01' order by id; """
+            order_qt_sql """ select ${resultColumns} from tai where !array_contains(cast(inventors['inventors'] as array<text>), ${p}) order by id; """
+            order_qt_sql """ select ${resultColumns} from tai where !array_contains(cast(inventors['inventors'] as array<text>), ${p}) and apply_date = '2017-01-01' order by id; """
+            order_qt_sql """ select ${resultColumns} from tai where !array_contains(cast(inventors['inventors'] as array<text>), ${p}) and apply_date = '2019-01-01' order by id; """
+            order_qt_sql """ select ${resultColumns} from tai where !array_contains(cast(inventors['inventors'] as array<text>), ${p}) or apply_date = '2017-01-01' order by id; """
+            order_qt_sql """ select ${resultColumns} from tai where (array_contains(cast(inventors['inventors'] as array<text>), ${p}) and apply_date = '2017-01-01') or apply_date = '2019-01-01' order by id; """
         }
 
         // test arrays_overlap with inverted index
@@ -93,24 +94,24 @@ suite("test_array_contains_with_inverted_index") {
         for (int i = 0 ; i < param.size(); ++i) {
             def p = param[i]
             log.info("param: ${p}")
-            order_qt_sql """ select /*+SET_VAR(enable_segment_limit_pushdown = true)*/ * from tai where arrays_overlap(cast(inventors['inventors'] as array<text>), ${p}) order by id; """
-            order_qt_sql """ select /*+SET_VAR(enable_segment_limit_pushdown = false)*/ * from tai where arrays_overlap(cast(inventors['inventors'] as array<text>), ${p}) order by id; """
-            order_qt_sql """ select /*+SET_VAR(enable_segment_limit_pushdown = true)*/ * from tai where arrays_overlap(cast(inventors['inventors'] as array<text>), ${p}) and apply_date = '2017-01-01' order by id; """
-            order_qt_sql """ select /*+SET_VAR(enable_segment_limit_pushdown = false)*/ * from tai where arrays_overlap(cast(inventors['inventors'] as array<text>), ${p}) and apply_date = '2017-01-01' order by id; """
-            order_qt_sql """ select /*+SET_VAR(enable_segment_limit_pushdown = true)*/ * from tai where arrays_overlap(cast(inventors['inventors'] as array<text>), ${p}) and apply_date = '2019-01-01' order by id; """
-            order_qt_sql """ select /*+SET_VAR(enable_segment_limit_pushdown = false)*/ * from tai where arrays_overlap(cast(inventors['inventors'] as array<text>), ${p}) and apply_date = '2019-01-01' order by id; """
-            order_qt_sql """ select /*+SET_VAR(enable_segment_limit_pushdown = true)*/ * from tai where arrays_overlap(cast(inventors['inventors'] as array<text>), ${p}) or apply_date = '2017-01-01' order by id; """
-            order_qt_sql """ select /*+SET_VAR(enable_segment_limit_pushdown = false)*/ * from tai where arrays_overlap(cast(inventors['inventors'] as array<text>), ${p}) or apply_date = '2017-01-01' order by id; """
-            order_qt_sql """ select /*+SET_VAR(enable_segment_limit_pushdown = true)*/ * from tai where !arrays_overlap(cast(inventors['inventors'] as array<text>), ${p}) order by id; """
-            order_qt_sql """ select /*+SET_VAR(enable_segment_limit_pushdown = false)*/ * from tai where !arrays_overlap(cast(inventors['inventors'] as array<text>), ${p}) order by id; """
-            order_qt_sql """ select /*+SET_VAR(enable_segment_limit_pushdown = true)*/ * from tai where !arrays_overlap(cast(inventors['inventors'] as array<text>), ${p}) and apply_date = '2017-01-01' order by id; """
-            order_qt_sql """ select /*+SET_VAR(enable_segment_limit_pushdown = false)*/ * from tai where !arrays_overlap(cast(inventors['inventors'] as array<text>), ${p}) and apply_date = '2017-01-01' order by id; """
-            order_qt_sql """ select /*+SET_VAR(enable_segment_limit_pushdown = true)*/ * from tai where !arrays_overlap(cast(inventors['inventors'] as array<text>), ${p}) and apply_date = '2019-01-01' order by id; """
-            order_qt_sql """ select /*+SET_VAR(enable_segment_limit_pushdown = false)*/ * from tai where !arrays_overlap(cast(inventors['inventors'] as array<text>), ${p}) and apply_date = '2019-01-01' order by id; """
-            order_qt_sql """ select /*+SET_VAR(enable_segment_limit_pushdown = true)*/ * from tai where !arrays_overlap(cast(inventors['inventors'] as array<text>), ${p}) or apply_date = '2017-01-01' order by id; """
-            order_qt_sql """ select /*+SET_VAR(enable_segment_limit_pushdown = false)*/ * from tai where !arrays_overlap(cast(inventors['inventors'] as array<text>), ${p}) or apply_date = '2017-01-01' order by id; """
-            order_qt_sql """ select /*+SET_VAR(enable_segment_limit_pushdown = true)*/ * from tai where (arrays_overlap(cast(inventors['inventors'] as array<text>), ${p}) and apply_date = '2017-01-01') or apply_date = '2019-01-01' order by id; """
-            order_qt_sql """ select /*+SET_VAR(enable_segment_limit_pushdown = false)*/ * from tai where (arrays_overlap(cast(inventors['inventors'] as array<text>), ${p}) and apply_date = '2017-01-01') or apply_date = '2019-01-01' order by id; """
+            order_qt_sql """ select /*+SET_VAR(enable_segment_limit_pushdown = true)*/ ${resultColumns} from tai where arrays_overlap(cast(inventors['inventors'] as array<text>), ${p}) order by id; """
+            order_qt_sql """ select /*+SET_VAR(enable_segment_limit_pushdown = false)*/ ${resultColumns} from tai where arrays_overlap(cast(inventors['inventors'] as array<text>), ${p}) order by id; """
+            order_qt_sql """ select /*+SET_VAR(enable_segment_limit_pushdown = true)*/ ${resultColumns} from tai where arrays_overlap(cast(inventors['inventors'] as array<text>), ${p}) and apply_date = '2017-01-01' order by id; """
+            order_qt_sql """ select /*+SET_VAR(enable_segment_limit_pushdown = false)*/ ${resultColumns} from tai where arrays_overlap(cast(inventors['inventors'] as array<text>), ${p}) and apply_date = '2017-01-01' order by id; """
+            order_qt_sql """ select /*+SET_VAR(enable_segment_limit_pushdown = true)*/ ${resultColumns} from tai where arrays_overlap(cast(inventors['inventors'] as array<text>), ${p}) and apply_date = '2019-01-01' order by id; """
+            order_qt_sql """ select /*+SET_VAR(enable_segment_limit_pushdown = false)*/ ${resultColumns} from tai where arrays_overlap(cast(inventors['inventors'] as array<text>), ${p}) and apply_date = '2019-01-01' order by id; """
+            order_qt_sql """ select /*+SET_VAR(enable_segment_limit_pushdown = true)*/ ${resultColumns} from tai where arrays_overlap(cast(inventors['inventors'] as array<text>), ${p}) or apply_date = '2017-01-01' order by id; """
+            order_qt_sql """ select /*+SET_VAR(enable_segment_limit_pushdown = false)*/ ${resultColumns} from tai where arrays_overlap(cast(inventors['inventors'] as array<text>), ${p}) or apply_date = '2017-01-01' order by id; """
+            order_qt_sql """ select /*+SET_VAR(enable_segment_limit_pushdown = true)*/ ${resultColumns} from tai where !arrays_overlap(cast(inventors['inventors'] as array<text>), ${p}) order by id; """
+            order_qt_sql """ select /*+SET_VAR(enable_segment_limit_pushdown = false)*/ ${resultColumns} from tai where !arrays_overlap(cast(inventors['inventors'] as array<text>), ${p}) order by id; """
+            order_qt_sql """ select /*+SET_VAR(enable_segment_limit_pushdown = true)*/ ${resultColumns} from tai where !arrays_overlap(cast(inventors['inventors'] as array<text>), ${p}) and apply_date = '2017-01-01' order by id; """
+            order_qt_sql """ select /*+SET_VAR(enable_segment_limit_pushdown = false)*/ ${resultColumns} from tai where !arrays_overlap(cast(inventors['inventors'] as array<text>), ${p}) and apply_date = '2017-01-01' order by id; """
+            order_qt_sql """ select /*+SET_VAR(enable_segment_limit_pushdown = true)*/ ${resultColumns} from tai where !arrays_overlap(cast(inventors['inventors'] as array<text>), ${p}) and apply_date = '2019-01-01' order by id; """
+            order_qt_sql """ select /*+SET_VAR(enable_segment_limit_pushdown = false)*/ ${resultColumns} from tai where !arrays_overlap(cast(inventors['inventors'] as array<text>), ${p}) and apply_date = '2019-01-01' order by id; """
+            order_qt_sql """ select /*+SET_VAR(enable_segment_limit_pushdown = true)*/ ${resultColumns} from tai where !arrays_overlap(cast(inventors['inventors'] as array<text>), ${p}) or apply_date = '2017-01-01' order by id; """
+            order_qt_sql """ select /*+SET_VAR(enable_segment_limit_pushdown = false)*/ ${resultColumns} from tai where !arrays_overlap(cast(inventors['inventors'] as array<text>), ${p}) or apply_date = '2017-01-01' order by id; """
+            order_qt_sql """ select /*+SET_VAR(enable_segment_limit_pushdown = true)*/ ${resultColumns} from tai where (arrays_overlap(cast(inventors['inventors'] as array<text>), ${p}) and apply_date = '2017-01-01') or apply_date = '2019-01-01' order by id; """
+            order_qt_sql """ select /*+SET_VAR(enable_segment_limit_pushdown = false)*/ ${resultColumns} from tai where (arrays_overlap(cast(inventors['inventors'] as array<text>), ${p}) and apply_date = '2017-01-01') or apply_date = '2019-01-01' order by id; """
         }
     }
 }

@@ -15,6 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 suite("test_variant_predefine_types_with_indexes_profile", "p0,nonConcurrent"){
+    sql "SET enable_variant_v2 = true"
     sql """ set describe_extend_variant_column = true """
     sql """ set enable_match_without_inverted_index = false """
     sql """ set enable_segment_limit_pushdown = true """

@@ -1,5 +1,6 @@
 
-set enable_decimal256 = true;
+-- ColumnVariantV2 does not support Decimal256 yet. Keep one SET result tag for this SQL suite.
+set enable_decimal256 = true, enable_variant_v2 = false;
 --
 -- Table structure for table `table_100_undef_partitions2_keys3_properties4_distributed_by5`
 --
@@ -288,4 +289,3 @@ set enable_sync_runtime_filter_size=true;
 set runtime_filter_type='IN,MIN_MAX';
 set runtime_filter_wait_infinitely=true;
 SELECT  CAST(table2 . var['col_ipv4_undef_signed'] AS ipv4) as v1,  CAST(table1 . var['col_varchar_25__undef_signed'] AS varchar(25)) as v2,  CAST(table1 . var['col_double_undef_signed'] AS double) as v3,  CAST(table1 . var['col_decimal_5_0__undef_signed_not_null'] AS decimal(5,0)) as v4  FROM table_100_undef_partitions2_keys3_properties4_distributed_by5 AS table1 inner join table_100_undef_partitions2_keys3_properties4_distributed_by5 AS table2 ON  CAST(table1 . var['col_ipv4_undef_signed'] AS ipv4)  =  CAST(table2 . var['col_ipv4_undef_signed'] AS ipv4)  AND  CAST(table1 . var['col_decimal_76__56__undef_signed_not_null'] AS decimal(76, 56))  <=>  CAST(table2 . var['col_decimal_76__56__undef_signed_not_null'] AS decimal(76, 56)) order by v1, v2, v3, v4;
-

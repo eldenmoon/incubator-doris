@@ -3788,10 +3788,12 @@ public class SessionVariable implements Serializable, Writable {
             name = ENABLE_VARIANT_V2,
             needForward = true,
             affectQueryResultInPlan = true,
+            fuzzy = true,
             varType = VariableAnnotation.EXPERIMENTAL,
             description = {
-                    "是否对纯计算表达式启用 ColumnVariantV2，默认关闭。",
-                    "Whether to enable ColumnVariantV2 for compute expressions. The default is false."
+                    "是否对计算表达式和符合条件的本地 INSERT SELECT sink 启用 ColumnVariantV2，默认关闭。",
+                    "Whether to enable ColumnVariantV2 for compute expressions and eligible local "
+                            + "INSERT SELECT sinks. The default is false."
             }
     )
     public boolean enableVariantV2 = false;
@@ -3919,6 +3921,7 @@ public class SessionVariable implements Serializable, Writable {
         // 10MB = 10 * 1024 * 1024 bytes
         int maxBytes = 10 * 1024 * 1024;
         this.exchangeMultiBlocksByteSize = minBytes + (int) (random.nextDouble() * (maxBytes - minBytes));
+        this.enableVariantV2 = random.nextBoolean();
         this.defaultVariantMaxSubcolumnsCount = random.nextInt(10);
         this.defaultVariantSparseHashShardCount = random.nextInt(5) + 1;
         this.useV3StorageFormat = random.nextBoolean();

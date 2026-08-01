@@ -16,6 +16,8 @@
 // under the License.
 
 suite("test_all_prdefine_type_to_sparse", "p0"){ 
+    // ColumnVariantV2 does not support Decimal256 materialized paths yet.
+    sql "SET enable_variant_v2 = false"
 
     sql """ set describe_extend_variant_column = true """
     sql """ set default_variant_enable_doc_mode = false """

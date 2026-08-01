@@ -93,6 +93,13 @@ void append_date_time(FormattedScalar* result, const cctz::civil_second& civil, 
 }
 
 void append_fraction(FormattedScalar* result, uint64_t fraction, uint8_t digits) {
+    if (fraction == 0) {
+        return;
+    }
+    while (fraction % 10 == 0) {
+        fraction /= 10;
+        --digits;
+    }
     append_char(result, '.');
     append_unsigned(result, fraction, digits);
 }

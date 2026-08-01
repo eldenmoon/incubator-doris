@@ -18,6 +18,8 @@
 import org.codehaus.groovy.runtime.IOGroovyMethods
 
 suite("regression_test_variant_delete_and_update", "variant_type"){
+    // This suite writes nested array values, which ColumnVariantV2 does not support yet.
+    sql "SET enable_variant_v2 = false"
     // MOR
     def table_name = "var_delete_update"
     sql "DROP TABLE IF EXISTS ${table_name}"

@@ -62,6 +62,7 @@
 #include "core/column/column_nullable.h"
 #include "core/column/column_string.h"
 #include "core/column/column_variant.h"
+#include "core/column/variant_v2/column_variant_v2.h"
 #include "core/data_type/data_type.h"
 #include "core/data_type/data_type_array.h"
 #include "core/data_type/data_type_factory.hpp"
@@ -441,8 +442,8 @@ Status cast_column(const ColumnWithTypeAndName& arg, const DataTypePtr& type, Co
             function->execute(ctx.get(), tmp_block, {0}, result_column, arg.column->size());
     if (!cast_status.ok()) {
         // Variant V2 deliberately rejects source types without a physical encoding (currently
-        // Decimal256), and the legacy writer has no V2 bridge. Publishing the legacy all-null
-        // fallback in either case would silently lose stored values.
+        // Decimal256). V2-to-V1 bridge failures must also propagate; publishing the legacy
+        // all-null fallback in either case would silently lose stored values.
         if (target_is_variant_v2 || is_variant_v2_to_v1) {
             return cast_status;
         }
@@ -2254,6 +2255,13 @@ Status _parse_and_materialize_variant_columns(Block& block,
     for (size_t i = 0; i < variant_pos.size(); ++i) {
         auto column_ref = block.get_by_position(variant_pos[i]).column;
         bool is_nullable = is_column_nullable(*column_ref);
+        const IColumn& physical_column =
+                is_nullable ? assert_cast<const ColumnNullable&>(*column_ref).get_nested_column()
+                            : *column_ref;
+        const auto* variant_v2 = check_and_get_column<ColumnVariantV2>(physical_column);
+        if (variant_v2 != nullptr) {
+            continue;
+        }
         MutableColumnPtr owner_column = IColumn::mutate(std::move(column_ref));
         ColumnPtr nullable_null_map;
         MutableColumnPtr var_column;

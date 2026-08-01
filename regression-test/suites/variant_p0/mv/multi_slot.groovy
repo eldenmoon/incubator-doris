@@ -16,6 +16,8 @@
 // under the License.
 
 suite ("multi_slot") {
+    // Multi-slot Variant materialization is intentionally kept on V1 for now.
+    sql "SET enable_variant_v2 = false"
     sql """ DROP TABLE IF EXISTS multi_slot; """
 
     sql """

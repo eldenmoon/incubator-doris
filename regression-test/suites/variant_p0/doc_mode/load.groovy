@@ -16,6 +16,8 @@
 // under the License.
 
 suite("regression_test_variant_doc_value", "p0"){
+    // ColumnVariantV2 intentionally does not support nested arrays yet.
+    sql "set enable_variant_v2 = false"
 
     sql """ set default_variant_enable_doc_mode = true """
     sql """ set default_variant_doc_materialization_min_rows = 0 """

@@ -16,6 +16,7 @@
 // under the License.
 
 suite("predefine_schema_change_doc_value", "p0"){
+    sql "SET enable_variant_v2 = true"
     def tableName = "test_predefine_schema_change"
     sql """ set default_variant_enable_typed_paths_to_sparse = false """
     boolean minrowszero = new Random().nextBoolean();

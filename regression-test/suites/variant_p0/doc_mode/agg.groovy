@@ -16,6 +16,7 @@
 // under the License.
 
 suite("test_variant_agg_doc_value", "p0"){
+    sql "SET enable_variant_v2 = true"
     sql """DROP TABLE IF EXISTS var_agg"""
     sql """ set default_variant_enable_doc_mode = true """
 

@@ -16,6 +16,7 @@
 // under the License.
 
 suite("test_variant_predefine_index_type", "p0"){
+    sql "SET enable_variant_v2 = true"
     sql """ set describe_extend_variant_column = true """
     sql """ set enable_match_without_inverted_index = false """
     sql """ set enable_segment_limit_pushdown = true """

@@ -113,6 +113,9 @@ suite("double_write_schema_change_doc_value", "nonConcurrent") {
     double_write.call()
     qt_sql "select v['type'], v['id'], v['created_at'] from ${table_name} where cast(v['id'] as bigint) != 25061216922 order by k,  cast(v['id'] as bigint) limit 10"
 
+    // Whole-row and subpath reads assemble nested-array materialized paths, which V2 does not
+    // support yet. The Schema Change work above still runs with the global V2 session setting.
+    sql "set enable_variant_v2 = false"
     sql "set enable_two_phase_read_opt = false"    
     sql """select * from github_events order by k limit 10"""
     sql "set enable_two_phase_read_opt = true"    

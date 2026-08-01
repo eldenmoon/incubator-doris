@@ -45,11 +45,10 @@ struct PreparedMaterializedColumn {
 PreparedMaterializedColumn prepare_materialized_column(const DataTypePtr& type,
                                                        const IColumn* column, size_t rows);
 bool is_materialized_value_visible(const PreparedMaterializedColumn& column, size_t row,
-                                   bool logical_root);
+                                   bool preserve_logical_root);
 Status append_materialized_value(const PreparedMaterializedColumn& column, size_t row,
                                  VariantBatchBuilder::Row& output, uint32_t depth);
-Status append_storage_cell(StringRef cell, VariantBatchBuilder::Row& output, uint32_t depth,
-                           bool* is_null);
+Status append_storage_cell(StringRef cell, VariantBatchBuilder::Row& output, uint32_t depth);
 Status assemble_storage_cells(std::span<const StringRef> cells,
                               std::span<const uint8_t> outer_nulls,
                               std::span<const uint8_t> missing, ColumnNullable::MutablePtr* output);

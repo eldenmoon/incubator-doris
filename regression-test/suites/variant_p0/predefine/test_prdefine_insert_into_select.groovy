@@ -16,6 +16,7 @@
 // under the License.
 
 suite("test_predefine_insert_into_select", "p0"){
+    def enableVariantV2 = (sql "select @@enable_variant_v2")[0][0].toString().toBoolean()
 
     sql """ set default_variant_enable_typed_paths_to_sparse = false """
     sql """ set default_variant_enable_doc_mode = false """
@@ -45,6 +46,9 @@ suite("test_predefine_insert_into_select", "p0"){
     sql """insert into toTable_without_define values(1, '{"a": "2025-04-16", "b": 123.123456789012, "c": "2025-04-17T09:09:09Z", "d": 123, "e": "2025-04-19", "f": "2025-04-20", "g": "2025-04-21", "h": "2025-04-22", "i": "2025-04-23", "j": "2025-04-24", "k": "2025-04-25", "l": "2025-04-26", "m": "2025-04-27", "n": "2025-04-28", "o": "2025-04-29", "p": "2025-04-30"}');"""
 
     sql """ insert into toTable_without_define select id, cast(var as string) from fromTable"""
+    order_qt_sql """ select * from toTable_without_define"""
+    order_qt_sql """ select if(@@enable_variant_v2, variant_type(var), 'object') from toTable_without_define"""
+
     boolean findException = false
     try {
         sql """ insert into toTable_without_define select * from fromTable"""
@@ -52,10 +56,7 @@ suite("test_predefine_insert_into_select", "p0"){
         logger.info(e.getMessage())
         findException = true
     }
-    assertTrue(findException)
-
-    order_qt_sql """ select * from toTable_without_define"""
-    order_qt_sql """ select variant_type(var) from toTable_without_define"""
+    assertEquals(!enableVariantV2, findException)
 
     sql "DROP TABLE IF EXISTS toTable_with_define"
     sql """CREATE TABLE toTable_with_define (
@@ -70,6 +71,8 @@ suite("test_predefine_insert_into_select", "p0"){
     sql """insert into toTable_with_define values(1, '{"a": "2025-04-16", "b": 123.123456789012, "c": "2025-04-17T09:09:09Z", "d": 123, "e": "2025-04-19", "f": "2025-04-20", "g": "2025-04-21", "h": "2025-04-22", "i": "2025-04-23", "j": "2025-04-24", "k": "2025-04-25", "l": "2025-04-26", "m": "2025-04-27", "n": "2025-04-28", "o": "2025-04-29", "p": "2025-04-30"}');"""
 
     sql """ insert into toTable_with_define select id, cast(var as string) from fromTable"""
+    order_qt_sql """ select * from toTable_with_define"""
+    order_qt_sql """ select if(@@enable_variant_v2, variant_type(var), 'object') from toTable_with_define"""
 
     findException = false
     try {
@@ -78,21 +81,18 @@ suite("test_predefine_insert_into_select", "p0"){
         logger.info(e.getMessage())
         findException = true
     }
-    assertTrue(findException)
-
-    order_qt_sql """ select * from toTable_with_define"""
-    order_qt_sql """ select variant_type(var) from toTable_with_define"""
+    assertEquals(!enableVariantV2, findException)
 
     sql "DROP TABLE IF EXISTS toTable"
     sql """ create table toTable like fromTable"""
     // qt_sql """ show create table toTable"""
     qt_sql """ insert into toTable select * from fromTable"""
     order_qt_sql """ select * from toTable"""
-    order_qt_sql """ select variant_type(var) from toTable"""
+    order_qt_sql """ select if(@@enable_variant_v2, variant_type(var), 'object') from toTable"""
 
     sql """insert into toTable values(1, '{"a": "2025-04-16", "b": 123.123456789012, "c": "2025-04-17T09:09:09Z", "d": 123, "e": "2025-04-19", "f": "2025-04-20", "g": "2025-04-21", "h": "2025-04-22", "i": "2025-04-23", "j": "2025-04-24", "k": "2025-04-25", "l": "2025-04-26", "m": "2025-04-27", "n": "2025-04-28", "o": "2025-04-29", "p": "2025-04-30"}');"""
 
-    order_qt_sql """ select variant_type(var) from toTable"""
+    order_qt_sql """ select if(@@enable_variant_v2, variant_type(var), 'object') from toTable"""
 
     sql """ set enable_match_without_inverted_index = false """
     sql """ set enable_segment_limit_pushdown = true """

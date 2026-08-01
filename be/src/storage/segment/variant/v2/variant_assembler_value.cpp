@@ -196,8 +196,8 @@ int64_t storage_timestamp_micros(DateTimeValue value, std::string_view descripti
     return variant_timestamp_micros(value, 0, description);
 }
 
-void append_binary_value(BinaryCellCursor& cursor, VariantBatchBuilder::Row& output, uint32_t depth,
-                         bool* is_null) {
+void append_binary_value(BinaryCellCursor& cursor, VariantBatchBuilder::Row& output,
+                         uint32_t depth) {
     if (depth > VARIANT_MAX_NESTING_DEPTH) {
         throw Exception(ErrorCode::CORRUPTION,
                         "Binary storage cell exceeds maximum nesting depth {}",
@@ -207,14 +207,11 @@ void append_binary_value(BinaryCellCursor& cursor, VariantBatchBuilder::Row& out
     const auto type = static_cast<FieldType>(cursor.read<uint8_t>("field type"));
     switch (type) {
     case FieldType::OLAP_FIELD_TYPE_NONE:
-        if (is_null != nullptr) {
-            *is_null = true;
-        }
         output.add_null();
         return;
     case FieldType::OLAP_FIELD_TYPE_JSONB: {
         const size_t size = cursor.read<size_t>("JSONB size");
-        jsonb_to_variant(cursor.read_bytes(size, "JSONB payload"), output, depth, is_null);
+        jsonb_to_variant(cursor.read_bytes(size, "JSONB payload"), output, depth, nullptr);
         return;
     }
     case FieldType::OLAP_FIELD_TYPE_ARRAY: {
@@ -231,7 +228,7 @@ void append_binary_value(BinaryCellCursor& cursor, VariantBatchBuilder::Row& out
         }
         auto array = output.start_array();
         for (size_t index = 0; index < count; ++index) {
-            append_binary_value(cursor, output, depth + 1, nullptr);
+            append_binary_value(cursor, output, depth + 1);
         }
         array.finish();
         return;
@@ -362,37 +359,6 @@ Status deserialize_typed_storage_cell(StringRef cell, IColumn& output) {
     }
 }
 
-bool is_semantically_empty_materialized_value(
-        const variant_assembler_detail::PreparedMaterializedColumn& column, size_t row) {
-    DCHECK_LT(row, column.data->size());
-    if (column.is_null_at(row)) {
-        return true;
-    }
-    if (column.primitive == TYPE_JSONB) {
-        const StringRef jsonb =
-                assert_cast<const ColumnString&, TypeCheckOnRelease::DISABLE>(*column.data)
-                        .get_data_at(row);
-        const JsonbDocument* document = nullptr;
-        DORIS_CHECK(JsonbDocument::checkAndCreateDocument(jsonb.data, jsonb.size, &document).ok());
-        return is_variant_jsonb_value_semantically_empty(document->getValue());
-    }
-    if (column.primitive != TYPE_ARRAY) {
-        return false;
-    }
-
-    const auto& offsets = column.array->get_offsets();
-    const size_t begin = row == 0 ? 0 : offsets[row - 1];
-    const size_t end = offsets[row];
-    DCHECK_GE(end, begin);
-    DCHECK_LE(end, column.nested->data->size());
-    for (size_t element = begin; element < end; ++element) {
-        if (!is_semantically_empty_materialized_value(*column.nested, element)) {
-            return false;
-        }
-    }
-    return true;
-}
-
 } // namespace
 
 namespace variant_assembler_detail {
@@ -441,30 +407,24 @@ PreparedMaterializedColumn prepare_materialized_column(const DataTypePtr& type,
 }
 
 bool is_materialized_value_visible(const PreparedMaterializedColumn& column, size_t row,
-                                   bool logical_root) {
+                                   bool preserve_logical_root) {
     DCHECK_LT(row, column.data->size());
     if (column.is_null_at(row)) {
         return false;
     }
+    if (preserve_logical_root) {
+        return true;
+    }
     if (column.primitive != TYPE_ARRAY) {
         return true;
     }
-    if (logical_root) {
-        // Match ColumnVariant's historical subtree-root rule: [] and [null] are absent, while an
-        // empty object/array shell is still the requested array value and must remain visible.
-        const auto& offsets = column.array->get_offsets();
-        const size_t begin = row == 0 ? 0 : offsets[row - 1];
-        const size_t end = offsets[row];
-        DCHECK_GE(end, begin);
-        DCHECK_LE(end, column.nested->data->size());
-        for (size_t element = begin; element < end; ++element) {
-            if (!column.nested->is_null_at(element)) {
-                return true;
-            }
-        }
-        return false;
-    }
-    return !is_semantically_empty_materialized_value(column, row);
+    const auto& offsets = column.array->get_offsets();
+    const size_t begin = row == 0 ? 0 : offsets[row - 1];
+    const size_t end = offsets[row];
+    DCHECK_GE(end, begin);
+    DCHECK_LE(end, column.nested->data->size());
+    // An absent legacy array subcolumn is represented as [], while [null] is an explicit value.
+    return begin != end;
 }
 
 Status append_materialized_value(const PreparedMaterializedColumn& column, size_t row,
@@ -507,14 +467,10 @@ Status append_materialized_value(const PreparedMaterializedColumn& column, size_
     }
 }
 
-Status append_storage_cell(StringRef cell, VariantBatchBuilder::Row& output, uint32_t depth,
-                           bool* is_null) {
+Status append_storage_cell(StringRef cell, VariantBatchBuilder::Row& output, uint32_t depth) {
     try {
-        if (is_null != nullptr) {
-            *is_null = false;
-        }
         BinaryCellCursor cursor(cell);
-        append_binary_value(cursor, output, depth, is_null);
+        append_binary_value(cursor, output, depth);
         if (cursor.remaining() != 0) {
             return Status::Corruption("Binary storage cell has {} trailing bytes",
                                       cursor.remaining());
@@ -652,8 +608,8 @@ Status variant_assembler_detail::assemble_storage_cells(std::span<const StringRe
             VariantBatchBuilder builder({.rows = cells.size()});
             auto result_outer = ColumnUInt8::create();
             result_outer->reserve(cells.size());
-            // At this storage boundary a missing/SQL NULL cell and an encoded Variant null have
-            // the same logical outer-null result.
+            // Missing/SQL NULL is carried only by the outer map. A present NONE or JSONB null cell
+            // remains an encoded Variant null payload.
             for (size_t row_index = 0; row_index < cells.size(); ++row_index) {
                 auto row = builder.begin_row();
                 const bool is_missing = (!outer_nulls.empty() && outer_nulls[row_index] != 0) ||
@@ -662,10 +618,9 @@ Status variant_assembler_detail::assemble_storage_cells(std::span<const StringRe
                     result_outer->insert_value(1);
                     row.add_null();
                 } else {
-                    bool is_null = false;
                     RETURN_IF_ERROR(variant_assembler_detail::append_storage_cell(
-                            cells[row_index], row, 0, &is_null));
-                    result_outer->insert_value(is_null ? 1 : 0);
+                            cells[row_index], row, 0));
+                    result_outer->insert_value(0);
                 }
                 row.finish();
             }

@@ -16,6 +16,7 @@
 // under the License.
 
 suite("regression_test_variant_agg"){
+    sql "SET enable_variant_v2 = true"
     sql """DROP TABLE IF EXISTS var_agg"""
 
     int max_subcolumns_count = Math.floor(Math.random() * 10)

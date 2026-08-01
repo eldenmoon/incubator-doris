@@ -41,8 +41,8 @@ suite("variant_compute_v2", "p0,nonConcurrent") {
         (3, NULL)
     """
 
-    // V2-to-V1 CAST is intentionally unsupported. Keep the write statement on the legacy
-    // representation, then switch back to V2 to verify the target segment through the new reader.
+    // The VALUES statement above creates a legacy segment. Read that segment as ColumnVariantV2
+    // and keep the V2 representation through the INSERT SELECT storage sink.
     def insertTargetTable = "variant_v2_insert_target"
     sql "DROP TABLE IF EXISTS ${insertTargetTable}"
     sql """
@@ -54,17 +54,48 @@ suite("variant_compute_v2", "p0,nonConcurrent") {
         DISTRIBUTED BY HASH(id) BUCKETS 1
         PROPERTIES("replication_num" = "1")
     """
-    sql "SET enable_variant_v2 = false"
     sql """
         INSERT INTO ${insertTargetTable}
         SELECT id, v FROM ${segmentScanTable}
     """
-    sql "SET enable_variant_v2 = true"
-    order_qt_legacy_insert_select """
+    order_qt_v2_insert_select """
         SELECT id, CAST(v AS STRING), v IS NULL
         FROM ${insertTargetTable}
         ORDER BY id
     """
+
+    // Exercise MemTable aggregation with a physical ColumnVariantV2 input. Both duplicate-key
+    // rows carry the same value so the REPLACE result is deterministic regardless of block order.
+    sql "DROP TABLE IF EXISTS variant_v2_agg_replace_sink"
+    sql """
+        CREATE TABLE variant_v2_agg_replace_sink (
+            id INT,
+            v VARIANT REPLACE NULL
+        )
+        AGGREGATE KEY(id)
+        DISTRIBUTED BY HASH(id) BUCKETS 1
+        PROPERTIES("replication_num" = "1")
+    """
+    sql """
+        INSERT INTO variant_v2_agg_replace_sink
+        SELECT 1, v FROM ${segmentScanTable} WHERE id = 0
+        UNION ALL
+        SELECT 1, v FROM ${segmentScanTable} WHERE id = 0
+    """
+    order_qt_v2_agg_replace_sink """
+        SELECT id, CAST(v AS STRING)
+        FROM variant_v2_agg_replace_sink
+        ORDER BY id
+    """
+
+    // A V2-written segment keeps the legacy physical format and remains readable with V1.
+    sql "SET enable_variant_v2 = false"
+    order_qt_v1_reader_on_v2_insert_target """
+        SELECT id, CAST(v AS STRING), v IS NULL
+        FROM ${insertTargetTable}
+        ORDER BY id
+    """
+    sql "SET enable_variant_v2 = true"
 
     order_qt_segment_scan """
         SELECT id, CAST(v AS STRING), v IS NULL
@@ -81,16 +112,11 @@ suite("variant_compute_v2", "p0,nonConcurrent") {
         ORDER BY id
     """
 
-    // V2 encoding does not retain enough source-type provenance to reproduce the V1
-    // path-to-declared-type contract. Keep the boundary explicit until that contract changes.
-    test {
-        sql """
-            SELECT variant_type(v)
-            FROM ${segmentScanTable}
-            LIMIT 1
-        """
-        exception "variant_type does not support ColumnVariantV2 execution"
-    }
+    order_qt_variant_type_segment """
+        SELECT id, variant_type(v)
+        FROM ${segmentScanTable}
+        ORDER BY id
+    """
 
     qt_constant_fold """
         SELECT CAST(parse_to_variant('{"folded":[1,true,null]}') AS STRING)
@@ -238,8 +264,8 @@ suite("variant_compute_v2", "p0,nonConcurrent") {
     """
 
     qt_typed_scalar_is_not_a_document """
-        SELECT CAST(CAST('{"a":1}' AS VARIANT) AS STRING),
-               element_at(CAST('{"a":1}' AS VARIANT), 'a') IS NULL,
+        SELECT CAST(parse_to_variant('{"a":1}') AS STRING),
+               element_at(parse_to_variant('{"a":1}'), 'a') IS NULL,
                element_at(CAST(CAST(42 AS BIGINT) AS VARIANT), 0) IS NULL
     """
 
@@ -263,13 +289,10 @@ suite("variant_compute_v2", "p0,nonConcurrent") {
                element_at(parse_to_variant('{"1":"object-key"}'), 1) IS NULL
     """
 
-    test {
-        sql """
-            SELECT variant_type(parse_to_variant(CONCAT('{"k":', number, '}')))
-            FROM numbers("number" = "1")
-        """
-        exception "variant_type does not support ColumnVariantV2 execution"
-    }
+    qt_variant_type_dynamic """
+        SELECT variant_type(parse_to_variant(CONCAT('{"k":', number, '}')))
+        FROM numbers("number" = "1")
+    """
 
     setBeConfigTemporary([variant_throw_exeception_on_invalid_json: true]) {
         order_qt_parse_error_to_null """
