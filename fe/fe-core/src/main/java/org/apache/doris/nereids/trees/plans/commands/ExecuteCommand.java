@@ -166,7 +166,8 @@ public class ExecuteCommand extends Command {
         if (executor.getContext().getStatementContext().isShortCircuitQuery()) {
             // cache short-circuit plan
             preparedStmtCtx.shortCircuitQueryContext = Optional.of(
-                    new ShortCircuitQueryContext(executor.planner(), (Queriable) executor.getParsedStmt()));
+                    new ShortCircuitQueryContext(executor.planner(), (Queriable) executor.getParsedStmt(),
+                            ctx.getSessionVariable().isEnableVariantV2()));
             statementContext.setShortCircuitQueryContext(preparedStmtCtx.shortCircuitQueryContext.get());
         }
     }

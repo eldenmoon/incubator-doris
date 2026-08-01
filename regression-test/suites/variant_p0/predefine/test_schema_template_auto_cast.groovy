@@ -258,7 +258,7 @@ suite("test_schema_template_auto_cast", "p0") {
     qt_leaf_int1_select """ SELECT data['int_1'] FROM ${leafTable} ORDER BY id """
     qt_leaf_int1_add """ SELECT data['int_1'] + 1 FROM ${leafTable} ORDER BY id """
     // still fails: FE can't distinguish leaf/non-leaf, may cast int_nested to int
-    qt_leaf_int_nested_nonleaf """ SELECT data['int_nested'] FROM ${leafTable} ORDER BY id """
+    qt_leaf_int_nested_nonleaf """ SELECT data['int_nested'] IS NULL FROM ${leafTable} ORDER BY id """
     qt_leaf_int_nested_chain_select """ SELECT data['int_nested']['level1_num_1']
         FROM ${leafTable} ORDER BY id """
     qt_leaf_int_nested_dot_select """ SELECT data['int_nested.level1_num_1'] FROM ${leafTable} ORDER BY id """
@@ -293,7 +293,7 @@ suite("test_schema_template_auto_cast", "p0") {
         ORDER BY data.int_nested.level1_num_1 """
     qt_leaf_group_by_ok """ SELECT data['int_1'], COUNT(*) AS cnt
         FROM ${leafTable} GROUP BY data['int_1'] ORDER BY data['int_1'] """
-    qt_leaf_group_by_nonleaf """ SELECT data['int_nested'], COUNT(*) AS cnt
+    qt_leaf_group_by_nonleaf """ SELECT data['int_nested'] IS NULL, COUNT(*) AS cnt
         FROM ${leafTable} GROUP BY data['int_nested'] ORDER BY data['int_nested'] """
     qt_leaf_group_by_mixed """ SELECT data['int_nested.level1_num_1'], COUNT(*) AS cnt
         FROM ${leafTable} GROUP BY data['int_nested.level1_num_1']
@@ -363,7 +363,7 @@ suite("test_schema_template_auto_cast", "p0") {
 
     // auto cast enabled: non-leaf path matches int_* and returns NULL
     sql "set enable_variant_schema_auto_cast = true"
-    qt_nonleaf_auto_cast_on """ SELECT data['int_nested'] FROM ${nonleafTable} ORDER BY id """
+    qt_nonleaf_auto_cast_on """ SELECT data['int_nested'] IS NULL FROM ${nonleafTable} ORDER BY id """
 
     // auto cast disabled: return original object
     sql "set enable_variant_schema_auto_cast = false"

@@ -351,5 +351,3 @@ suite("test_variant_external_meta_integration", "nonConcurrent") {
     sql "DROP TABLE IF EXISTS test_distinct"
 
 }
-
-

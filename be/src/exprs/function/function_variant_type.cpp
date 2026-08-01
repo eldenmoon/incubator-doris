@@ -14,12 +14,14 @@
 // KIND, either express or implied.  See the License for the
 // specific language governing permissions and limitations
 // under the License.
-#include <glog/logging.h>
+#include <map>
+#include <span>
 
 #include "core/column/column_nullable.h"
+#include "core/column/column_string.h"
 #include "core/column/column_variant.h"
+#include "core/column/column_vector.h"
 #include "core/column/variant_v2/column_variant_v2.h"
-#include "exec/common/variant_util.h"
 #include "exprs/function/simple_function_factory.h"
 #include "util/string_util.h"
 
@@ -28,6 +30,29 @@ class FunctionContext;
 } // namespace doris
 
 namespace doris {
+
+namespace {
+
+using TypeInfo = std::map<std::string, std::string>;
+
+void append_type_info_json(ColumnString& output, const TypeInfo& type_info) {
+    VectorBufferWriter writer(output);
+    writer.write_char('{');
+    bool first = true;
+    for (const auto& [key, value] : type_info) {
+        if (!first) {
+            writer.write_char(',');
+        }
+        first = false;
+        writer.write_json_string(key);
+        writer.write_c_string(":");
+        writer.write_json_string(value);
+    }
+    writer.write_char('}');
+    writer.commit();
+}
+
+} // namespace
 
 // get data type of variant column
 class FunctionVariantType : public IFunction {
@@ -39,15 +64,15 @@ public:
 
     size_t get_number_of_arguments() const override { return 1; }
 
+    bool use_default_implementation_for_nulls() const override { return false; }
+
     DataTypePtr get_return_type_impl(const DataTypes& arguments) const override {
         return make_nullable(std::make_shared<DataTypeString>());
     }
 
-    std::map<std::string, std::string> get_type_info(const ColumnVariant& column,
-                                                     size_t row) const {
-        std::map<std::string, std::string> result;
-        Field field = column[row];
-        const auto& variant_map = field.get<TYPE_VARIANT>();
+    TypeInfo get_type_info(const Field& field) const {
+        TypeInfo result;
+        const auto& variant_map = field.get<TYPE_VARIANT>().legacy_map();
         for (const auto& [key, value] : variant_map) {
             if (key.empty() && value.base_scalar_type_id == PrimitiveType::TYPE_JSONB &&
                 value.num_dimensions == 0 && value.field.get<TYPE_JSONB>().get_size() == 0) {
@@ -67,46 +92,42 @@ public:
         const ColumnPtr materialized =
                 block.get_by_position(arguments[0]).column->convert_to_full_column_if_const();
         const IColumn* physical = materialized.get();
+        std::span<const NullMap::value_type> outer_nulls;
         if (const auto* nullable = check_and_get_column<ColumnNullable>(physical)) {
+            outer_nulls = nullable->get_null_map_data();
             physical = &nullable->get_nested_column();
         }
+        auto result_column = ColumnString::create();
+        auto result_nulls = ColumnUInt8::create();
+        result_nulls->reserve(input_rows_count);
+
         if (check_and_get_column<ColumnVariantV2>(physical) != nullptr) {
+            // Encoded V2 values do not retain every V1 declared type distinction (for example,
+            // integer widths, LARGEINT/DECIMAL, DATE, and IP types), so a partial implementation
+            // would silently change the path-to-type contract.
             return Status::NotSupported(
                     "function variant_type does not support ColumnVariantV2 execution");
         }
 
         const auto& arg_column = assert_cast<const ColumnVariant&>(*physical);
-        auto result_column = ColumnString::create();
-
         for (size_t i = 0; i < input_rows_count; ++i) {
-            auto type_info = get_type_info(arg_column, i);
-
-            // Use ColumnString as buffer for JSON serialization
-            VectorBufferWriter writer(*result_column.get());
-
-            // Write JSON object
-            writer.write_char('{');
-
-            bool first = true;
-            for (const auto& [key, value] : type_info) {
-                if (!first) {
-                    writer.write_char(',');
-                }
-                first = false;
-
-                // Write key
-                writer.write_json_string(key);
-                writer.write_c_string(":");
-
-                // Write value
-                writer.write_json_string(value);
+            if (!outer_nulls.empty() && outer_nulls[i] != 0) {
+                result_column->insert_default();
+                result_nulls->insert_value(1);
+                continue;
             }
-
-            writer.write_char('}');
-            writer.commit();
+            const Field field = arg_column[i];
+            if (field.is_null()) {
+                result_column->insert_default();
+                result_nulls->insert_value(1);
+                continue;
+            }
+            auto type_info = get_type_info(field);
+            append_type_info_json(*result_column, type_info);
+            result_nulls->insert_value(0);
         }
-        auto result_nullable_column = make_nullable(result_column->get_ptr());
-        block.replace_by_position(result, std::move(result_nullable_column));
+        block.replace_by_position(
+                result, ColumnNullable::create(std::move(result_column), std::move(result_nulls)));
         return Status::OK();
     }
 };

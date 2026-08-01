@@ -16,9 +16,81 @@
 // under the License.
 
 suite("variant_compute_v2", "p0,nonConcurrent") {
+    sql "SET enable_variant_v2 = true"
     sql "SET enable_nereids_planner = true"
     sql "SET enable_fallback_to_original_planner = false"
+    def segmentScanTable = "variant_v2_segment_scan"
+    sql "DROP TABLE IF EXISTS ${segmentScanTable}"
+    sql """
+        CREATE TABLE ${segmentScanTable} (
+            id INT,
+            v VARIANT<PROPERTIES("variant_max_subcolumns_count" = "2")> NULL
+        )
+        DUPLICATE KEY(id)
+        DISTRIBUTED BY HASH(id) BUCKETS 1
+        PROPERTIES("replication_num" = "1")
+    """
+
+    // INSERT VALUES does not cross the V2-to-V1 compute boundary. Storage still writes the
+    // legacy representation, and the enabled session reads the segment through ColumnVariantV2.
+    sql """
+        INSERT INTO ${segmentScanTable} VALUES
+        (0, '{"dense":1,"nested":{"value":"a"},"sparse":100}'),
+        (1, '{"dense":2,"nested":{"value":"b"}}'),
+        (2, '{"dense":3,"nested":{"value":"c"},"sparse":300}'),
+        (3, NULL)
+    """
+
+    // V2-to-V1 CAST is intentionally unsupported. Keep the write statement on the legacy
+    // representation, then switch back to V2 to verify the target segment through the new reader.
+    def insertTargetTable = "variant_v2_insert_target"
+    sql "DROP TABLE IF EXISTS ${insertTargetTable}"
+    sql """
+        CREATE TABLE ${insertTargetTable} (
+            id INT,
+            v VARIANT<PROPERTIES("variant_max_subcolumns_count" = "2")> NULL
+        )
+        DUPLICATE KEY(id)
+        DISTRIBUTED BY HASH(id) BUCKETS 1
+        PROPERTIES("replication_num" = "1")
+    """
+    sql "SET enable_variant_v2 = false"
+    sql """
+        INSERT INTO ${insertTargetTable}
+        SELECT id, v FROM ${segmentScanTable}
+    """
     sql "SET enable_variant_v2 = true"
+    order_qt_legacy_insert_select """
+        SELECT id, CAST(v AS STRING), v IS NULL
+        FROM ${insertTargetTable}
+        ORDER BY id
+    """
+
+    order_qt_segment_scan """
+        SELECT id, CAST(v AS STRING), v IS NULL
+        FROM ${segmentScanTable}
+        ORDER BY id
+    """
+
+    order_qt_segment_scan_subpaths """
+        SELECT id,
+               CAST(v['dense'] AS BIGINT),
+               CAST(v['nested']['value'] AS STRING),
+               CAST(v['sparse'] AS BIGINT)
+        FROM ${segmentScanTable}
+        ORDER BY id
+    """
+
+    // V2 encoding does not retain enough source-type provenance to reproduce the V1
+    // path-to-declared-type contract. Keep the boundary explicit until that contract changes.
+    test {
+        sql """
+            SELECT variant_type(v)
+            FROM ${segmentScanTable}
+            LIMIT 1
+        """
+        exception "variant_type does not support ColumnVariantV2 execution"
+    }
 
     qt_constant_fold """
         SELECT CAST(parse_to_variant('{"folded":[1,true,null]}') AS STRING)
@@ -705,4 +777,6 @@ suite("variant_compute_v2", "p0,nonConcurrent") {
         LATERAL VIEW explode_outer(v) exploded AS element
         ORDER BY id, element IS NULL, CAST(element AS STRING)
     """
+
+    sql "DROP TABLE IF EXISTS ${segmentScanTable}"
 }

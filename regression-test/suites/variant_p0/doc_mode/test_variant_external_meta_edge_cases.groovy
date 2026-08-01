@@ -273,5 +273,3 @@ suite("variant_external_meta_doc_value", "p0") {
     sql "DROP TABLE IF EXISTS test_config_toggle"
     
 }
-
-

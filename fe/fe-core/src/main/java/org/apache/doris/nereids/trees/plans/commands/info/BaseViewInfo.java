@@ -68,6 +68,7 @@ import org.apache.doris.nereids.trees.plans.visitor.DefaultPlanVisitor;
 import org.apache.doris.nereids.types.DataType;
 import org.apache.doris.nereids.types.NullType;
 import org.apache.doris.nereids.types.TinyIntType;
+import org.apache.doris.nereids.types.VariantType;
 import org.apache.doris.nereids.util.TypeCoercionUtils;
 import org.apache.doris.nereids.util.Utils;
 import org.apache.doris.qe.ConnectContext;
@@ -169,8 +170,9 @@ public class BaseViewInfo {
     protected void createFinalCols(List<Slot> outputs) throws org.apache.doris.common.AnalysisException {
         if (simpleColumnDefinitions.isEmpty()) {
             for (Slot output : outputs) {
-                DataType dataType = TypeCoercionUtils.replaceSpecifiedType(output.getDataType(), NullType.class,
-                        TinyIntType.INSTANCE);
+                DataType dataType = TypeCoercionUtils.replaceSpecifiedType(
+                        VariantType.withComputeV2(output.getDataType(), false),
+                        NullType.class, TinyIntType.INSTANCE);
                 Column column = new Column(output.getName(), dataType.toCatalogDataType(), output.nullable());
                 finalCols.add(column);
             }
@@ -180,8 +182,9 @@ public class BaseViewInfo {
             }
             for (int i = 0; i < simpleColumnDefinitions.size(); ++i) {
                 Slot output = outputs.get(i);
-                DataType dataType = TypeCoercionUtils.replaceSpecifiedType(output.getDataType(), NullType.class,
-                        TinyIntType.INSTANCE);
+                DataType dataType = TypeCoercionUtils.replaceSpecifiedType(
+                        VariantType.withComputeV2(output.getDataType(), false),
+                        NullType.class, TinyIntType.INSTANCE);
                 Column column = new Column(simpleColumnDefinitions.get(i).getName(),
                         dataType.toCatalogDataType(), output.nullable());
                 column.setComment(simpleColumnDefinitions.get(i).getComment());

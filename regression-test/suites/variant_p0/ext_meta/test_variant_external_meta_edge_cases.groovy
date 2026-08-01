@@ -292,5 +292,3 @@ suite("test_variant_external_meta_edge_cases", "nonConcurrent") {
     sql "DROP TABLE IF EXISTS test_config_toggle"
     
 }
-
-
