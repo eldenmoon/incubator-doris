@@ -1466,7 +1466,8 @@ public class StmtExecutor {
             ShortCircuitQueryContext shortCircuitQueryContext =
                     statementContext.getShortCircuitQueryContext() != null
                             ? statementContext.getShortCircuitQueryContext()
-                            : new ShortCircuitQueryContext(planner, (Queriable) parsedStmt);
+                            : new ShortCircuitQueryContext(planner, (Queriable) parsedStmt,
+                                    context.getSessionVariable().isEnableVariantV2());
             coordBase = new PointQueryExecutor(shortCircuitQueryContext,
                     context.getSessionVariable().getMaxMsgSizeOfResultReceiver());
             context.getState().setIsQuery(true);

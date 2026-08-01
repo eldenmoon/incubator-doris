@@ -1036,7 +1036,7 @@ public class ExpressionAnalyzer extends SubExprAnalyzer<ExpressionRewriteContext
                 && cascadesContext.getConnectContext().getSessionVariable().isEnableVariantV2()
                 && VariantType.containsVariant(cast.getDataType())) {
             // TODO: Remove this V1/V2 compatibility conversion after legacy Variant V1 is removed.
-            cast = cast.withTargetType(VariantType.toComputeV2(cast.getDataType()));
+            cast = cast.withTargetType(VariantType.withComputeV2(cast.getDataType(), true));
         }
 
         // NOTICE: just for compatibility with legacy planner.

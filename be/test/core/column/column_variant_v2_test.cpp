@@ -218,6 +218,18 @@ struct OwnedEncodedData {
     }
 };
 
+OwnedEncodedData late_invalid_encoded_rows() {
+    const VariantField first = encode_json("1");
+    const VariantField second = encode_json("2");
+    OwnedEncodedData invalid;
+    const uint32_t metadata_id = invalid.add_metadata(first.ref().metadata);
+    invalid.add_value(first.ref(), metadata_id);
+    invalid.add_value(second.ref(), metadata_id);
+    invalid.value_bytes.push_back('\0');
+    ++invalid.value_offsets.back();
+    return invalid;
+}
+
 template <typename Function>
 void expect_not_implemented(Function&& function, std::string_view marker) {
     try {
@@ -781,6 +793,46 @@ TEST(ColumnVariantV2Test, EncodedScalarObjectAndArray) {
     column->sanity_check();
 }
 
+TEST(ColumnVariantV2Test, FieldRoundTripOwnsEncodedAndTypedRows) {
+    const std::string raw = noncanonical_object_field_bytes();
+    const VariantField noncanonical = VariantField::from_bytes({raw.data(), raw.size()});
+    auto encoded = ColumnVariantV2::create();
+    insert_encoded_field(*encoded, noncanonical);
+
+    Field encoded_field_value = (*encoded)[0];
+    ASSERT_EQ(encoded_field_value.get_type(), TYPE_VARIANT);
+    const VariantField& owned = encoded_field_value.get<TYPE_VARIANT>();
+    EXPECT_FALSE(owned.is_legacy());
+    EXPECT_EQ(as_view(owned.bytes()), raw);
+
+    encoded->clear();
+    auto encoded_destination = ColumnVariantV2::create();
+    encoded_destination->insert(encoded_field_value);
+    ASSERT_EQ(encoded_destination->size(), 1);
+    const VariantField inserted = VariantField::from_ref(encoded_destination->get_value_ref(0));
+    EXPECT_EQ(as_view(inserted.bytes()), raw);
+
+    constexpr std::array<int32_t, 2> VALUES {7, 0};
+    constexpr std::array<uint8_t, 2> NULLS {0, 1};
+    auto typed = typed_int32(VALUES, NULLS);
+    auto typed_destination = ColumnVariantV2::create();
+    for (size_t row = 0; row < typed->size(); ++row) {
+        Field field;
+        typed->get(row, field);
+        typed_destination->insert(field);
+    }
+    expect_int32_rows(*typed_destination, VALUES, NULLS);
+
+    auto sql_null_destination = ColumnVariantV2::create();
+    sql_null_destination->insert(Field());
+    ASSERT_EQ(sql_null_destination->size(), 1);
+    EXPECT_TRUE(sql_null_destination->get_value_ref(0).is_null());
+
+    Field legacy = Field::create_field<TYPE_VARIANT>(VariantMap {});
+    EXPECT_THROW(typed_destination->insert(legacy), Exception);
+    EXPECT_THROW(typed->get(typed->size(), encoded_field_value), Exception);
+}
+
 TEST(ColumnVariantV2Test, PreservesLegalNoncanonicalBytes) {
     const std::string raw = noncanonical_object_field_bytes();
     const VariantField noncanonical = VariantField::from_bytes({raw.data(), raw.size()});
@@ -827,6 +879,77 @@ TEST(ColumnVariantV2Test, InsertRejectsMalformedMetadataAndTrailingValueBytes) {
     trailing_value.value_offsets = {0, 2};
     auto value_column = ColumnVariantV2::create();
     EXPECT_THROW(value_column->insert_encoded_rows(trailing_value.view()), Exception);
+}
+
+TEST(ColumnVariantV2Test, InvalidEncodedRowsDoNotChangeTypedState) {
+    constexpr std::array<int32_t, 1> TYPED_VALUES {7};
+    constexpr std::array<uint8_t, 1> TYPED_NULLS {0};
+    const OwnedEncodedData invalid = late_invalid_encoded_rows();
+    for (const bool omit_single_metadata_ids : {false, true}) {
+        SCOPED_TRACE(omit_single_metadata_ids ? "compact metadata" : "explicit metadata ids");
+        auto typed = typed_int32(TYPED_VALUES, TYPED_NULLS);
+        const IColumn* typed_storage = subcolumns(*typed).front().get();
+        EXPECT_THROW(typed->insert_encoded_rows(invalid.view(omit_single_metadata_ids)), Exception);
+        EXPECT_TRUE(typed->is_typed());
+        if (typed->is_typed()) {
+            EXPECT_EQ(subcolumns(*typed).front().get(), typed_storage);
+            expect_int32_rows(*typed, TYPED_VALUES, TYPED_NULLS);
+            typed->sanity_check();
+        }
+    }
+}
+
+TEST(ColumnVariantV2Test, InvalidEncodedRowsDoNotPartiallyAppendEncodedState) {
+    const OwnedEncodedData invalid = late_invalid_encoded_rows();
+    for (const bool omit_single_metadata_ids : {false, true}) {
+        SCOPED_TRACE(omit_single_metadata_ids ? "compact metadata" : "explicit metadata ids");
+        auto encoded = ColumnVariantV2::create();
+        insert_encoded_field(*encoded, encode_json(R"({"old":9})"));
+        const std::vector<ColumnPtr> old_subcolumns = subcolumns(*encoded);
+        const size_t old_size = encoded->size();
+        const size_t old_metadata_count = metadata_count(*encoded);
+        std::vector<size_t> old_subcolumn_sizes;
+        old_subcolumn_sizes.reserve(old_subcolumns.size());
+        for (const auto& subcolumn : old_subcolumns) {
+            old_subcolumn_sizes.push_back(subcolumn->size());
+        }
+        const std::string old_value = json_at(*encoded, 0);
+
+        EXPECT_THROW(encoded->insert_encoded_rows(invalid.view(omit_single_metadata_ids)),
+                     Exception);
+        const std::vector<ColumnPtr> new_subcolumns = subcolumns(*encoded);
+        EXPECT_EQ(encoded->size(), old_size);
+        EXPECT_EQ(metadata_count(*encoded), old_metadata_count);
+        ASSERT_EQ(new_subcolumns.size(), old_subcolumns.size());
+        for (size_t index = 0; index < old_subcolumns.size(); ++index) {
+            EXPECT_EQ(new_subcolumns[index]->size(), old_subcolumn_sizes[index]) << index;
+        }
+        EXPECT_EQ(json_at(*encoded, 0), old_value);
+        encoded->sanity_check();
+    }
+}
+
+TEST(ColumnVariantV2Test, EmptyEncodedAppendsPreserveTypedState) {
+    constexpr std::array<int32_t, 1> VALUES {7};
+    constexpr std::array<uint8_t, 1> NULLS {0};
+
+    auto rows_destination = typed_int32(VALUES, NULLS);
+    const IColumn* rows_storage = subcolumns(*rows_destination).front().get();
+    OwnedEncodedData empty;
+    empty.add_metadata(encode_json("1").ref().metadata);
+    rows_destination->insert_encoded_rows(empty.view(true));
+    ASSERT_TRUE(rows_destination->is_typed());
+    EXPECT_EQ(subcolumns(*rows_destination).front().get(), rows_storage);
+    expect_int32_rows(*rows_destination, VALUES, NULLS);
+
+    auto batch_destination = typed_int32(VALUES, NULLS);
+    const IColumn* batch_storage = subcolumns(*batch_destination).front().get();
+    JsonStringToVariantEncoder encoder;
+    VariantBatchBuilder empty_batch = encoder.finish_batch();
+    batch_destination->insert_encoded_batch(empty_batch);
+    ASSERT_TRUE(batch_destination->is_typed());
+    EXPECT_EQ(subcolumns(*batch_destination).front().get(), batch_storage);
+    expect_int32_rows(*batch_destination, VALUES, NULLS);
 }
 
 TEST(ColumnVariantV2Test, ReadViewBorrowsValidatedEncodedState) {
@@ -2847,14 +2970,10 @@ TEST(ColumnVariantV2Test, ETCrossCheckTemporalClassMatrix) {
                                    ntz_representations[2], 0);
 }
 
-TEST(ColumnVariantV2Test, TypedUnsupportedInterfacesStayUnsupported) {
+TEST(ColumnVariantV2Test, TypedPhysicalAndOrderingInterfacesStayUnsupported) {
     constexpr std::array<int32_t, 1> VALUES {1};
     constexpr std::array<uint8_t, 1> NULLS {0};
     auto typed = typed_int32(VALUES, NULLS);
-    Field field;
-    expect_not_implemented([&] { static_cast<void>((*typed)[0]); }, "T1.7b");
-    expect_not_implemented([&] { typed->get(0, field); }, "T1.7b");
-    expect_not_implemented([&] { typed->insert(field); }, "T1.7b");
     expect_not_implemented([&] { static_cast<void>(typed->get_data_at(0)); },
                            "intentionally unsupported");
     HybridSorter sorter;
@@ -2888,16 +3007,10 @@ TEST(ColumnVariantV2Test, ReplaceNullPayloadsWithCanonicalDefault) {
     EXPECT_EQ(json_at(*typed, 2), "{}");
 }
 
-TEST(ColumnVariantV2Test, DeferredAndUnsupportedInterfaces) {
+TEST(ColumnVariantV2Test, EncodedPhysicalAndOrderingInterfacesStayUnsupported) {
     auto column = ColumnVariantV2::create();
     auto source = ColumnVariantV2::create();
     insert_encoded_field(*source, encode_json("1"));
-    Field field;
-
-    expect_not_implemented([&] { static_cast<void>((*column)[0]); }, "T1.7b");
-    expect_not_implemented([&] { column->get(0, field); }, "T1.7b");
-    expect_not_implemented([&] { column->insert(field); }, "T1.7b");
-    expect_not_implemented([&] { column->insert_duplicate_fields(field, 1); }, "T1.7b");
 
     expect_not_implemented([&] { static_cast<void>(column->get_data_at(0)); },
                            "intentionally unsupported");

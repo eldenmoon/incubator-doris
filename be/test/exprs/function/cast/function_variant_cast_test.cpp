@@ -28,6 +28,7 @@
 #include "core/data_type/data_type_number.h"
 #include "core/data_type/data_type_string.h"
 #include "core/data_type/data_type_variant.h"
+#include "core/data_type/data_type_variant_v2.h"
 #include "core/data_type/define_primitive_type.h"
 #include "core/data_type/primitive_type.h"
 #include "core/field.h"
@@ -39,7 +40,7 @@ namespace doris {
 static doris::Field construct_variant_map(
         const std::vector<std::pair<std::string, doris::Field>>& key_and_values) {
     doris::Field res = Field::create_field<TYPE_VARIANT>(VariantMap {});
-    auto& object = res.get<TYPE_VARIANT>();
+    auto& object = res.get<TYPE_VARIANT>().legacy_map();
     for (const auto& [k, v] : key_and_values) {
         PathInData path(k);
         object.try_emplace(path, v);
@@ -706,6 +707,29 @@ TEST(FunctionVariantCast, CastFromVariantStrictModeRegression) {
         ASSERT_EQ(null_map[2], 0);
         ASSERT_EQ(result_data.get_element(2), 100);
     }
+}
+
+TEST(FunctionVariantCast, VariantV2ToLegacyIsUnsupported) {
+    auto source_type = std::make_shared<DataTypeVariantV2>();
+    auto source = source_type->create_column();
+    source->insert_default();
+    auto target_type = std::make_shared<DataTypeVariant>();
+    ColumnsWithTypeAndName arguments {{source->get_ptr(), source_type, "source"},
+                                      {nullptr, target_type, "target"}};
+    auto function = SimpleFunctionFactory::instance().get_function("CAST", arguments, target_type);
+    ASSERT_NE(function, nullptr);
+
+    Block block {arguments};
+    const size_t result_column = block.columns();
+    block.insert({nullptr, target_type, "result"});
+    RuntimeState state;
+    auto context = FunctionContext::create_context(&state, {}, {});
+    const Status status =
+            function->execute(context.get(), block, {0}, result_column, source->size());
+    EXPECT_TRUE(status.is<ErrorCode::INVALID_ARGUMENT>()) << status;
+    EXPECT_NE(status.to_string().find(
+                      "Cast between legacy Variant and compute-only Variant V2 is not supported"),
+              std::string::npos);
 }
 
 } // namespace doris

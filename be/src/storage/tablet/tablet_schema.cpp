@@ -558,24 +558,6 @@ void TabletColumn::init_from_pb(const ColumnPB& column) {
     }
 }
 
-TabletColumn TabletColumn::create_materialized_variant_column(const std::string& root,
-                                                              const std::vector<std::string>& paths,
-                                                              int32_t parent_unique_id,
-                                                              int32_t max_subcolumns_count,
-                                                              bool enable_doc_mode) {
-    TabletColumn subcol;
-    subcol.set_type(FieldType::OLAP_FIELD_TYPE_VARIANT);
-    subcol.set_is_nullable(true);
-    subcol.set_unique_id(-1);
-    subcol.set_parent_unique_id(parent_unique_id);
-    PathInData path(root, paths);
-    subcol.set_path_info(path);
-    subcol.set_name(path.get_path());
-    subcol.set_variant_max_subcolumns_count(max_subcolumns_count);
-    subcol.set_variant_enable_doc_mode(enable_doc_mode);
-    return subcol;
-}
-
 void TabletColumn::to_schema_pb(ColumnPB* column) const {
     column->set_unique_id(_unique_id);
     column->set_name(_col_name);

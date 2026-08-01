@@ -30,6 +30,7 @@ import org.apache.doris.nereids.trees.expressions.functions.ExplicitlyCastableSi
 import org.apache.doris.nereids.trees.expressions.functions.FunctionBuilder;
 import org.apache.doris.nereids.trees.expressions.functions.PropagateNullable;
 import org.apache.doris.nereids.trees.expressions.functions.scalar.BitmapAndNotCount;
+import org.apache.doris.nereids.trees.expressions.functions.scalar.GetVariantType;
 import org.apache.doris.nereids.trees.expressions.functions.scalar.ParseToVariant;
 import org.apache.doris.nereids.trees.expressions.functions.scalar.ScalarFunction;
 import org.apache.doris.nereids.trees.expressions.functions.scalar.Substring;
@@ -139,8 +140,9 @@ public class FunctionRegistryTest implements MemoPatternMatchSupported {
 
     @Test
     public void testVariantV2SessionSelectsComputeResultType() {
-        connectContext.getSessionVariable().enableVariantV2 = true;
+        boolean originalEnableVariantV2 = connectContext.getSessionVariable().enableVariantV2;
         try {
+            connectContext.getSessionVariable().enableVariantV2 = true;
             Cast parsedCast = (Cast) new NereidsParser().parseExpression("cast(1 as variant)");
             Assertions.assertFalse(((VariantType) parsedCast.getDataType()).isComputeV2());
 
@@ -149,34 +151,61 @@ public class FunctionRegistryTest implements MemoPatternMatchSupported {
                             + "cast(parse_to_variant('[1]') as array<variant>), "
                             + "try_cast(1 as variant), convert(1, variant), "
                             + "cast('{}' as map<string, variant>), "
-                            + "cast('{}' as struct<a:variant>)")
+                            + "cast('{}' as struct<a:variant>), try_parse_to_variant('{')")
                     .matches(
-                            logicalOneRowRelation().when(oneRowRelation -> {
-                                VariantType parsed = (VariantType) oneRowRelation.getProjects().get(0)
-                                        .child(0).getDataType();
-                                VariantType cast = (VariantType) oneRowRelation.getProjects().get(1)
-                                        .child(0).getDataType();
-                                ArrayType array = (ArrayType) oneRowRelation.getProjects().get(2)
-                                        .child(0).getDataType();
-                                Assertions.assertTrue(parsed.isComputeV2());
-                                Assertions.assertTrue(cast.isComputeV2());
-                                Assertions.assertTrue(((VariantType) array.getItemType()).isComputeV2());
-                                Assertions.assertTrue(((VariantType) oneRowRelation.getProjects().get(3)
-                                        .child(0).getDataType()).isComputeV2());
-                                Assertions.assertTrue(((VariantType) oneRowRelation.getProjects().get(4)
-                                        .child(0).getDataType()).isComputeV2());
-                                MapType map = (MapType) oneRowRelation.getProjects().get(5)
-                                        .child(0).getDataType();
-                                Assertions.assertTrue(((VariantType) map.getValueType()).isComputeV2());
-                                StructType struct = (StructType) oneRowRelation.getProjects().get(6)
-                                        .child(0).getDataType();
-                                Assertions.assertTrue(((VariantType) struct.getFields().get(0)
-                                        .getDataType()).isComputeV2());
-                                return true;
-                            })
+                            logicalResultSink(
+                                    logicalOneRowRelation().when(oneRowRelation -> {
+                                        VariantType parsed = (VariantType) oneRowRelation.getProjects().get(0)
+                                                .child(0).getDataType();
+                                        VariantType cast = (VariantType) oneRowRelation.getProjects().get(1)
+                                                .child(0).getDataType();
+                                        ArrayType array = (ArrayType) oneRowRelation.getProjects().get(2)
+                                                .child(0).getDataType();
+                                        Assertions.assertTrue(parsed.isComputeV2());
+                                        Assertions.assertTrue(cast.isComputeV2());
+                                        Assertions.assertTrue(((VariantType) array.getItemType()).isComputeV2());
+                                        Assertions.assertTrue(((VariantType) oneRowRelation.getProjects().get(3)
+                                                .child(0).getDataType()).isComputeV2());
+                                        Assertions.assertTrue(((VariantType) oneRowRelation.getProjects().get(4)
+                                                .child(0).getDataType()).isComputeV2());
+                                        MapType map = (MapType) oneRowRelation.getProjects().get(5)
+                                                .child(0).getDataType();
+                                        Assertions.assertTrue(((VariantType) map.getValueType()).isComputeV2());
+                                        StructType struct = (StructType) oneRowRelation.getProjects().get(6)
+                                                .child(0).getDataType();
+                                        Assertions.assertTrue(((VariantType) struct.getFields().get(0)
+                                                .getDataType()).isComputeV2());
+                                        Assertions.assertTrue(((VariantType) oneRowRelation.getProjects().get(7)
+                                                .child(0).getDataType()).isComputeV2());
+                                        return true;
+                                    }))
                     );
         } finally {
-            connectContext.getSessionVariable().enableVariantV2 = false;
+            connectContext.getSessionVariable().enableVariantV2 = originalEnableVariantV2;
+        }
+    }
+
+    @Test
+    public void testVariantTypePreservesV2Argument() {
+        boolean originalEnableVariantV2 = connectContext.getSessionVariable().enableVariantV2;
+        try {
+            connectContext.getSessionVariable().enableVariantV2 = true;
+            PlanChecker.from(connectContext)
+                    .analyze("select variant_type(parse_to_variant('{\"a\":1}'))")
+                    .matches(
+                            logicalResultSink(
+                                    logicalOneRowRelation().when(oneRowRelation -> {
+                                        GetVariantType function = (GetVariantType) oneRowRelation
+                                                .getProjects().get(0).child(0);
+                                        Assertions.assertTrue(((VariantType) function.child(0).getDataType())
+                                                .isComputeV2());
+                                        Assertions.assertTrue(((VariantType) function.getSignature()
+                                                .argumentsTypes.get(0)).isComputeV2());
+                                        return true;
+                                    }))
+                    );
+        } finally {
+            connectContext.getSessionVariable().enableVariantV2 = originalEnableVariantV2;
         }
     }
 

@@ -16,10 +16,10 @@
 // under the License.
 
 suite("test_variant_equality_contexts", "p0,nonConcurrent") {
+    sql "SET enable_variant_v2 = true"
     sql "SET enable_nereids_planner = true"
     sql "SET enable_fallback_to_original_planner = false"
     sql "SET enable_decimal256 = true"
-    sql "SET enable_variant_v2 = true"
     explain {
         sql """
             SELECT v, COUNT(*)
@@ -164,7 +164,9 @@ suite("test_variant_equality_contexts", "p0,nonConcurrent") {
     """
 
     test {
-        sql "SELECT CAST(CAST(1.23 AS DECIMAL(76, 2)) AS VARIANT)"
+        sql """
+            SELECT CAST(CAST(CAST(1.23 AS DECIMAL(76, 2)) AS VARIANT) AS STRING)
+        """
         exception "to Variant V2 is not supported"
     }
 

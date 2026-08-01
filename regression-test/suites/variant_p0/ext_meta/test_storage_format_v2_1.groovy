@@ -94,5 +94,3 @@ suite("test_storage_format_v2_1") {
     
     sql "DROP TABLE IF EXISTS ${tableName3}"
 }
-
-

@@ -69,6 +69,7 @@
 #include "core/data_type/data_type_nullable.h"
 #include "core/data_type/data_type_string.h"
 #include "core/data_type/data_type_variant.h"
+#include "core/data_type/data_type_variant_v2.h"
 #include "core/data_type/define_primitive_type.h"
 #include "core/data_type/get_least_supertype.h"
 #include "core/data_type/primitive_type.h"
@@ -381,7 +382,18 @@ Status cast_column(const ColumnWithTypeAndName& arg, const DataTypePtr& type, Co
     // nullable to Variant instead of the root of Variant
     // correct output: Nullable(Array(int)) -> Nullable(Variant(Nullable(Array(int))))
     // incorrect output: Nullable(Array(int)) -> Nullable(Variant(Array(int)))
-    if (type->get_primitive_type() == TYPE_VARIANT) {
+    // ColumnVariantV2 owns its encoded/typed representation and its CAST implementation preserves
+    // the outer null map. The manual root-wrapping path below is V1-only and would rebuild V2 as a
+    // legacy ColumnVariant.
+    const bool target_is_variant_v2 =
+            dynamic_cast<const DataTypeVariantV2*>(remove_nullable(type).get()) != nullptr;
+    const bool source_is_variant_v2 =
+            dynamic_cast<const DataTypeVariantV2*>(remove_nullable(arg.type).get()) != nullptr;
+    const bool is_variant_v2_to_v1 = source_is_variant_v2 &&
+                                     type->get_primitive_type() == TYPE_VARIANT &&
+                                     !target_is_variant_v2;
+    if (type->get_primitive_type() == TYPE_VARIANT && !target_is_variant_v2 &&
+        !source_is_variant_v2) {
         // If source column is variant, so the nullable info is different from dst column
         if (arg.type->get_primitive_type() == TYPE_VARIANT) {
             *result = type->is_nullable() ? make_nullable(arg.column) : remove_nullable(arg.column);
@@ -425,7 +437,15 @@ Status cast_column(const ColumnWithTypeAndName& arg, const DataTypePtr& type, Co
     ctx->set_jsonb_string_as_string(true);
     tmp_block.insert({nullptr, type, arg.name});
     // TODO(lihangyu): we should handle this error in strict mode
-    if (!function->execute(ctx.get(), tmp_block, {0}, result_column, arg.column->size())) {
+    Status cast_status =
+            function->execute(ctx.get(), tmp_block, {0}, result_column, arg.column->size());
+    if (!cast_status.ok()) {
+        // Variant V2 deliberately rejects source types without a physical encoding (currently
+        // Decimal256), and the legacy writer has no V2 bridge. Publishing the legacy all-null
+        // fallback in either case would silently lose stored values.
+        if (target_is_variant_v2 || is_variant_v2_to_v1) {
+            return cast_status;
+        }
         LOG_EVERY_N(WARNING, 100) << fmt::format("cast from {} to {}", arg.type->get_name(),
                                                  type->get_name());
         *result = type->create_column_const_with_default_value(arg.column->size())
@@ -497,9 +517,15 @@ void get_column_by_type(const DataTypePtr& data_type, const std::string& name, T
         return;
     }
     if (data_type->get_primitive_type() == PrimitiveType::TYPE_VARIANT) {
-        const auto* dt_variant = assert_cast<const DataTypeVariant*>(data_type.get());
-        column.set_variant_max_subcolumns_count(dt_variant->variant_max_subcolumns_count());
-        column.set_variant_enable_doc_mode(dt_variant->enable_doc_mode());
+        const auto* variant_v1 = typeid_cast<const DataTypeVariant*>(data_type.get());
+        const auto* variant_v2 = typeid_cast<const DataTypeVariantV2*>(data_type.get());
+        DORIS_CHECK(variant_v1 != nullptr || variant_v2 != nullptr);
+        column.set_variant_max_subcolumns_count(
+                variant_v2 != nullptr ? variant_v2->variant_max_subcolumns_count()
+                                      : variant_v1->variant_max_subcolumns_count());
+        column.set_variant_enable_doc_mode(variant_v2 != nullptr ? variant_v2->enable_doc_mode()
+                                                                 : variant_v1->enable_doc_mode());
+        column.set_variant_is_v2(variant_v2 != nullptr);
         return;
     }
     // size is not fixed when type is string or json

@@ -60,6 +60,7 @@ public class ShortCircuitQueryContext {
     public final OlapTable tbl;
     public final String tableName;
     private final long fileCacheQueryLimitBytes;
+    private final boolean enableVariantV2;
 
     public final OlapScanNode scanNode;
     public final Queriable analzyedQuery;
@@ -85,11 +86,13 @@ public class ShortCircuitQueryContext {
         return returnTypes;
     }
 
-    public ShortCircuitQueryContext(Planner planner, Queriable analzyedQuery) throws TException {
+    public ShortCircuitQueryContext(Planner planner, Queriable analzyedQuery, boolean enableVariantV2)
+            throws TException {
         this.planner = planner;
         this.serializedDescTable = ByteString.copyFrom(
                 new TSerializer().serialize(DescriptorToThriftConverter.toThrift(planner.getDescTable())));
         TQueryOptions options = planner.getQueryOptions() != null ? planner.getQueryOptions() : new TQueryOptions();
+        this.enableVariantV2 = enableVariantV2;
         this.fileCacheQueryLimitBytes = options.isSetFileCacheQueryLimitBytes()
                 ? options.getFileCacheQueryLimitBytes()
                 : -1;
@@ -120,7 +123,7 @@ public class ShortCircuitQueryContext {
 
     @VisibleForTesting
     ShortCircuitQueryContext(OlapTable tbl, String tableName, int schemaVersion,
-            long fileCacheQueryLimitBytes) {
+            long fileCacheQueryLimitBytes, boolean enableVariantV2) {
         this.planner = null;
         this.serializedDescTable = ByteString.EMPTY;
         this.serializedOutputExpr = ByteString.EMPTY;
@@ -132,13 +135,15 @@ public class ShortCircuitQueryContext {
         this.fileCacheQueryLimitBytes = fileCacheQueryLimitBytes;
         this.scanNode = null;
         this.analzyedQuery = null;
+        this.enableVariantV2 = enableVariantV2;
     }
 
     public boolean isReusable(ConnectContext ctx) {
         return !this.tbl.isDropped
                 && this.tbl.getBaseSchemaVersion() == this.schemaVersion
                 && Objects.equals(this.tableName, this.tbl.getName())
-                && this.fileCacheQueryLimitBytes == ctx.getSessionVariable().fileCacheQueryLimitBytes;
+                && this.fileCacheQueryLimitBytes == ctx.getSessionVariable().fileCacheQueryLimitBytes
+                && this.enableVariantV2 == ctx.getSessionVariable().isEnableVariantV2();
     }
 
     public void sanitize() {
