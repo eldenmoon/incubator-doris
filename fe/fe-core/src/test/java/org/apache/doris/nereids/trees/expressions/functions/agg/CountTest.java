@@ -17,6 +17,7 @@
 
 package org.apache.doris.nereids.trees.expressions.functions.agg;
 
+import org.apache.doris.common.Config;
 import org.apache.doris.common.Pair;
 import org.apache.doris.nereids.analyzer.UnboundSlot;
 import org.apache.doris.nereids.exceptions.AnalysisException;
@@ -45,17 +46,31 @@ class CountTest {
     }
 
     @Test
-    void testCountDistinctAllowsVariant() {
+    void testCountDistinctFollowsVariantConfig() {
         Count count = new Count(true, SlotReference.of("v", VariantType.INSTANCE));
-
-        Assertions.assertDoesNotThrow(count::checkLegalityAfterRewrite);
+        boolean originalEnableVariantV2 = Config.enable_variant_v2;
+        try {
+            Config.enable_variant_v2 = false;
+            Assertions.assertThrows(AnalysisException.class, count::checkLegalityAfterRewrite);
+            Config.enable_variant_v2 = true;
+            Assertions.assertDoesNotThrow(count::checkLegalityAfterRewrite);
+        } finally {
+            Config.enable_variant_v2 = originalEnableVariantV2;
+        }
     }
 
     @Test
-    void testMultiDistinctCountAllowsVariant() {
+    void testMultiDistinctCountFollowsVariantConfig() {
         MultiDistinctCount count = new MultiDistinctCount(SlotReference.of("v", VariantType.INSTANCE));
-
-        Assertions.assertDoesNotThrow(count::checkLegalityAfterRewrite);
+        boolean originalEnableVariantV2 = Config.enable_variant_v2;
+        try {
+            Config.enable_variant_v2 = false;
+            Assertions.assertThrows(AnalysisException.class, count::checkLegalityAfterRewrite);
+            Config.enable_variant_v2 = true;
+            Assertions.assertDoesNotThrow(count::checkLegalityAfterRewrite);
+        } finally {
+            Config.enable_variant_v2 = originalEnableVariantV2;
+        }
     }
 
     @Test

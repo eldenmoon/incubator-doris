@@ -306,8 +306,8 @@ public:
                                                      _options.timezone));
             return;
         case VariantPrimitiveId::TIMESTAMP_NTZ_NANOS:
-            write_scalar(_out, format_json_timestamp(value.get_timestamp_ntz_nanos(), 9, false,
-                                                     nullptr));
+            write_scalar(_out,
+                         format_json_timestamp(value.get_timestamp_ntz_nanos(), 9, false, nullptr));
             return;
         case VariantPrimitiveId::UUID:
             write_scalar(_out, format_json_uuid(value.get_uuid()));

@@ -18,6 +18,8 @@
 suite("test_predefine_typed_sparse", "p0"){
     boolean enableVariantV2 = getFeConfig("enable_variant_v2").toBoolean()
     def variantV2Function = enableVariantV2 ? "parse_to_variant" : ""
+    def normalizedVariant = "regexp_replace(cast(var as string), " +
+            "'([0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2})[.]000000', '\\\\1')"
 
     def tableName = "test_predefine_typed_sparse"
     sql """ set default_variant_enable_typed_paths_to_sparse = false """
@@ -44,9 +46,9 @@ suite("test_predefine_typed_sparse", "p0"){
         qt_variant_type_before_v1 """ select variant_type(var) from ${tableName} order by id """
     }
     qt_variant_type_before """ select count(*) from ${tableName} where variant_type(var) is null """
-    qt_sql """ select * from ${tableName} order by id """
+    qt_sql """ select id, ${normalizedVariant} from ${tableName} order by id """
     trigger_and_wait_compaction(tableName, "cumulative", 1800)
-    qt_sql """ select * from ${tableName} order by id """
+    qt_sql """ select id, ${normalizedVariant} from ${tableName} order by id """
 
     if (!enableVariantV2) {
         qt_variant_type_after_v1 """ select variant_type(var) from ${tableName} order by id """

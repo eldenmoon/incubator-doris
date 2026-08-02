@@ -8,12 +8,6 @@
 -- !v2_agg_replace_sink --
 1	{"dense":1,"nested":{"value":"a"},"sparse":100}
 
--- !v1_reader_on_v2_insert_target --
-0	{"dense":1,"nested":{"value":"a"},"sparse":100}	false
-1	{"dense":2,"nested":{"value":"b"}}	false
-2	{"dense":3,"nested":{"value":"c"},"sparse":300}	false
-3	\N	true
-
 -- !segment_scan --
 0	{"dense":1,"nested":{"value":"a"},"sparse":100}	false
 1	{"dense":2,"nested":{"value":"b"}}	false

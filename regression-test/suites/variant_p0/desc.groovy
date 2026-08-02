@@ -17,7 +17,6 @@
 
 suite("regression_test_variant_desc", "p0"){
     def variantV2Function = getFeConfig("enable_variant_v2").toBoolean() ? "parse_to_variant" : ""
-    def enableVariantV2 = getFeConfig("enable_variant_v2").toBoolean()
     def load_json_data = {table_name, file_name ->
         // load the json data
         streamLoad {
@@ -90,11 +89,7 @@ suite("regression_test_variant_desc", "p0"){
             union all select 1, ${variantV2Function}('{"a": 1123}') as json_str union all select 2, ${variantV2Function}('{"a" : 1234, "xxxx" : "kaana"}') as json_str from numbers("number" = "4096"))t order by 1 limit 4096 ;"""
         // select for sync rowsets
         sql "select * from sparse_columns limit 1"
-        if (enableVariantV2) {
-            sql """desc ${table_name}"""
-        } else {
-            qt_sql_1 """desc ${table_name}"""
-        }
+        qt_sql_1 """desc ${table_name}"""
         sql "truncate table sparse_columns"
         sql """insert into  sparse_columns select * from (select 0, ${variantV2Function}('{"a": 1123, "b" : [123, {"xx" : 1}], "c" : {"c" : 456, "d" : null, "e" : 7.111}, "xxxx" : "kaana", "zzz" : null, "oooo" : {"akakaka" : null, "xxxx" : {"xxx" : 123}}}') as json_str
             union all select 1, ${variantV2Function}('{"a" : 1234, "xxxx" : "kaana", "ddd" : {"aaa" : 123, "mxmxm" : [456, "789"]}}') as json_str from numbers("number" = "4096"))t order by 1 limit 4096 ;"""
@@ -112,11 +107,7 @@ suite("regression_test_variant_desc", "p0"){
         sql """insert into  ${table_name} select * from (select 0, ${variantV2Function}('{"a": 11245, "b" : [123, {"xx" : 1}], "c" : {"c" : 456, "d" : null, "e" : 7.111}}') as json_str
             union all select 1, ${variantV2Function}('{"a": 1123}') as json_str union all select 2, ${variantV2Function}('{"a" : 1234, "xxxx" : "kaana"}') as json_str from numbers("number" = "4096"))t order by 1 limit 4096 ;"""
         sql "select * from no_sparse_columns limit 1"
-        if (enableVariantV2) {
-            sql """desc ${table_name}"""
-        } else {
-            qt_sql_3 """desc ${table_name}"""
-        }
+        qt_sql_3 """desc ${table_name}"""
         sql "truncate table ${table_name}"
 
         // partition
@@ -129,17 +120,10 @@ suite("regression_test_variant_desc", "p0"){
             union all select 45001, ${variantV2Function}('{"a": 1123}') as json_str union all select 45002, ${variantV2Function}('{"a" : 1234, "xxxx" : "kaana"}') as json_str from numbers("number" = "4096"))t order by 1 limit 4096 ;"""
         sql """insert into  ${table_name} values(95000, ${variantV2Function}('{"a": 11245, "b" : [123, {"xx" : 1}], "c" : {"c" : 456, "d" : null, "e" : 7.111}}'))"""
         sql "select * from partition_data limit 1"
-        if (enableVariantV2) {
-            sql """desc ${table_name} partition p1"""
-            sql """desc ${table_name} partition p2"""
-            sql """desc ${table_name} partition p3"""
-            sql """desc ${table_name}"""
-        } else {
-            qt_sql_6_1 """desc ${table_name} partition p1"""
-            qt_sql_6_2 """desc ${table_name} partition p2"""
-            qt_sql_6_3 """desc ${table_name} partition p3"""
-            qt_sql_6 """desc ${table_name}"""
-        }
+        qt_sql_6_1 """desc ${table_name} partition p1"""
+        qt_sql_6_2 """desc ${table_name} partition p2"""
+        qt_sql_6_3 """desc ${table_name} partition p3"""
+        qt_sql_6 """desc ${table_name}"""
         sql "truncate table ${table_name}"
 
         // drop partition
@@ -154,17 +138,10 @@ suite("regression_test_variant_desc", "p0"){
         // drop p1
         sql """alter table ${table_name} drop partition p1"""
         sql "select * from drop_partition limit 1"
-        if (enableVariantV2) {
-            sql """desc ${table_name}"""
-            sql """desc ${table_name} partition p2"""
-            sql """desc ${table_name} partition p3"""
-            sql """desc ${table_name} partition (p2, p3)"""
-        } else {
-            qt_sql_7 """desc ${table_name}"""
-            qt_sql_7_1 """desc ${table_name} partition p2"""
-            qt_sql_7_2 """desc ${table_name} partition p3"""
-            qt_sql_7_3 """desc ${table_name} partition (p2, p3)"""
-        }
+        qt_sql_7 """desc ${table_name}"""
+        qt_sql_7_1 """desc ${table_name} partition p2"""
+        qt_sql_7_2 """desc ${table_name} partition p3"""
+        qt_sql_7_3 """desc ${table_name} partition (p2, p3)"""
         sql "truncate table ${table_name}"
 
         // more variant
@@ -182,11 +159,7 @@ suite("regression_test_variant_desc", "p0"){
         """
         sql """ insert into ${table_name} values (0, ${variantV2Function}('{"a": 1123, "b" : [123, {"xx" : 1}], "c" : {"c" : 456, "d" : null, "e" : 7.111}, "zzz" : null, "oooo" : {"akakaka" : null, "xxxx" : {"xxx" : 123}}}'), ${variantV2Function}('{"a": 11245, "xxxx" : "kaana"}'), ${variantV2Function}('{"a": 11245, "b" : [123, {"xx" : 1}], "c" : {"c" : 456, "d" : null, "e" : 7.111}}'))"""
          sql "select * from ${table_name} limit 1"
-        if (enableVariantV2) {
-            sql """desc ${table_name}"""
-        } else {
-            qt_sql_8 """desc ${table_name}"""
-        }
+        qt_sql_8 """desc ${table_name}"""
         sql "truncate table ${table_name}"
 
         // describe_extend_variant_column = false
@@ -203,17 +176,9 @@ suite("regression_test_variant_desc", "p0"){
         """
         sql """ insert into ${table_name} values (0, ${variantV2Function}('{"a": 1123, "b" : [123, {"xx" : 1}], "c" : {"c" : 456, "d" : null, "e" : 7.111}, "zzz" : null, "oooo" : {"akakaka" : null, "xxxx" : {"xxx" : 123}}}'))"""
          sql "select * from ${table_name} limit 1"
-        if (enableVariantV2) {
-            sql """desc ${table_name}"""
-        } else {
-            qt_sql_9 """desc ${table_name}"""
-        }
+        qt_sql_9 """desc ${table_name}"""
         sql """set describe_extend_variant_column = true"""
-        if (enableVariantV2) {
-            sql """desc ${table_name}"""
-        } else {
-            qt_sql_9_1 """desc ${table_name}"""
-        }
+        qt_sql_9_1 """desc ${table_name}"""
         sql "truncate table ${table_name}"
 
         // schema change: add varaint
@@ -223,38 +188,22 @@ suite("regression_test_variant_desc", "p0"){
         sql """INSERT INTO ${table_name} values(0, ${variantV2Function}('{"k1":1, "k2": "hello world", "k3" : [1234], "k4" : 1.10000, "k5" : [[123]]}'))"""
         sql "select * from ${table_name} limit 1"
         sql """set describe_extend_variant_column = true"""
-        if (enableVariantV2) {
-            sql """desc ${table_name}"""
-        } else {
-            qt_sql_10 """desc ${table_name}"""
-        }
+        qt_sql_10 """desc ${table_name}"""
         // add column
         sql "alter table ${table_name} add column v2 variant default null"
         sql """ insert into ${table_name} values (0, ${variantV2Function}('{"a": 1123, "b" : [123, {"xx" : 1}], "c" : {"c" : 456, "d" : null, "e" : 7.111}, "zzz" : null, "oooo" : {"akakaka" : null, "xxxx" : {"xxx" : 123}}}'),
                  ${variantV2Function}('{"a": 1123, "b" : [123, {"xx" : 1}], "c" : {"c" : 456, "d" : null, "e" : 7.111}, "zzz" : null, "oooo" : {"akakaka" : null, "xxxx" : {"xxx" : 123}}}'))"""
         sql "select * from ${table_name} limit 1"
-        if (enableVariantV2) {
-            sql """desc ${table_name}"""
-        } else {
-            qt_sql_10_1 """desc ${table_name}"""
-        }
+        qt_sql_10_1 """desc ${table_name}"""
         // drop cloumn
         sql "alter table ${table_name} drop column v2"
-        if (enableVariantV2) {
-            sql """desc ${table_name}"""
-        } else {
-            qt_sql_10_2 """desc ${table_name}"""
-        }
+        qt_sql_10_2 """desc ${table_name}"""
         // add column
         sql "alter table ${table_name} add column v3 variant default null"
         sql """ insert into ${table_name} values (0, ${variantV2Function}('{"a": 1123, "b" : [123, {"xx" : 1}], "c" : {"c" : 456, "d" : null, "e" : 7.111}, "zzz" : null, "oooo" : {"akakaka" : null, "xxxx" : {"xxx" : 123}}}'),
                      ${variantV2Function}('{"a": 1123, "b" : [123, {"xx" : 1}], "c" : {"c" : 456, "d" : null, "e" : 7.111}, "zzz" : null, "oooo" : {"akakaka" : null, "xxxx" : {"xxx" : 123}}}'))"""
         sql "select * from ${table_name} limit 1"
-        if (enableVariantV2) {
-            sql """desc ${table_name}"""
-        } else {
-            qt_sql_10_3 """desc ${table_name}"""
-        }
+        qt_sql_10_3 """desc ${table_name}"""
         //sql "truncate table ${table_name}"
 
         // varaint column name: chinese name, unicode 
@@ -271,11 +220,7 @@ suite("regression_test_variant_desc", "p0"){
         sql """ insert into ${table_name} values (0, ${variantV2Function}('{"名字" : "jack", "!@#^&*()": "11111", "金额" : 200, "画像" : {"地址" : "北京", "\\\u4E2C\\\u6587": "unicode"}}'))"""
         sql """set describe_extend_variant_column = true"""
         sql "select * from ${table_name} limit 1"
-        if (enableVariantV2) {
-            sql """desc ${table_name}"""
-        } else {
-            qt_sql_11 """desc ${table_name}"""
-        }
+        qt_sql_11 """desc ${table_name}"""
 
         // varaint subcolumn: empty
         table_name = "no_subcolumn_table"
@@ -292,11 +237,7 @@ suite("regression_test_variant_desc", "p0"){
         sql """ insert into ${table_name} values (0, ${variantV2Function}('100'))"""
         sql """set describe_extend_variant_column = true"""
         sql "select * from ${table_name} limit 1"
-        if (enableVariantV2) {
-            sql """desc ${table_name}"""
-        } else {
-            qt_sql_12 """desc ${table_name}"""
-        }
+        qt_sql_12 """desc ${table_name}"""
 
 
         // desc with large tablets
@@ -314,11 +255,7 @@ suite("regression_test_variant_desc", "p0"){
         sql """set max_fetch_remote_schema_tablet_count = 512"""
         sql "desc large_tablets"
         sql """set max_fetch_remote_schema_tablet_count = 2048"""
-        if (enableVariantV2) {
-            sql "desc large_tablets"
-        } else {
-            qt_sql15 "desc large_tablets"
-        }
+        qt_sql15 "desc large_tablets"
 
         sql "truncate table large_tablets"
         sql "desc large_tablets"

@@ -291,7 +291,7 @@ TEST(BinaryColumnExtractIteratorV2Test, SharedCacheProducesTypedAndEncodedResult
     EXPECT_EQ(counters->next_batch, 1);
 }
 
-TEST(BinaryColumnExtractIteratorV2Test, PhysicalAndEncodedNullHaveSameOuterNullSemantics) {
+TEST(BinaryColumnExtractIteratorV2Test, PhysicalAndEncodedNullUseVersionNativeSemantics) {
     for (const bool use_variant_v2 : {false, true}) {
         SCOPED_TRACE(use_variant_v2 ? "V2" : "V1");
         auto sparse = ColumnVariant::create_binary_column_fn();
@@ -327,8 +327,13 @@ TEST(BinaryColumnExtractIteratorV2Test, PhysicalAndEncodedNullHaveSameOuterNullS
         EXPECT_TRUE(has_null);
         const auto& nullable = assert_cast<const ColumnNullable&>(*destination);
         EXPECT_TRUE(nullable.is_null_at(0));
-        EXPECT_TRUE(nullable.is_null_at(1));
-        EXPECT_TRUE(nullable.is_null_at(2));
+        EXPECT_EQ(nullable.is_null_at(1), !use_variant_v2);
+        EXPECT_EQ(nullable.is_null_at(2), !use_variant_v2);
+        if (use_variant_v2) {
+            const auto& variant = assert_cast<const ColumnVariantV2&>(nullable.get_nested_column());
+            EXPECT_EQ(variant_v2_json_at(variant, 1), "null");
+            EXPECT_EQ(variant_v2_json_at(variant, 2), "null");
+        }
     }
 }
 

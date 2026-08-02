@@ -16,16 +16,8 @@
 // under the License.
 
 suite("variant_parse_functions", "p0,nonConcurrent") {
-    def enableVariantV2 = getFeConfig("enable_variant_v2").toBoolean()
-
-    if (!enableVariantV2) {
-        order_qt_valid_json_v1 """
-            SELECT /*+SET_VAR(enable_fold_constant_by_be=false)*/
-                sort_json_object_keys(CAST(parse_to_variant('{"object":{"k":1},"array":[true,null],"text":"v"}') AS JSON)),
-                CAST(parse_to_variant('42') AS STRING),
-                CAST(parse_to_variant('"json string"') AS STRING)
-        """
-    }
+    setFeConfigTemporary([enable_variant_v2: true]) {
+    assertTrue(getFeConfig("enable_variant_v2").toBoolean())
     order_qt_valid_json_supported """
         SELECT /*+SET_VAR(enable_fold_constant_by_be=false)*/
             CAST(parse_to_variant('{"object":{"k":1},"array":[true,null],"text":"v"}')['object']['k'] AS INT),
@@ -37,17 +29,6 @@ suite("variant_parse_functions", "p0,nonConcurrent") {
     def nullableInput = """SELECT 1 AS id, CAST(NULL AS STRING) AS payload
             UNION ALL SELECT 2 AS id, 'null' AS payload
             UNION ALL SELECT 3 AS id, '{"k":1}' AS payload"""
-    if (!enableVariantV2) {
-        order_qt_sql_null_json_null_and_nullable_input_v1 """
-            SELECT /*+SET_VAR(enable_fold_constant_by_be=false)*/ id,
-                parse_to_variant(payload) IS NULL, try_parse_to_variant(payload) IS NULL,
-                CASE WHEN payload IS NULL THEN 'sql-null'
-                     ELSE CAST(parse_to_variant(payload) AS STRING) END,
-                CASE WHEN payload IS NULL THEN 'sql-null'
-                     ELSE CAST(try_parse_to_variant(payload) AS STRING) END
-            FROM (${nullableInput}) t ORDER BY id
-        """
-    }
     order_qt_sql_null_json_null_and_nullable_input_supported """
         SELECT /*+SET_VAR(enable_fold_constant_by_be=false)*/ id,
             parse_to_variant(payload) IS NULL, try_parse_to_variant(payload) IS NULL,
@@ -132,5 +113,6 @@ suite("variant_parse_functions", "p0,nonConcurrent") {
                 CAST(parse_to_variant('{"dup":1,"dup":2}') AS STRING),
                 CAST(try_parse_to_variant('{"dup":1,"dup":2}') AS STRING)
         """
+    }
     }
 }

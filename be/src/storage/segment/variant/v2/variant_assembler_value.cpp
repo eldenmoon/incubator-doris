@@ -618,8 +618,8 @@ Status variant_assembler_detail::assemble_storage_cells(std::span<const StringRe
                     result_outer->insert_value(1);
                     row.add_null();
                 } else {
-                    RETURN_IF_ERROR(variant_assembler_detail::append_storage_cell(
-                            cells[row_index], row, 0));
+                    RETURN_IF_ERROR(variant_assembler_detail::append_storage_cell(cells[row_index],
+                                                                                  row, 0));
                     result_outer->insert_value(0);
                 }
                 row.finish();

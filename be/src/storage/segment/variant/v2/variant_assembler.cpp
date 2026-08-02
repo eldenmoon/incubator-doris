@@ -287,8 +287,7 @@ struct PreparedHierarchicalBatch {
 
 bool has_materialized_value(
         std::span<const variant_assembler_detail::PreparedMaterializedColumn> materialized,
-        std::span<const MaterializedPath> materialized_paths, size_t row,
-        bool requested_is_root) {
+        std::span<const MaterializedPath> materialized_paths, size_t row, bool requested_is_root) {
     DORIS_CHECK_EQ(materialized.size(), materialized_paths.size());
     for (size_t index = 0; index < materialized.size(); ++index) {
         if (variant_assembler_detail::is_materialized_value_visible(
@@ -504,8 +503,8 @@ Status assemble_hierarchical_row(bool has_sparse, bool has_root, bool has_doc,
                               batch.root_values->get_data_at(row_index).size != 0;
     const bool row_has_doc = has_doc && !map_cursor->row_empty(row_index);
     const bool requested_is_root = requested.empty();
-    const bool row_has_materialized = has_materialized_value(
-            batch.materialized, materialized_paths, row_index, requested_is_root);
+    const bool row_has_materialized = has_materialized_value(batch.materialized, materialized_paths,
+                                                             row_index, requested_is_root);
 
     // Doc keeps its row-exclusive priority. A root-only row retains the direct JSONB fast path;
     // otherwise materialized and sparse values define the visible object without the legacy root

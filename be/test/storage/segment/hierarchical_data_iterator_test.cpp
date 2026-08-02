@@ -727,7 +727,7 @@ TEST(HierarchicalDataIteratorTest, MissingSubtreeRowsDoNotBecomeEmptyObjects) {
     }
 }
 
-TEST(HierarchicalDataIteratorTest, ExactSparseJsonNullHasSameOuterNullForV1AndV2) {
+TEST(HierarchicalDataIteratorTest, ExactSparseJsonNullUsesVersionNativeSemantics) {
     for (const bool use_variant_v2 : {false, true}) {
         SCOPED_TRACE(use_variant_v2 ? "V2" : "V1");
         doris::segment_v2::ColumnIteratorUPtr iterator;
@@ -753,14 +753,19 @@ TEST(HierarchicalDataIteratorTest, ExactSparseJsonNullHasSameOuterNullForV1AndV2
         bool has_null = false;
         ASSERT_TRUE(iterator->next_batch(&rows, dst, &has_null).ok());
         ASSERT_EQ(rows, 2);
-        EXPECT_TRUE(has_null);
+        EXPECT_EQ(has_null, !use_variant_v2);
         const auto& nullable = assert_cast<const doris::ColumnNullable&>(*dst);
-        EXPECT_TRUE(nullable.is_null_at(0));
+        EXPECT_EQ(nullable.is_null_at(0), !use_variant_v2);
         EXPECT_FALSE(nullable.is_null_at(1));
+        if (use_variant_v2) {
+            const auto& variant =
+                    assert_cast<const doris::ColumnVariantV2&>(nullable.get_nested_column());
+            EXPECT_EQ(variant_v2_json_at(variant, 0), "null");
+        }
     }
 }
 
-TEST(HierarchicalDataIteratorTest, ExactDocJsonNullHasSameOuterNullForV1AndV2) {
+TEST(HierarchicalDataIteratorTest, ExactDocJsonNullUsesVersionNativeSemantics) {
     for (const bool use_variant_v2 : {false, true}) {
         SCOPED_TRACE(use_variant_v2 ? "V2" : "V1");
         doris::segment_v2::ColumnIteratorUPtr iterator;
@@ -785,10 +790,15 @@ TEST(HierarchicalDataIteratorTest, ExactDocJsonNullHasSameOuterNullForV1AndV2) {
         bool has_null = false;
         ASSERT_TRUE(iterator->next_batch(&rows, dst, &has_null).ok());
         ASSERT_EQ(rows, 2);
-        EXPECT_TRUE(has_null);
+        EXPECT_EQ(has_null, !use_variant_v2);
         const auto& nullable = assert_cast<const doris::ColumnNullable&>(*dst);
-        EXPECT_TRUE(nullable.is_null_at(0));
+        EXPECT_EQ(nullable.is_null_at(0), !use_variant_v2);
         EXPECT_FALSE(nullable.is_null_at(1));
+        if (use_variant_v2) {
+            const auto& variant =
+                    assert_cast<const doris::ColumnVariantV2&>(nullable.get_nested_column());
+            EXPECT_EQ(variant_v2_json_at(variant, 0), "null");
+        }
     }
 }
 
@@ -907,7 +917,7 @@ TEST(HierarchicalDataIteratorTest, HasNullReflectsAssembledOuterNullsForV1AndV2)
     }
 }
 
-TEST(HierarchicalDataIteratorTest, RootJsonNullHasSameOuterNullForV1AndV2) {
+TEST(HierarchicalDataIteratorTest, RootJsonNullUsesVersionNativeSemantics) {
     for (const bool use_variant_v2 : {false, true}) {
         SCOPED_TRACE(use_variant_v2 ? "V2" : "V1");
         auto root_state = std::make_shared<ConsecutiveBatchState>();
@@ -937,10 +947,15 @@ TEST(HierarchicalDataIteratorTest, RootJsonNullHasSameOuterNullForV1AndV2) {
         bool has_null = false;
         ASSERT_TRUE(iterator->next_batch(&rows, dst, &has_null).ok());
         ASSERT_EQ(rows, 3);
-        EXPECT_TRUE(has_null);
+        EXPECT_EQ(has_null, !use_variant_v2);
         const auto& nullable = assert_cast<const doris::ColumnNullable&>(*dst);
         for (size_t row = 0; row < rows; ++row) {
-            EXPECT_TRUE(nullable.is_null_at(row));
+            EXPECT_EQ(nullable.is_null_at(row), !use_variant_v2);
+            if (use_variant_v2) {
+                const auto& variant =
+                        assert_cast<const doris::ColumnVariantV2&>(nullable.get_nested_column());
+                EXPECT_EQ(variant_v2_json_at(variant, row), "null");
+            }
         }
     }
 }

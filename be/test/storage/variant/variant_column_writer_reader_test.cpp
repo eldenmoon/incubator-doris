@@ -279,6 +279,67 @@ TEST(VariantPathBuilderTest, PromotesValuesAndMaterializesMissingRows) {
     }
 }
 
+TEST(VariantPathBuilderTest, MatchesLegacyComplexArrayInference) {
+    auto legacy = ColumnVariant::create(0, false);
+    auto json = ColumnString::create();
+    constexpr std::string_view JSON =
+            R"({"b":[123,{"xx":1}],"k5":[[123]],"mixed":[456,"789"],"objects":[{"x":1},{"x":2}]})";
+    json->insert_data(JSON.data(), JSON.size());
+    ParseConfig parse_config;
+    parse_config.parse_to = ParseConfig::ParseTo::OnlySubcolumns;
+    variant_util::parse_json_to_variant(*legacy, *json, parse_config);
+
+    VariantBatchBuilder value_builder;
+    auto row = value_builder.begin_row();
+    auto object = row.start_object();
+    object.add_key(StringRef("b"));
+    auto mixed_object_array = row.start_array();
+    row.add_int(123);
+    auto child = row.start_object();
+    child.add_key(StringRef("xx"));
+    row.add_int(1);
+    child.finish();
+    mixed_object_array.finish();
+    object.add_key(StringRef("k5"));
+    auto outer = row.start_array();
+    auto inner = row.start_array();
+    row.add_int(123);
+    inner.finish();
+    outer.finish();
+    object.add_key(StringRef("mixed"));
+    auto mixed_scalar_array = row.start_array();
+    row.add_int(456);
+    row.add_string(StringRef("789"));
+    mixed_scalar_array.finish();
+    object.add_key(StringRef("objects"));
+    auto object_array = row.start_array();
+    auto first_object = row.start_object();
+    first_object.add_key(StringRef("x"));
+    row.add_int(1);
+    first_object.finish();
+    auto second_object = row.start_object();
+    second_object.add_key(StringRef("x"));
+    row.add_int(2);
+    second_object.finish();
+    object_array.finish();
+    object.finish();
+    row.finish();
+    VariantBatchBuilder values = value_builder.finish_batch();
+
+    const VariantRef root = values.value_at(0);
+    for (std::string_view path : {"b", "k5", "mixed", "objects"}) {
+        SCOPED_TRACE(path);
+        const auto* legacy_subcolumn = legacy->get_subcolumn(PathInData(path));
+        ASSERT_NE(legacy_subcolumn, nullptr);
+        VariantRef value;
+        ASSERT_TRUE(root.object_find(StringRef(path.data(), path.size()), &value));
+        segment_v2::VariantPathBuilder builder {PathInData(path)};
+        ASSERT_TRUE(builder.append(value, 0).ok());
+        EXPECT_EQ(remove_nullable(builder.type())->get_name(),
+                  remove_nullable(legacy_subcolumn->get_least_common_type())->get_name());
+    }
+}
+
 TEST(VariantPathBuilderTest, PreservesRowsWhenInferredDecimalPromotionOverflows) {
     VariantBatchBuilder value_builder;
     auto large_row = value_builder.begin_row();
@@ -2636,8 +2697,10 @@ TEST_F(VariantColumnWriterReaderTest, test_segment_rowid_read_by_reader_version)
     const auto& empty_slots = empty_descriptor_table->get_tuple_descriptor(0)->slots();
     ASSERT_EQ(empty_slots.size(), 4);
     const std::vector<uint32_t> empty_row_ids {0, 1, 2, 3, 4, 5};
-    const std::array<std::string_view, 6> expected_whole {"{}", "{}",           "{}",
-                                                          "{}", R"({"a":[1]})", "{}"};
+    const std::array<std::string_view, 6> expected_whole_v1 {"{}", "{}",           "{}",
+                                                             "{}", R"({"a":[1]})", "{}"};
+    const std::array<std::string_view, 6> expected_whole_v2 {
+            "{}", "{}", R"({"a":[{}]})", R"({"a":[{"L2":[]}]})", R"({"a":[1]})", "{}"};
     const std::array<bool, 6> expected_subpath_null {true, true, false, false, false, true};
     const std::array<std::string_view, 3> expected_subpath_values {"[{}]", R"([{"L2":[]}])", "[1]"};
 
@@ -2656,6 +2719,7 @@ TEST_F(VariantColumnWriterReaderTest, test_segment_rowid_read_by_reader_version)
                 *_tablet_schema, empty_slots[slot_base], empty_row_ids, whole_result, read_options,
                 whole_iterator);
         ASSERT_TRUE(st.ok()) << "use_v2=" << use_v2 << ": " << st.to_string();
+        const auto& expected_whole = use_v2 ? expected_whole_v2 : expected_whole_v1;
         ASSERT_EQ(whole_result->size(), expected_whole.size());
         for (size_t row = 0; row < expected_whole.size(); ++row) {
             EXPECT_EQ(variant_json_at(*whole_result, row), expected_whole[row])

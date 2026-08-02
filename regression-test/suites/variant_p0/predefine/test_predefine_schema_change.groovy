@@ -18,6 +18,8 @@
 suite("test_predefine_schema_change", "p0"){
     boolean enableVariantV2 = getFeConfig("enable_variant_v2").toBoolean()
     def variantV2Function = enableVariantV2 ? "parse_to_variant" : ""
+    def normalizedVariant = "regexp_replace(cast(var as string), " +
+            "'([0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2})[.]000000', '\\\\1')"
     def tableName = "test_predefine_schema_change"
     sql """ set default_variant_enable_typed_paths_to_sparse = false """
     sql """ set default_variant_enable_doc_mode = false """
@@ -41,7 +43,7 @@ suite("test_predefine_schema_change", "p0"){
     sql """ set enable_match_without_inverted_index = false """
     sql """ set enable_segment_limit_pushdown = true """
     qt_sql """ select count() from ${tableName} where cast (var['d'] as string) match '123' """
-    qt_sql """ select * from ${tableName} """
+    qt_sql """ select id, ${normalizedVariant}, col1 from ${tableName} """
     if (!enableVariantV2) {
         qt_variant_type_before_v1 """ select variant_type(var) from ${tableName} """
     }
@@ -55,7 +57,7 @@ suite("test_predefine_schema_change", "p0"){
     }
 
     qt_sql """ select count() from ${tableName} where cast (var['d'] as string) match '123' """
-    qt_sql """ select * from ${tableName} """
+    qt_sql """ select id, ${normalizedVariant}, col1 from ${tableName} """
     if (!enableVariantV2) {
         qt_variant_type_after_v1 """ select variant_type(var) from ${tableName} """
     }

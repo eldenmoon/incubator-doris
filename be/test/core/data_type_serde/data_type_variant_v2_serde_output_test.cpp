@@ -304,8 +304,8 @@ TEST(DataTypeVariantV2SerdeOutputTest, DocumentsTemporalAndColumnJsonAreExact) {
     auto typed_timestamp = ColumnVariantV2::create_typed(nullable(std::move(timestamp), not_null),
                                                          std::make_shared<DataTypeDateTimeV2>(6));
     ColumnPtr encoded_timestamp = encoded_copy(*typed_timestamp);
-    const std::array<std::string_view, 1> timestamp_expected {R"("1970-01-01 00:00:01")"};
-    const std::array<std::string_view, 1> timestamp_sql {"1970-01-01 00:00:01"};
+    const std::array<std::string_view, 1> timestamp_expected {R"("1970-01-01 00:00:01.000000")"};
+    const std::array<std::string_view, 1> timestamp_sql {"1970-01-01 00:00:01.000000"};
     expect_text_surfaces(serde, *encoded_timestamp, *typed_timestamp, timestamp_expected,
                          timestamp_sql);
 

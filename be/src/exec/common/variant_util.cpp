@@ -388,13 +388,7 @@ Status cast_column(const ColumnWithTypeAndName& arg, const DataTypePtr& type, Co
     // legacy ColumnVariant.
     const bool target_is_variant_v2 =
             dynamic_cast<const DataTypeVariantV2*>(remove_nullable(type).get()) != nullptr;
-    const bool source_is_variant_v2 =
-            dynamic_cast<const DataTypeVariantV2*>(remove_nullable(arg.type).get()) != nullptr;
-    const bool is_variant_v2_to_v1 = source_is_variant_v2 &&
-                                     type->get_primitive_type() == TYPE_VARIANT &&
-                                     !target_is_variant_v2;
-    if (type->get_primitive_type() == TYPE_VARIANT && !target_is_variant_v2 &&
-        !source_is_variant_v2) {
+    if (type->get_primitive_type() == TYPE_VARIANT && !target_is_variant_v2) {
         // If source column is variant, so the nullable info is different from dst column
         if (arg.type->get_primitive_type() == TYPE_VARIANT) {
             *result = type->is_nullable() ? make_nullable(arg.column) : remove_nullable(arg.column);
@@ -442,9 +436,8 @@ Status cast_column(const ColumnWithTypeAndName& arg, const DataTypePtr& type, Co
             function->execute(ctx.get(), tmp_block, {0}, result_column, arg.column->size());
     if (!cast_status.ok()) {
         // Variant V2 deliberately rejects source types without a physical encoding (currently
-        // Decimal256). V2-to-V1 bridge failures must also propagate; publishing the legacy
-        // all-null fallback in either case would silently lose stored values.
-        if (target_is_variant_v2 || is_variant_v2_to_v1) {
+        // Decimal256). Publishing the legacy all-null fallback would silently lose stored values.
+        if (target_is_variant_v2) {
             return cast_status;
         }
         LOG_EVERY_N(WARNING, 100) << fmt::format("cast from {} to {}", arg.type->get_name(),

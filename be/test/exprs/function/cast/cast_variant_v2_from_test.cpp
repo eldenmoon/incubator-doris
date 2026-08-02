@@ -25,7 +25,6 @@
 #include "core/column/column_decimal.h"
 #include "core/column/column_nullable.h"
 #include "core/column/column_string.h"
-#include "core/column/column_variant.h"
 #include "core/column/variant_v2/column_variant_v2.h"
 #include "core/data_type/data_type_array.h"
 #include "core/data_type/data_type_date_or_datetime_v2.h"
@@ -36,12 +35,10 @@
 #include "core/data_type/data_type_number.h"
 #include "core/data_type/data_type_string.h"
 #include "core/data_type/data_type_time.h"
-#include "core/data_type/data_type_variant.h"
 #include "core/data_type/data_type_variant_v2.h"
 #include "core/field.h"
 #include "core/value/variant/variant_batch_builder.h"
 #include "core/value/vdatetime_value.h"
-#include "exec/common/variant_util.h"
 #include "exprs/function/cast/variant_v2/cast_variant_v2.h"
 #include "exprs/function/cast/variant_v2/cast_variant_v2_internal.h"
 #include "exprs/function_context.h"
@@ -107,64 +104,6 @@ ColumnVariantV2::MutablePtr mixed_scalar_values() {
         row.finish();
     }
     return finish(&builder);
-}
-
-ColumnVariantV2::MutablePtr legacy_bridge_values() {
-    VariantBatchBuilder builder(VariantBatchBuilder::ReserveHint {.rows = 6});
-    {
-        auto row = builder.begin_row();
-        auto object = row.start_object();
-        object.add_key(StringRef("a"));
-        row.add_int(1);
-        object.finish();
-        row.finish();
-    }
-    {
-        auto row = builder.begin_row();
-        row.add_string(StringRef("scalar"));
-        row.finish();
-    }
-    {
-        auto row = builder.begin_row();
-        auto array = row.start_array();
-        row.add_int(1);
-        row.add_null();
-        row.add_int(3);
-        array.finish();
-        row.finish();
-    }
-    {
-        auto row = builder.begin_row();
-        auto object = row.start_object();
-        object.finish();
-        row.finish();
-    }
-    {
-        auto row = builder.begin_row();
-        row.add_null();
-        row.finish();
-    }
-    {
-        auto row = builder.begin_row();
-        row.add_int(99);
-        row.finish();
-    }
-    return finish(&builder);
-}
-
-CastResult execute_nullable_v2_to_legacy(ColumnPtr source) {
-    DataTypePtr source_type = make_nullable(std::make_shared<DataTypeVariantV2>());
-    DataTypePtr result_type = make_nullable(std::make_shared<DataTypeVariant>());
-    ColumnPtr initial_result = result_type->create_column();
-    Block block {{std::move(source), source_type, "source"},
-                 {initial_result, result_type, "result"}};
-    RuntimeState state;
-    auto context = FunctionContext::create_context(&state, {}, {});
-    Status status = prepare_unpack_dictionaries(context.get(), source_type, result_type)(
-            context.get(), block, {0}, 1, block.rows(), nullptr);
-    return CastResult {.status = std::move(status),
-                       .column = block.get_by_position(1).column,
-                       .initial_result = std::move(initial_result)};
 }
 
 ColumnVariantV2::MutablePtr typed_ints() {
@@ -660,12 +599,6 @@ TEST(CastVariantV2FromTest, ArrayLeafNullSemanticsAreTargetSpecific) {
                         .get_value_ref(0)
                         .is_null());
 
-    auto legacy_variant_array =
-            std::make_shared<DataTypeArray>(std::make_shared<DataTypeVariant>());
-    CastResult legacy_variants = execute_from_variant(source, legacy_variant_array);
-    EXPECT_TRUE(legacy_variants.status.is<ErrorCode::INVALID_ARGUMENT>());
-    EXPECT_EQ(legacy_variants.column.get(), legacy_variants.initial_result.get());
-
     auto int_array = std::make_shared<DataTypeArray>(std::make_shared<DataTypeInt32>());
     CastResult integers = execute_from_variant(source, int_array);
     ASSERT_TRUE(integers.status.ok()) << integers.status;
@@ -716,122 +649,6 @@ TEST(CastVariantV2FromTest, NestedArrayRoundTripPreservesNullAndEmptyArray) {
     EXPECT_EQ(values.get_null_map_data()[0], 0);
     EXPECT_EQ(values.get_null_map_data()[1], 1);
     EXPECT_EQ(assert_cast<const ColumnInt32&>(values.get_nested_column()).get_data()[0], 1);
-}
-
-TEST(CastVariantV2FromTest, LegacyBridgePreservesShapesAndOuterNull) {
-    auto source = legacy_bridge_values();
-    auto outer_nulls = ColumnUInt8::create(source->size(), 0);
-    outer_nulls->get_data()[5] = 1;
-    ColumnPtr nullable_source = ColumnNullable::create(std::move(source), std::move(outer_nulls));
-
-    CastResult cast = execute_nullable_v2_to_legacy(std::move(nullable_source));
-
-    ASSERT_TRUE(cast.status.ok()) << cast.status;
-    const auto& nullable = assert_cast<const ColumnNullable&>(*cast.column);
-    ASSERT_EQ(nullable.size(), 6);
-    EXPECT_EQ(nullable.get_null_map_data()[4], 0);
-    EXPECT_EQ(nullable.get_null_map_data()[5], 1);
-
-    const auto& legacy = assert_cast<const ColumnVariant&>(nullable.get_nested_column());
-    const auto& legacy_root = assert_cast<const ColumnNullable&>(*legacy.get_root());
-    EXPECT_EQ(legacy_root.get_null_map_data()[4], 0);
-    EXPECT_EQ(legacy_root.get_null_map_data()[5], 1);
-    DataTypeSerDe::FormatOptions options;
-    std::array<std::string, 5> json;
-    for (size_t row = 0; row < json.size(); ++row) {
-        legacy.serialize_one_row_to_string(row, &json[row], options);
-    }
-    EXPECT_EQ(json[0], R"({"a":1})");
-    EXPECT_EQ(json[1], R"("scalar")");
-    EXPECT_EQ(json[2], R"([1,null,3])");
-    EXPECT_EQ(json[3], R"({})");
-    EXPECT_EQ(json[4], "null");
-}
-
-TEST(CastVariantV2FromTest, LegacyBridgePreservesTypedDecimalNullability) {
-    auto decimal_type = std::make_shared<DataTypeDecimal128>(38, 2);
-    auto decimals = ColumnDecimal128V3::create(0, 2);
-    decimals->insert_value(Decimal128V3 {12345});
-    decimals->insert_value(Decimal128V3 {0});
-    decimals->insert_value(Decimal128V3 {999});
-    auto typed_nulls = ColumnUInt8::create(3, 0);
-    typed_nulls->get_data()[1] = 1;
-    auto source = ColumnVariantV2::create_typed(
-            ColumnNullable::create(std::move(decimals), std::move(typed_nulls)), decimal_type);
-    auto outer_nulls = ColumnUInt8::create(source->size(), 0);
-    outer_nulls->get_data()[2] = 1;
-    ColumnPtr nullable_source = ColumnNullable::create(std::move(source), std::move(outer_nulls));
-
-    CastResult cast = execute_nullable_v2_to_legacy(std::move(nullable_source));
-
-    ASSERT_TRUE(cast.status.ok()) << cast.status;
-    const auto& nullable = assert_cast<const ColumnNullable&>(*cast.column);
-    EXPECT_EQ(nullable.get_null_map_data()[0], 0);
-    EXPECT_EQ(nullable.get_null_map_data()[1], 0);
-    EXPECT_EQ(nullable.get_null_map_data()[2], 1);
-    const auto& legacy = assert_cast<const ColumnVariant&>(nullable.get_nested_column());
-    EXPECT_TRUE(legacy.get_root_type()->equals(*make_nullable(decimal_type)));
-    const auto& root = assert_cast<const ColumnNullable&>(*legacy.get_root());
-    EXPECT_EQ(root.get_null_map_data()[0], 0);
-    EXPECT_EQ(root.get_null_map_data()[1], 1);
-    EXPECT_EQ(root.get_null_map_data()[2], 1);
-    EXPECT_EQ(assert_cast<const ColumnDecimal128V3&>(root.get_nested_column()).get_data()[0],
-              Decimal128V3 {12345});
-}
-
-// NOLINTNEXTLINE(readability-function-cognitive-complexity): keep all three string storage types on the same bridge-and-materialize assertion path.
-TEST(CastVariantV2FromTest, LegacyBridgeProtectsTypedStringsAtStorageBoundary) {
-    const std::array<DataTypePtr, 3> string_types {
-            std::make_shared<DataTypeString>(), std::make_shared<DataTypeString>(16, TYPE_CHAR),
-            std::make_shared<DataTypeString>(64, TYPE_VARCHAR)};
-    for (const DataTypePtr& string_type : string_types) {
-        SCOPED_TRACE(string_type->get_name());
-        auto strings = ColumnString::create();
-        constexpr std::array<std::string_view, 6> VALUES {R"({"a":1})", "null",       "1",
-                                                          "plain",      "inner-null", "outer-null"};
-        for (std::string_view value : VALUES) {
-            strings->insert_data(value.data(), value.size());
-        }
-        auto typed_nulls = ColumnUInt8::create(VALUES.size(), 0);
-        typed_nulls->get_data()[4] = 1;
-        auto source = ColumnVariantV2::create_typed(
-                ColumnNullable::create(std::move(strings), std::move(typed_nulls)), string_type);
-        auto outer_nulls = ColumnUInt8::create(VALUES.size(), 0);
-        outer_nulls->get_data()[5] = 1;
-        ColumnPtr nullable_source =
-                ColumnNullable::create(std::move(source), std::move(outer_nulls));
-
-        CastResult cast = execute_nullable_v2_to_legacy(std::move(nullable_source));
-
-        ASSERT_TRUE(cast.status.ok()) << cast.status;
-        const auto& before_storage = assert_cast<const ColumnNullable&>(*cast.column);
-        const auto& legacy_before_storage =
-                assert_cast<const ColumnVariant&>(before_storage.get_nested_column());
-        EXPECT_EQ(remove_nullable(legacy_before_storage.get_root_type())->get_primitive_type(),
-                  TYPE_JSONB);
-
-        Block block;
-        block.insert({cast.column, make_nullable(std::make_shared<DataTypeVariant>()), "v"});
-        ParseConfig config;
-        ASSERT_TRUE(variant_util::parse_and_materialize_variant_columns(block, {0}, {config}).ok());
-
-        const auto& after_storage =
-                assert_cast<const ColumnNullable&>(*block.get_by_position(0).column);
-        EXPECT_EQ(after_storage.get_null_map_data(), NullMap({0, 0, 0, 0, 0, 1}));
-        const auto& legacy = assert_cast<const ColumnVariant&>(after_storage.get_nested_column());
-        DataTypeSerDe::FormatOptions options;
-        std::array<std::string, 5> json;
-        for (size_t row = 0; row < json.size(); ++row) {
-            legacy.serialize_one_row_to_string(row, &json[row], options);
-        }
-        EXPECT_EQ(json[0], R"("{\"a\":1}")");
-        EXPECT_EQ(json[1], R"("null")");
-        EXPECT_EQ(json[2], R"("1")");
-        EXPECT_EQ(json[3], R"("plain")");
-        // Legacy V1 materialization renders an internal root JSON null as an empty object. This
-        // records existing V1 behavior; the V2-to-V1 bridge does not define JSON null as `{}`.
-        EXPECT_EQ(json[4], "{}");
-    }
 }
 
 TEST(CastVariantV2FromTest, DecimalScale38CastsAndScale39IsRejectedAtEncodingBoundary) {

@@ -89,12 +89,6 @@ struct ValueScratch {
     DorisVector<ValueScratch> elements;
 };
 
-struct InferredType {
-    DataTypePtr type;
-    size_t dimensions = 0;
-    bool uniform_dimensions = true;
-};
-
 DataTypePtr path_least_common_type(const DataTypePtr& left, const DataTypePtr& right);
 
 bool date_fits_doris_range(int32_t days) {
@@ -243,77 +237,64 @@ ValueScratch collect_value(VariantRef value) {
     throw Exception(ErrorCode::CORRUPTION, "Unknown Variant basic type");
 }
 
-InferredType infer_type(const ValueScratch& value) {
+DataTypePtr infer_type(const ValueScratch& value) {
     switch (value.kind) {
     case ScratchKind::NULL_VALUE:
-        return {.type = std::make_shared<DataTypeNothing>()};
+        return std::make_shared<DataTypeNothing>();
     case ScratchKind::BOOL:
-        return {.type = std::make_shared<DataTypeBool>()};
+        return std::make_shared<DataTypeBool>();
     case ScratchKind::INT64:
-        return {.type = DataTypeFactory::instance().create_data_type(value.int_type, false)};
+        return DataTypeFactory::instance().create_data_type(value.int_type, false);
     case ScratchKind::LARGEINT:
-        return {.type = std::make_shared<DataTypeInt128>()};
+        return std::make_shared<DataTypeInt128>();
     case ScratchKind::FLOAT:
-        return {.type = std::make_shared<DataTypeFloat32>()};
+        return std::make_shared<DataTypeFloat32>();
     case ScratchKind::DOUBLE:
-        return {.type = std::make_shared<DataTypeFloat64>()};
+        return std::make_shared<DataTypeFloat64>();
     case ScratchKind::DECIMAL:
-        return {.type = std::make_shared<DataTypeDecimal128>(38, value.decimal_value.scale)};
+        return std::make_shared<DataTypeDecimal128>(38, value.decimal_value.scale);
     case ScratchKind::DATE:
         if (!date_fits_doris_range(value.date_days)) {
-            return {.type = std::make_shared<DataTypeJsonb>()};
+            return std::make_shared<DataTypeJsonb>();
         }
-        return {.type = std::make_shared<DataTypeDateV2>()};
+        return std::make_shared<DataTypeDateV2>();
     case ScratchKind::TIMESTAMP_NTZ:
         if (!timestamp_fits_doris_range(value.timestamp_micros)) {
-            return {.type = std::make_shared<DataTypeJsonb>()};
+            return std::make_shared<DataTypeJsonb>();
         }
-        return {.type = std::make_shared<DataTypeDateTimeV2>(6)};
+        return std::make_shared<DataTypeDateTimeV2>(6);
     case ScratchKind::TIMESTAMP_TZ:
         if (!timestamp_fits_doris_range(value.timestamp_micros)) {
-            return {.type = std::make_shared<DataTypeJsonb>()};
+            return std::make_shared<DataTypeJsonb>();
         }
-        return {.type = std::make_shared<DataTypeTimeStampTz>(6)};
+        return std::make_shared<DataTypeTimeStampTz>(6);
     case ScratchKind::STRING:
-        return {.type = std::make_shared<DataTypeString>()};
+        return std::make_shared<DataTypeString>();
     case ScratchKind::JSONB_REF:
-        return {.type = std::make_shared<DataTypeJsonb>()};
+        return std::make_shared<DataTypeJsonb>();
     case ScratchKind::ARRAY:
         break;
     }
 
     DataTypePtr element_type;
-    size_t element_dimensions = 0;
-    bool have_dimension = false;
     for (const ValueScratch& element : value.elements) {
-        InferredType inferred = infer_type(element);
-        if (!inferred.uniform_dimensions) {
-            return {.type = std::make_shared<DataTypeJsonb>(),
-                    .dimensions = 0,
-                    .uniform_dimensions = false};
+        if (element.kind == ScratchKind::ARRAY ||
+            (element.kind == ScratchKind::JSONB_REF &&
+             element.jsonb_ref.basic_type() == VariantBasicType::OBJECT)) {
+            return std::make_shared<DataTypeJsonb>();
         }
-        if (inferred.type->get_primitive_type() == INVALID_TYPE) {
+        DataTypePtr inferred = infer_type(element);
+        if (inferred->get_primitive_type() == INVALID_TYPE) {
             continue;
         }
-        if (!have_dimension) {
-            element_dimensions = inferred.dimensions;
-            have_dimension = true;
-        } else if (element_dimensions != inferred.dimensions) {
-            return {.type = std::make_shared<DataTypeJsonb>(),
-                    .dimensions = 0,
-                    .uniform_dimensions = false};
-        }
-        element_type = element_type == nullptr
-                               ? std::move(inferred.type)
-                               : path_least_common_type(element_type, inferred.type);
+        element_type = element_type == nullptr ? std::move(inferred)
+                                               : path_least_common_type(element_type, inferred);
     }
 
     if (element_type == nullptr) {
         element_type = std::make_shared<DataTypeNothing>();
     }
-    return {.type = std::make_shared<DataTypeArray>(element_type),
-            .dimensions = element_dimensions + 1,
-            .uniform_dimensions = true};
+    return std::make_shared<DataTypeArray>(element_type);
 }
 
 bool is_small_or_regular_integer(PrimitiveType type) {
@@ -1029,14 +1010,11 @@ Status VariantPathBuilder::append(VariantRef value, size_t row) {
         RETURN_IF_ERROR(complete_rows(row));
 
         ValueScratch scratch = collect_value(value);
-        InferredType inferred = infer_type(scratch);
+        DataTypePtr inferred_type = infer_type(scratch);
         if (!_impl->column) {
-            RETURN_IF_ERROR(_impl->initialize(inferred.type));
+            RETURN_IF_ERROR(_impl->initialize(inferred_type));
         } else {
-            DataTypePtr common_type = path_least_common_type(_impl->type, inferred.type);
-            if (!inferred.uniform_dimensions) {
-                common_type = std::make_shared<DataTypeJsonb>();
-            }
+            DataTypePtr common_type = path_least_common_type(_impl->type, inferred_type);
             RETURN_IF_ERROR(_impl->promote(common_type, false));
         }
         if (scratch.kind == ScratchKind::ARRAY && !value_is_representable(scratch, _impl->type)) {

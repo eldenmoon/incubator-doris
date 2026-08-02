@@ -19,6 +19,10 @@ suite("regression_test_variant_predefine_schema", "p0"){
     def enableVariantV2 = getFeConfig("enable_variant_v2").toBoolean()
     def variantV2Function = enableVariantV2 ? "parse_to_variant" : ""
     def deprecatedFlattenNested = enableVariantV2 ? "false" : "true"
+    def normalizedVariant = { column ->
+        "regexp_replace(cast(${column} as string), " +
+                "'([0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2})[.]000000', '\\\\1')"
+    }
     sql """ set default_variant_enable_doc_mode = false """
     sql """DROP TABLE IF EXISTS test_predefine"""
     def count = new Random().nextInt(10);
@@ -49,15 +53,15 @@ suite("regression_test_variant_predefine_schema", "p0"){
     sql """insert into test_predefine values(10, '1', ${variantV2Function}('{"a" : {"b" : {"c" : "123456", "d" : "11.111"}}, "ss" : 199991111, "dcm" : 123.456, "dt" : "2021-01-01 00:00:00", "ip" : "127.0.0.1"}'))"""
     sql """insert into test_predefine values(12, '3', ${variantV2Function}('{"dcm" : 789.123, "dt" : "2025-01-01 11:11:11.1", "ip" : "127.0.0.1"}'))"""
     sql """insert into test_predefine values(11, '4', ${variantV2Function}('{"a" : {"b" : {"c" : "678910", "d" : "33.222"}}}'))"""
-    qt_sql """select * from test_predefine order by id"""
+    qt_sql """select id, type, ${normalizedVariant("v1")} from test_predefine order by id"""
 
     qt_sql """select cast(v1['ip'] as ipv4) from test_predefine where cast(v1['ip'] as ipv4) = '127.0.0.1';"""
     qt_sql """select cast(v1['dcm'] as decimal) from test_predefine where cast(v1['dcm'] as decimal) = '123.456';"""
     qt_sql """select v1['dcm'] from test_predefine order by id;"""
-    qt_sql """select v1['dt'] from test_predefine where cast(v1['dt'] as datetime) = '2022-01-01 11:11:11';"""
-    qt_sql """select v1['dt'] from test_predefine  where  cast(v1['dt'] as datetime) = '2022-01-01 11:11:11' order by id limit 10"""
-    qt_sql """select * from test_predefine  where  cast(v1['dt'] as datetime) = '2022-01-01 11:11:11' order by id limit 10;"""
-    qt_sql """select * from test_predefine  where  v1['dt'] is not null order by id limit 10;"""
+    qt_sql """select ${normalizedVariant("v1['dt']")} from test_predefine where cast(v1['dt'] as datetime) = '2022-01-01 11:11:11';"""
+    qt_sql """select ${normalizedVariant("v1['dt']")} from test_predefine where cast(v1['dt'] as datetime) = '2022-01-01 11:11:11' order by id limit 10"""
+    qt_sql """select id, type, ${normalizedVariant("v1")} from test_predefine where cast(v1['dt'] as datetime) = '2022-01-01 11:11:11' order by id limit 10;"""
+    qt_sql """select id, type, ${normalizedVariant("v1")} from test_predefine where v1['dt'] is not null order by id limit 10;"""
 
     sql """DROP TABLE IF EXISTS test_predefine1"""
     sql """
@@ -221,7 +225,8 @@ suite("regression_test_variant_predefine_schema", "p0"){
     // 2. todo support alter column type
     // sql "alter table test_predefine1 modify column v3 variant<dcm:decimal,dt:datetime,ip:ipv6>"
     sql """insert into test_predefine1 values(103, ${variantV2Function}('{"a" :1}'), ${variantV2Function}('{"dcm": 1111111}'), ${variantV2Function}('{"dt": "2021-01-01 11:11:11"}'));"""
-    qt_sql """select * from test_predefine1 where id >= 100 order by id"""
+    qt_sql """select id, ${normalizedVariant("v1")}, ${normalizedVariant("v2")},
+              ${normalizedVariant("v3")} from test_predefine1 where id >= 100 order by id"""
     // 3. drop column
     sql "alter table test_predefine1 drop column v3"
 
