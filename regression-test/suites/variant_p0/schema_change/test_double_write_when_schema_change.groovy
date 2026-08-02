@@ -16,6 +16,9 @@
 // under the License.
 
 suite("double_write_schema_change_with_variant", "nonConcurrent") {
+    def enableVariantV2 = getFeConfig("enable_variant_v2").toBoolean()
+    def variantV2Function = enableVariantV2 ? "parse_to_variant" : ""
+    def deprecatedFlattenNested = enableVariantV2 ? "false" : "true"
     def set_be_config = { key, value ->
         String backend_id;
         def backendId_to_backendIP = [:]
@@ -67,7 +70,7 @@ suite("double_write_schema_change_with_variant", "nonConcurrent") {
         )
         DUPLICATE KEY(`k`)
         DISTRIBUTED BY HASH(k) BUCKETS 2
-        properties("replication_num" = "1", "disable_auto_compaction" = "false", "deprecated_variant_enable_flatten_nested" = "true");
+        properties("replication_num" = "1", "disable_auto_compaction" = "false", "deprecated_variant_enable_flatten_nested" = "${deprecatedFlattenNested}");
     """
 
     set_be_config.call("memory_limitation_per_thread_for_schema_change_bytes", "6294967296")
@@ -82,7 +85,7 @@ suite("double_write_schema_change_with_variant", "nonConcurrent") {
          return jobStateResult[0][9]
     }
 
-    def insert_sql = """ insert into ${table_name} values(1, '{"id":"25061216922","type":"PushEvent","actor":{"id":100067519,"login":"savorfamily","display_login":"savorfamily","gravatar_id":"123","url":"https://api.github.com/users/savorfamily","avatar_url":"https://avatars.githubusercontent.com/u/100067519?"},"repo":{"id":461434218,"name":"savorfamily/upptime","url":"https://api.github.com/repos/savorfamily/upptime"},"payload":{"push_id":11572320522,"size":1,"distinct_size":1,"ref":"refs/heads/master","head":"81106d369f763cb729d9d77610ace252c9db53f0","before":"2bf823a4febcf809da126828ecef7617c8cc48ea","commits":[{"sha":"81106d369f763cb729d9d77610ace252c9db53f0","author":{"email":"73812536+upptime-bot@users.noreply.github.com","name":"Upptime Bot"},"message":":bento: Update graphs [skip ci]","distinct":true,"url":"https://api.github.com/repos/savorfamily/upptime/commits/81106d369f763cb729d9d77610ace252c9db53f0"}]},"public":true,"created_at":"2022-11-07T02:00:00Z"}', "123111.0") """
+    def insert_sql = """ insert into ${table_name} values(1, ${variantV2Function}('{"id":"25061216922","type":"PushEvent","actor":{"id":100067519,"login":"savorfamily","display_login":"savorfamily","gravatar_id":"123","url":"https://api.github.com/users/savorfamily","avatar_url":"https://avatars.githubusercontent.com/u/100067519?"},"repo":{"id":461434218,"name":"savorfamily/upptime","url":"https://api.github.com/repos/savorfamily/upptime"},"payload":{"push_id":11572320522,"size":1,"distinct_size":1,"ref":"refs/heads/master","head":"81106d369f763cb729d9d77610ace252c9db53f0","before":"2bf823a4febcf809da126828ecef7617c8cc48ea","commits":[{"sha":"81106d369f763cb729d9d77610ace252c9db53f0","author":{"email":"73812536+upptime-bot@users.noreply.github.com","name":"Upptime Bot"},"message":":bento: Update graphs [skip ci]","distinct":true,"url":"https://api.github.com/repos/savorfamily/upptime/commits/81106d369f763cb729d9d77610ace252c9db53f0"}]},"public":true,"created_at":"2022-11-07T02:00:00Z"}'), "123111.0") """
 
     def double_write = { ->
         int max_try_time = 3000
@@ -103,23 +106,26 @@ suite("double_write_schema_change_with_variant", "nonConcurrent") {
         }
     }
 
-    qt_sql "select v['type'], v['id'], v['created_at'] from ${table_name} where cast(v['id'] as bigint) != 25061216922 order by k, cast(v['id'] as bigint) limit 10"
+    qt_sql "select v['type'], v['id'], v['created_at'] from ${table_name} where cast(v['id'] as bigint) != 25061216922 order by k, cast(v['id'] as bigint), cast(v['payload']['commits'] as string) limit 10"
 
     sql """ ALTER TABLE ${table_name} modify COLUMN change_column text"""
     double_write.call()
 
     sql """ALTER TABLE ${table_name} drop index idx_var"""
     double_write.call()
-    qt_sql "select v['type'], v['id'], v['created_at'] from ${table_name} where cast(v['id'] as bigint) != 25061216922 order by k,  cast(v['id'] as bigint) limit 10"
+    qt_sql "select v['type'], v['id'], v['created_at'] from ${table_name} where cast(v['id'] as bigint) != 25061216922 order by k, cast(v['id'] as bigint), cast(v['payload']['commits'] as string) limit 10"
 
     // Whole-row and subpath reads assemble nested-array materialized paths, which V2 does not
     // support yet. The Schema Change work above still runs with the global V2 session setting.
-    sql "set enable_variant_v2 = false"
     sql "set enable_two_phase_read_opt = false"    
-    sql """select * from github_events order by k limit 10"""
+    qt_two_phase_off """select k, cast(v['id'] as string), cast(v['payload']['push_id'] as bigint)
+        from github_events order by k, 2, 3 limit 10"""
     sql "set enable_two_phase_read_opt = true"    
-    sql """select * from github_events order by k limit 10"""
-    order_qt_sql """select k, v['payload']['commits'] from github_events where length(cast(v['payload']['commits'] as text)) > 100 and k > 1 order by k,  length(cast(v['payload']['commits'] as text)) limit 10"""
+    qt_two_phase_on """select k, cast(v['id'] as string), cast(v['payload']['push_id'] as bigint)
+        from github_events order by k, 2, 3 limit 10"""
+    if (!enableVariantV2) {
+        order_qt_sql """select k, json_extract(json_parse(cast(v['payload']['commits'] as text)), '\$[0].sha') from github_events where length(cast(v['payload']['commits'] as text)) > 100 and k > 1 order by k, 2 limit 10"""
+    }
 
     // createMV("create materialized view xxx as select k, sum(k) from ${table_name} group by k order by k;")
     // qt_sql "select v['type'], v['id'], v['created_at'] from ${table_name} where cast(v['id'] as bigint) != 25061216922 order by k,  cast(v['id'] as bigint) limit 10"

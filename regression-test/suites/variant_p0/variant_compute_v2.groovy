@@ -16,9 +16,17 @@
 // under the License.
 
 suite("variant_compute_v2", "p0,nonConcurrent") {
-    sql "SET enable_variant_v2 = true"
+    def variantV2Function = getFeConfig("enable_variant_v2").toBoolean() ? "parse_to_variant" : ""
+    if (!getFeConfig("enable_variant_v2").toBoolean()) {
+        return
+    }
     sql "SET enable_nereids_planner = true"
     sql "SET enable_fallback_to_original_planner = false"
+    sql "SET default_variant_enable_doc_mode = false"
+    sql "SET default_variant_max_subcolumns_count = 0"
+    sql "SET default_variant_enable_typed_paths_to_sparse = false"
+    sql "SET default_variant_max_sparse_column_statistics_size = 10000"
+    sql "SET default_variant_sparse_hash_shard_count = 1"
     def segmentScanTable = "variant_v2_segment_scan"
     sql "DROP TABLE IF EXISTS ${segmentScanTable}"
     sql """
@@ -31,18 +39,16 @@ suite("variant_compute_v2", "p0,nonConcurrent") {
         PROPERTIES("replication_num" = "1")
     """
 
-    // INSERT VALUES does not cross the V2-to-V1 compute boundary. Storage still writes the
-    // legacy representation, and the enabled session reads the segment through ColumnVariantV2.
+    // INSERT VALUES uses explicit parsing so valid JSON becomes a structured Variant value.
     sql """
         INSERT INTO ${segmentScanTable} VALUES
-        (0, '{"dense":1,"nested":{"value":"a"},"sparse":100}'),
-        (1, '{"dense":2,"nested":{"value":"b"}}'),
-        (2, '{"dense":3,"nested":{"value":"c"},"sparse":300}'),
+        (0, ${variantV2Function}('{"dense":1,"nested":{"value":"a"},"sparse":100}')),
+        (1, ${variantV2Function}('{"dense":2,"nested":{"value":"b"}}')),
+        (2, ${variantV2Function}('{"dense":3,"nested":{"value":"c"},"sparse":300}')),
         (3, NULL)
     """
 
-    // The VALUES statement above creates a legacy segment. Read that segment as ColumnVariantV2
-    // and keep the V2 representation through the INSERT SELECT storage sink.
+    // Keep the configured representation through the INSERT SELECT storage sink.
     def insertTargetTable = "variant_v2_insert_target"
     sql "DROP TABLE IF EXISTS ${insertTargetTable}"
     sql """
@@ -88,15 +94,6 @@ suite("variant_compute_v2", "p0,nonConcurrent") {
         ORDER BY id
     """
 
-    // A V2-written segment keeps the legacy physical format and remains readable with V1.
-    sql "SET enable_variant_v2 = false"
-    order_qt_v1_reader_on_v2_insert_target """
-        SELECT id, CAST(v AS STRING), v IS NULL
-        FROM ${insertTargetTable}
-        ORDER BY id
-    """
-    sql "SET enable_variant_v2 = true"
-
     order_qt_segment_scan """
         SELECT id, CAST(v AS STRING), v IS NULL
         FROM ${segmentScanTable}
@@ -119,15 +116,15 @@ suite("variant_compute_v2", "p0,nonConcurrent") {
     """
 
     qt_constant_fold """
-        SELECT CAST(parse_to_variant('{"folded":[1,true,null]}') AS STRING)
+        SELECT CAST(${variantV2Function}('{"folded":[1,true,null]}') AS STRING)
     """
 
     order_qt_constant_union """
         SELECT CAST(v AS STRING)
         FROM (
-            SELECT parse_to_variant('{"constant":1}') AS v
+            SELECT ${variantV2Function}('{"constant":1}') AS v
             UNION ALL
-            SELECT parse_to_variant('[2,null]') AS v
+            SELECT ${variantV2Function}('[2,null]') AS v
         ) t
         ORDER BY CAST(v AS STRING)
     """
@@ -135,9 +132,9 @@ suite("variant_compute_v2", "p0,nonConcurrent") {
     order_qt_zero_row_union """
         SELECT CAST(v AS STRING)
         FROM (
-            SELECT parse_to_variant('{"zero":0}') AS v FROM numbers("number" = "0")
+            SELECT ${variantV2Function}('{"zero":0}') AS v FROM numbers("number" = "0")
             UNION ALL
-            SELECT parse_to_variant('{"zero":1}') AS v
+            SELECT ${variantV2Function}('{"zero":1}') AS v
         ) t
         ORDER BY CAST(v AS STRING)
     """
@@ -146,11 +143,11 @@ suite("variant_compute_v2", "p0,nonConcurrent") {
         SELECT branch, CAST(v AS STRING)
         FROM (
             SELECT 0 AS branch,
-                   parse_to_variant(CONCAT('{"encoded":', number, '}')) AS v
+                   ${variantV2Function}(CONCAT('{"encoded":', number, '}')) AS v
             FROM numbers("number" = "2")
             UNION ALL
             SELECT 1 AS branch,
-                   parse_to_variant(CONCAT('{"encoded":', number + 2, '}')) AS v
+                   ${variantV2Function}(CONCAT('{"encoded":', number + 2, '}')) AS v
             FROM numbers("number" = "2")
         ) t
         ORDER BY branch, CAST(v AS STRING)
@@ -160,7 +157,7 @@ suite("variant_compute_v2", "p0,nonConcurrent") {
         SELECT branch, CAST(v AS STRING), v IS NULL
         FROM (
             SELECT 0 AS branch,
-                   parse_to_variant(
+                   ${variantV2Function}(
                        CASE number WHEN 0 THEN CAST(NULL AS STRING)
                                    ELSE CAST(number AS STRING) END) AS v
             FROM numbers("number" = "2")
@@ -188,7 +185,7 @@ suite("variant_compute_v2", "p0,nonConcurrent") {
     order_qt_dynamic_empty_branch_union """
         SELECT branch, CAST(v AS STRING)
         FROM (
-            SELECT 0 AS branch, parse_to_variant(CAST(number AS STRING)) AS v
+            SELECT 0 AS branch, ${variantV2Function}(CAST(number AS STRING)) AS v
             FROM numbers("number" = "0")
             UNION ALL
             SELECT 1 AS branch, CAST(CAST(number AS BIGINT) AS VARIANT) AS v
@@ -199,9 +196,9 @@ suite("variant_compute_v2", "p0,nonConcurrent") {
 
     order_qt_parse_cast_path """
         SELECT number,
-               CAST(parse_to_variant(payload) AS STRING),
-               CAST(parse_to_variant(payload)['object']['k'] AS INT),
-               CAST(parse_to_variant(payload)['missing'] AS STRING)
+               CAST(${variantV2Function}(payload) AS STRING),
+               CAST(${variantV2Function}(payload)['object']['k'] AS INT),
+               CAST(${variantV2Function}(payload)['missing'] AS STRING)
         FROM (
             SELECT number,
                    CONCAT('{"object":{"k":', number,
@@ -229,43 +226,43 @@ suite("variant_compute_v2", "p0,nonConcurrent") {
     """
 
     qt_encoded_scalar_casts_and_failures """
-        SELECT CAST(parse_to_variant('true') AS BOOLEAN),
-               CAST(parse_to_variant('-7') AS TINYINT),
-               CAST(parse_to_variant('123.45') AS DECIMAL(9, 2)),
-               CAST(parse_to_variant('"2024-02-29"') AS DATE),
-               CAST(parse_to_variant('"2024-02-29 12:34:56.123456"') AS DATETIMEV2(6)),
-               CAST(parse_to_variant('"not-an-int"') AS INT) IS NULL,
-               CAST(parse_to_variant('{"a":1}') AS INT) IS NULL,
-               CAST(parse_to_variant('null') AS INT) IS NULL,
-               CAST(parse_to_variant('true') AS INT),
-               CAST(parse_to_variant('false') AS INT),
-               CAST(parse_to_variant('128') AS TINYINT) IS NULL,
-               CAST(parse_to_variant('-129') AS TINYINT) IS NULL,
-               CAST(parse_to_variant('9223372036854775808') AS BIGINT) IS NULL,
-               CAST(parse_to_variant('123.45') AS DECIMAL(4, 2)) IS NULL,
-               CAST(parse_to_variant(CAST(NULL AS STRING)) AS INT) IS NULL
+        SELECT CAST(${variantV2Function}('true') AS BOOLEAN),
+               CAST(${variantV2Function}('-7') AS TINYINT),
+               CAST(${variantV2Function}('123.45') AS DECIMAL(9, 2)),
+               CAST(${variantV2Function}('"2024-02-29"') AS DATE),
+               CAST(${variantV2Function}('"2024-02-29 12:34:56.123456"') AS DATETIMEV2(6)),
+               CAST(${variantV2Function}('"not-an-int"') AS INT) IS NULL,
+               CAST(${variantV2Function}('{"a":1}') AS INT) IS NULL,
+               CAST(${variantV2Function}('null') AS INT) IS NULL,
+               CAST(${variantV2Function}('true') AS INT),
+               CAST(${variantV2Function}('false') AS INT),
+               CAST(${variantV2Function}('128') AS TINYINT) IS NULL,
+               CAST(${variantV2Function}('-129') AS TINYINT) IS NULL,
+               CAST(${variantV2Function}('9223372036854775808') AS BIGINT) IS NULL,
+               CAST(${variantV2Function}('123.45') AS DECIMAL(4, 2)) IS NULL,
+               CAST(${variantV2Function}(CAST(NULL AS STRING)) AS INT) IS NULL
     """
 
     qt_jsonb_cast_round_trip """
         SELECT CAST(CAST(CAST('{"b":2,"a":[1,null]}' AS JSON) AS VARIANT) AS STRING),
                CAST(CAST(CAST(CAST('{"b":2,"a":[1,null]}' AS JSON) AS VARIANT) AS JSON)
                     AS STRING),
-               CAST(CAST(parse_to_variant('null') AS JSON) AS STRING)
+               CAST(CAST(${variantV2Function}('null') AS JSON) AS STRING)
     """
 
     qt_array_cast_round_trip """
         SELECT CAST(CAST(array(1, CAST(NULL AS INT), 3) AS VARIANT) AS ARRAY<INT>),
-               CAST(parse_to_variant('[1,"2",null]') AS ARRAY<INT>),
-               CAST(parse_to_variant('[1,"not-an-int",3]') AS ARRAY<INT>),
+               CAST(${variantV2Function}('[1,"2",null]') AS ARRAY<INT>),
+               CAST(${variantV2Function}('[1,"not-an-int",3]') AS ARRAY<INT>),
                CAST(CAST(array(array(1, CAST(NULL AS INT)), array(2, 3)) AS VARIANT)
                     AS ARRAY<ARRAY<INT>>),
-               CAST(parse_to_variant('null') AS ARRAY<INT>) IS NULL,
-               CAST(parse_to_variant('42') AS ARRAY<INT>) IS NULL
+               CAST(${variantV2Function}('null') AS ARRAY<INT>) IS NULL,
+               CAST(${variantV2Function}('42') AS ARRAY<INT>) IS NULL
     """
 
     qt_typed_scalar_is_not_a_document """
-        SELECT CAST(parse_to_variant('{"a":1}') AS STRING),
-               element_at(parse_to_variant('{"a":1}'), 'a') IS NULL,
+        SELECT CAST(${variantV2Function}('{"a":1}') AS STRING),
+               element_at(${variantV2Function}('{"a":1}'), 'a') IS NULL,
                element_at(CAST(CAST(42 AS BIGINT) AS VARIANT), 0) IS NULL
     """
 
@@ -278,19 +275,19 @@ suite("variant_compute_v2", "p0,nonConcurrent") {
                element_at(v, 4) IS NULL,
                element_at(v, CAST(NULL AS BIGINT)) IS NULL
         FROM (
-            SELECT number, parse_to_variant(CONCAT('[', number, ',20,null]')) AS v
+            SELECT number, ${variantV2Function}(CONCAT('[', number, ',20,null]')) AS v
             FROM numbers("number" = "3")
         ) t
         ORDER BY number
     """
 
     qt_variant_selector_semantics """
-        SELECT CAST(element_at(parse_to_variant('{"1":"object-key"}'), '1') AS STRING),
-               element_at(parse_to_variant('{"1":"object-key"}'), 1) IS NULL
+        SELECT CAST(element_at(${variantV2Function}('{"1":"object-key"}'), '1') AS STRING),
+               element_at(${variantV2Function}('{"1":"object-key"}'), 1) IS NULL
     """
 
     qt_variant_type_dynamic """
-        SELECT variant_type(parse_to_variant(CONCAT('{"k":', number, '}')))
+        SELECT variant_type(${variantV2Function}(CONCAT('{"k":', number, '}')))
         FROM numbers("number" = "1")
     """
 
@@ -313,14 +310,14 @@ suite("variant_compute_v2", "p0,nonConcurrent") {
     }
 
     order_qt_direct_result """
-        SELECT parse_to_variant(CONCAT('{"id":', number, '}'))
+        SELECT ${variantV2Function}(CONCAT('{"id":', number, '}'))
         FROM numbers("number" = "3")
     """
 
     order_qt_group_by """
         SELECT CAST(v AS STRING), COUNT(*)
         FROM (
-            SELECT parse_to_variant(
+            SELECT ${variantV2Function}(
                        CASE number
                            WHEN 0 THEN '{"a":1,"b":2}'
                            WHEN 1 THEN '{"b":2,"a":1}'
@@ -339,7 +336,7 @@ suite("variant_compute_v2", "p0,nonConcurrent") {
         FROM (
             SELECT DISTINCT v
             FROM (
-                SELECT parse_to_variant(
+                SELECT ${variantV2Function}(
                            CASE number
                                WHEN 0 THEN '{"a":1,"b":2}'
                                WHEN 1 THEN '{"b":2,"a":1}'
@@ -364,7 +361,7 @@ suite("variant_compute_v2", "p0,nonConcurrent") {
     order_qt_encoded_typed_group_by_with_nulls """
         SELECT CAST(v AS STRING), v IS NULL, COUNT(*), COUNT(v)
         FROM (
-            SELECT parse_to_variant(
+            SELECT ${variantV2Function}(
                        CASE number WHEN 0 THEN '1'
                                    WHEN 1 THEN '1.0'
                                    WHEN 2 THEN 'null'
@@ -382,9 +379,9 @@ suite("variant_compute_v2", "p0,nonConcurrent") {
     order_qt_numeric_canonical_group_by """
         SELECT COUNT(*)
         FROM (
-            SELECT parse_to_variant('1') AS v
+            SELECT ${variantV2Function}('1') AS v
             UNION ALL
-            SELECT parse_to_variant('1.0') AS v
+            SELECT ${variantV2Function}('1.0') AS v
             UNION ALL
             SELECT CAST(CAST(1 AS BIGINT) AS VARIANT) AS v
             UNION ALL
@@ -444,7 +441,7 @@ suite("variant_compute_v2", "p0,nonConcurrent") {
     order_qt_mixed_shape_group_by """
         SELECT COUNT(*)
         FROM (
-            SELECT parse_to_variant(
+            SELECT ${variantV2Function}(
                        CASE number
                            WHEN 0 THEN 'true'
                            WHEN 1 THEN '"x"'
@@ -465,7 +462,7 @@ suite("variant_compute_v2", "p0,nonConcurrent") {
         FROM (
             SELECT DISTINCT v
             FROM (
-                SELECT parse_to_variant(
+                SELECT ${variantV2Function}(
                            CASE number WHEN 0 THEN '1'
                                        WHEN 1 THEN '1.0'
                                        WHEN 2 THEN 'null'
@@ -483,7 +480,7 @@ suite("variant_compute_v2", "p0,nonConcurrent") {
     order_qt_sql_null_and_json_null_group_by """
         SELECT CAST(v AS STRING), v IS NULL, COUNT(*)
         FROM (
-            SELECT parse_to_variant(
+            SELECT ${variantV2Function}(
                        CASE number WHEN 2 THEN 'null' ELSE CAST(NULL AS STRING) END) AS v
             FROM numbers("number" = "3")
         ) t
@@ -494,7 +491,7 @@ suite("variant_compute_v2", "p0,nonConcurrent") {
     order_qt_grouping_sets_retained_and_nullified_variant """
         SELECT GROUPING(v), CAST(v AS STRING), v IS NULL, COUNT(*)
         FROM (
-            SELECT parse_to_variant(CAST(number % 2 AS STRING)) AS v
+            SELECT ${variantV2Function}(CAST(number % 2 AS STRING)) AS v
             FROM numbers("number" = "4")
         ) t
         GROUP BY GROUPING SETS ((v), ())
@@ -502,14 +499,14 @@ suite("variant_compute_v2", "p0,nonConcurrent") {
     """
 
     qt_nested_variant_count """
-        SELECT COUNT(CAST(parse_to_variant(CONCAT('[', number, ']')) AS ARRAY<VARIANT>)),
+        SELECT COUNT(CAST(${variantV2Function}(CONCAT('[', number, ']')) AS ARRAY<VARIANT>)),
                COUNT(CASE WHEN number = 0 THEN CAST(NULL AS ARRAY<VARIANT>)
-                          ELSE CAST(parse_to_variant(CONCAT('[', number, ']')) AS ARRAY<VARIANT>) END)
+                          ELSE CAST(${variantV2Function}(CONCAT('[', number, ']')) AS ARRAY<VARIANT>) END)
         FROM numbers("number" = "3")
     """
 
     qt_variant_group_concat_coercion """
-        SELECT group_concat(parse_to_variant(CAST(number AS STRING))
+        SELECT group_concat(${variantV2Function}(CAST(number AS STRING))
                             ORDER BY number SEPARATOR ',')
         FROM numbers("number" = "3")
     """
@@ -517,25 +514,25 @@ suite("variant_compute_v2", "p0,nonConcurrent") {
     def conditionalSql = """
         SELECT number,
                CAST(IF(number % 2 = 0,
-                       parse_to_variant(CONCAT('{\"if\":', number, '}')),
+                       ${variantV2Function}(CONCAT('{\"if\":', number, '}')),
                        CAST(CAST(number AS BIGINT) AS VARIANT)) AS STRING),
-               IF(number = 0, parse_to_variant(CAST(NULL AS STRING)),
+               IF(number = 0, ${variantV2Function}(CAST(NULL AS STRING)),
                   CAST(CAST(number AS BIGINT) AS VARIANT)) IS NULL,
                CAST(CASE
                         WHEN number = 0 THEN CAST(NULL AS VARIANT)
-                        WHEN number = 1 THEN parse_to_variant('null')
-                        WHEN number = 2 THEN parse_to_variant('{\"case\":2}')
+                        WHEN number = 1 THEN ${variantV2Function}('null')
+                        WHEN number = 2 THEN ${variantV2Function}('{\"case\":2}')
                         ELSE CAST(CAST(number AS BIGINT) AS VARIANT)
                     END AS STRING),
                CAST(IFNULL(
-                        parse_to_variant(CASE number WHEN 0 THEN CAST(NULL AS STRING)
+                        ${variantV2Function}(CASE number WHEN 0 THEN CAST(NULL AS STRING)
                                                      ELSE CAST(number AS STRING) END),
                         CAST(CAST(99 AS BIGINT) AS VARIANT)) AS STRING),
                CAST(COALESCE(
-                        parse_to_variant(CASE number WHEN 0 THEN CAST(NULL AS STRING)
+                        ${variantV2Function}(CASE number WHEN 0 THEN CAST(NULL AS STRING)
                                                      ELSE CAST(number AS STRING) END),
                         CAST(CAST(number + 10 AS BIGINT) AS VARIANT),
-                        parse_to_variant('false')) AS STRING)
+                        ${variantV2Function}('false')) AS STRING)
         FROM numbers("number" = "4")
         ORDER BY number
     """
@@ -549,12 +546,12 @@ suite("variant_compute_v2", "p0,nonConcurrent") {
     order_qt_short_circuit_empty_variant_branches """
         SELECT number,
                CAST(IF(number >= 0,
-                       parse_to_variant(CONCAT('{\"kept\":', number, '}')),
+                       ${variantV2Function}(CONCAT('{\"kept\":', number, '}')),
                        CAST(CAST(number AS BIGINT) AS VARIANT)) AS STRING),
-               CAST(COALESCE(parse_to_variant(CAST(number AS STRING)),
+               CAST(COALESCE(${variantV2Function}(CAST(number AS STRING)),
                              CAST(CAST(number AS BIGINT) AS VARIANT)) AS STRING),
                IF(number >= 0, CAST(NULL AS VARIANT),
-                  parse_to_variant(CAST(number AS STRING))) IS NULL
+                  ${variantV2Function}(CAST(number AS STRING))) IS NULL
         FROM numbers("number" = "2")
         ORDER BY number
     """
@@ -568,9 +565,9 @@ suite("variant_compute_v2", "p0,nonConcurrent") {
         SELECT empty_v IS NULL, CAST(empty_v AS STRING),
                json_null_v IS NULL, CAST(json_null_v AS STRING)
         FROM (
-            SELECT (SELECT parse_to_variant(CAST(number AS STRING))
+            SELECT (SELECT ${variantV2Function}(CAST(number AS STRING))
                     FROM numbers("number" = "0")) AS empty_v,
-                   (SELECT parse_to_variant(
+                   (SELECT ${variantV2Function}(
                                CASE number WHEN 0 THEN 'null' END)
                     FROM numbers("number" = "1")) AS json_null_v
         ) t
@@ -579,10 +576,10 @@ suite("variant_compute_v2", "p0,nonConcurrent") {
     order_qt_intersect """
         SELECT CAST(v AS STRING)
         FROM (
-            SELECT parse_to_variant(CONCAT('{"k":', number % 4, '}')) AS v
+            SELECT ${variantV2Function}(CONCAT('{"k":', number % 4, '}')) AS v
             FROM numbers("number" = "6")
             INTERSECT
-            SELECT parse_to_variant(CONCAT('{"k":', number, '}')) AS v
+            SELECT ${variantV2Function}(CONCAT('{"k":', number, '}')) AS v
             FROM numbers("number" = "3")
         ) t
         ORDER BY CAST(v AS STRING)
@@ -591,10 +588,10 @@ suite("variant_compute_v2", "p0,nonConcurrent") {
     order_qt_except """
         SELECT CAST(v AS STRING)
         FROM (
-            SELECT parse_to_variant(CONCAT('{"k":', number, '}')) AS v
+            SELECT ${variantV2Function}(CONCAT('{"k":', number, '}')) AS v
             FROM numbers("number" = "4")
             EXCEPT
-            SELECT parse_to_variant(CONCAT('{"k":', number, '}')) AS v
+            SELECT ${variantV2Function}(CONCAT('{"k":', number, '}')) AS v
             FROM numbers("number" = "2")
         ) t
         ORDER BY CAST(v AS STRING)
@@ -603,7 +600,7 @@ suite("variant_compute_v2", "p0,nonConcurrent") {
     order_qt_encoded_typed_intersect """
         SELECT CAST(v AS STRING)
         FROM (
-            SELECT parse_to_variant(CAST(number AS STRING)) AS v
+            SELECT ${variantV2Function}(CAST(number AS STRING)) AS v
             FROM numbers("number" = "3")
             INTERSECT
             SELECT CAST(CAST(number AS BIGINT) AS VARIANT) AS v
@@ -640,7 +637,7 @@ suite("variant_compute_v2", "p0,nonConcurrent") {
         SELECT id, CAST(v AS STRING), CAST(element AS STRING)
         FROM (
             SELECT number AS id,
-                   parse_to_variant(
+                   ${variantV2Function}(
                        CASE number
                            WHEN 0 THEN '[1,{"a":2},null]'
                            WHEN 1 THEN '[]'
@@ -662,7 +659,7 @@ suite("variant_compute_v2", "p0,nonConcurrent") {
                CAST(element[1] AS STRING)
         FROM (
             SELECT number AS id,
-                   parse_to_variant(
+                   ${variantV2Function}(
                        CASE number
                            WHEN 0 THEN '[1,1.0,true,"x",null,{"k":2},[3,null]]'
                            WHEN 1 THEN '[]'
@@ -680,7 +677,7 @@ suite("variant_compute_v2", "p0,nonConcurrent") {
     order_qt_explode_variant_array_grouped_output """
         SELECT CAST(element AS STRING), element IS NULL, COUNT(*)
         FROM (
-            SELECT parse_to_variant(
+            SELECT ${variantV2Function}(
                        CASE number
                            WHEN 0 THEN '[1,null,{"a":1}]'
                            WHEN 1 THEN '[1.0,null,{"a":1}]'
@@ -697,10 +694,10 @@ suite("variant_compute_v2", "p0,nonConcurrent") {
         SELECT id, CAST(left_element AS STRING), CAST(right_element AS STRING)
         FROM (
             SELECT number AS id,
-                   parse_to_variant(
+                   ${variantV2Function}(
                        CASE number WHEN 0 THEN '[1,2]' WHEN 1 THEN '[]' ELSE NULL END)
                        AS left_array,
-                   parse_to_variant(
+                   ${variantV2Function}(
                        CASE number WHEN 0 THEN '["a"]' WHEN 1 THEN '[true,false]' ELSE '[9]' END)
                        AS right_array
             FROM numbers("number" = "3")
@@ -714,7 +711,7 @@ suite("variant_compute_v2", "p0,nonConcurrent") {
         SELECT id, values_to_sort
         FROM (
             SELECT number AS id,
-                   CAST(parse_to_variant(
+                   CAST(${variantV2Function}(
                             CASE number WHEN 0 THEN '[1,null]'
                                         WHEN 1 THEN '["x"]'
                                         ELSE CAST(NULL AS STRING) END)
@@ -728,7 +725,7 @@ suite("variant_compute_v2", "p0,nonConcurrent") {
         SELECT id, values_to_sort
         FROM (
             SELECT number AS id,
-                   CAST(parse_to_variant(
+                   CAST(${variantV2Function}(
                             CASE number WHEN 0 THEN '[1,null]'
                                         WHEN 1 THEN '["x"]'
                                         ELSE CAST(NULL AS STRING) END)
@@ -746,7 +743,7 @@ suite("variant_compute_v2", "p0,nonConcurrent") {
                map('k', values_to_nest)
         FROM (
             SELECT number AS id,
-                   CAST(parse_to_variant(
+                   CAST(${variantV2Function}(
                             CASE number WHEN 0 THEN '[1,null]'
                                         WHEN 1 THEN '["x"]'
                                         ELSE CAST(NULL AS STRING) END)
@@ -760,7 +757,7 @@ suite("variant_compute_v2", "p0,nonConcurrent") {
         SELECT id, element IS NULL, CAST(element AS STRING)
         FROM (
             SELECT number AS id,
-                   CAST(parse_to_variant(
+                   CAST(${variantV2Function}(
                             CASE number WHEN 0 THEN '[1,null]'
                                         WHEN 1 THEN '[]'
                                         ELSE CAST(NULL AS STRING) END)
@@ -775,7 +772,7 @@ suite("variant_compute_v2", "p0,nonConcurrent") {
         SELECT id, element IS NULL, CAST(element AS STRING)
         FROM (
             SELECT number AS id,
-                   CAST(parse_to_variant(
+                   CAST(${variantV2Function}(
                             CASE number WHEN 0 THEN '[1,null]'
                                         WHEN 1 THEN '[]'
                                         ELSE CAST(NULL AS STRING) END)
@@ -789,13 +786,13 @@ suite("variant_compute_v2", "p0,nonConcurrent") {
     order_qt_explode_outer_sql_null """
         SELECT id, v IS NULL, CAST(v AS STRING), element IS NULL, CAST(element AS STRING)
         FROM (
-            SELECT 0 AS id, parse_to_variant(CAST(NULL AS STRING)) AS v
+            SELECT 0 AS id, ${variantV2Function}(CAST(NULL AS STRING)) AS v
             UNION ALL
-            SELECT 1 AS id, parse_to_variant('null') AS v
+            SELECT 1 AS id, ${variantV2Function}('null') AS v
             UNION ALL
-            SELECT 2 AS id, parse_to_variant('[]') AS v
+            SELECT 2 AS id, ${variantV2Function}('[]') AS v
             UNION ALL
-            SELECT 3 AS id, parse_to_variant('[null,1]') AS v
+            SELECT 3 AS id, ${variantV2Function}('[null,1]') AS v
         ) t
         LATERAL VIEW explode_outer(v) exploded AS element
         ORDER BY id, element IS NULL, CAST(element AS STRING)

@@ -16,7 +16,8 @@
 // under the License.
 
 suite("regression_test_variant_doc_mode", "p0"){
-    def enableVariantV2 = (sql "select @@enable_variant_v2")[0][0].toString().toBoolean()
+    def variantV2Function = getFeConfig("enable_variant_v2").toBoolean() ? "parse_to_variant" : ""
+    def enableVariantV2 = getFeConfig("enable_variant_v2").toBoolean()
     sql """ set default_variant_enable_doc_mode = true """
 
   
@@ -39,14 +40,14 @@ suite("regression_test_variant_doc_mode", "p0"){
 
     // multiple inserts to generate multiple rowsets
     sql """insert into ${table_min0} values
-        (1, '{"a":1,"b":{"c":"x"},"arr":[1,2]}'),
-        (2, '{"a":2,"b":{"c":"y"},"arr":[3]}'),
-        (3, '{"a":3,"b":{"c":"z"},"arr":[]}');"""
+        (1, ${variantV2Function}('{"a":1,"b":{"c":"x"},"arr":[1,2]}')),
+        (2, ${variantV2Function}('{"a":2,"b":{"c":"y"},"arr":[3]}')),
+        (3, ${variantV2Function}('{"a":3,"b":{"c":"z"},"arr":[]}'));"""
     sql """insert into ${table_min0} values
-        (4, '{"a":4,"b":{"c":"x2"},"arr":[4,5,6]}'),
-        (5, '{"a":5,"b":{"c":"y2"},"arr":[7]}');"""
+        (4, ${variantV2Function}('{"a":4,"b":{"c":"x2"},"arr":[4,5,6]}')),
+        (5, ${variantV2Function}('{"a":5,"b":{"c":"y2"},"arr":[7]}'));"""
     sql """insert into ${table_min0} values
-        (6, '{"a":6,"b":{"c":"z2"},"arr":[8,9]}');"""
+        (6, ${variantV2Function}('{"a":6,"b":{"c":"z2"},"arr":[8,9]}'));"""
 
     // runtime proof that doc snapshot column exists in variant map
     def vtype_min0 = sql """select variant_type(v) from ${table_min0} where k = 1"""
@@ -190,14 +191,14 @@ suite("regression_test_variant_doc_mode", "p0"){
     assertTrue(show_create_min_big.toString().contains("10000000"))
 
     sql """insert into ${table_min_big} values
-        (1, '{"a":1,"b":{"c":"x"},"arr":[1,2]}'),
-        (2, '{"a":2,"b":{"c":"y"},"arr":[3]}'),
-        (3, '{"a":3,"b":{"c":"z"},"arr":[]}');"""
+        (1, ${variantV2Function}('{"a":1,"b":{"c":"x"},"arr":[1,2]}')),
+        (2, ${variantV2Function}('{"a":2,"b":{"c":"y"},"arr":[3]}')),
+        (3, ${variantV2Function}('{"a":3,"b":{"c":"z"},"arr":[]}'));"""
     sql """insert into ${table_min_big} values
-        (4, '{"a":4,"b":{"c":"x2"},"arr":[4,5,6]}'),
-        (5, '{"a":5,"b":{"c":"y2"},"arr":[7]}');"""
+        (4, ${variantV2Function}('{"a":4,"b":{"c":"x2"},"arr":[4,5,6]}')),
+        (5, ${variantV2Function}('{"a":5,"b":{"c":"y2"},"arr":[7]}'));"""
     sql """insert into ${table_min_big} values
-        (6, '{"a":6,"b":{"c":"z2"},"arr":[8,9]}');"""
+        (6, ${variantV2Function}('{"a":6,"b":{"c":"z2"},"arr":[8,9]}'));"""
 
     def vtype_min_big = sql """select variant_type(v) from ${table_min_big} where k = 1"""
     if (enableVariantV2) {
@@ -253,14 +254,14 @@ suite("regression_test_variant_doc_mode", "p0"){
     assertTrue(show_create_override.toString().contains("\"0\"") || show_create_override.toString().contains("= 0"))
 
     sql """insert into ${table_override} values
-        (1, '{"a":1,"b":{"c":"x"},"arr":[1,2]}'),
-        (2, '{"a":2,"b":{"c":"y"},"arr":[3]}'),
-        (3, '{"a":3,"b":{"c":"z"},"arr":[]}');"""
+        (1, ${variantV2Function}('{"a":1,"b":{"c":"x"},"arr":[1,2]}')),
+        (2, ${variantV2Function}('{"a":2,"b":{"c":"y"},"arr":[3]}')),
+        (3, ${variantV2Function}('{"a":3,"b":{"c":"z"},"arr":[]}'));"""
     sql """insert into ${table_override} values
-        (4, '{"a":4,"b":{"c":"x2"},"arr":[4,5,6]}'),
-        (5, '{"a":5,"b":{"c":"y2"},"arr":[7]}');"""
+        (4, ${variantV2Function}('{"a":4,"b":{"c":"x2"},"arr":[4,5,6]}')),
+        (5, ${variantV2Function}('{"a":5,"b":{"c":"y2"},"arr":[7]}'));"""
     sql """insert into ${table_override} values
-        (6, '{"a":6,"b":{"c":"z2"},"arr":[8,9]}');"""
+        (6, ${variantV2Function}('{"a":6,"b":{"c":"z2"},"arr":[8,9]}'));"""
     def vtype_override = sql """select variant_type(v) from ${table_override} where k = 1"""
     if (enableVariantV2) {
         assertEquals([["object"]], vtype_override)

@@ -50,7 +50,7 @@ public class ShortCircuitQueryContextTest {
     @Test
     public void testReusableRequiresSameFileCacheQueryLimitBytes() {
         ShortCircuitQueryContext context =
-                new ShortCircuitQueryContext(table("tbl", 10), "tbl", 10, -1, false);
+                new ShortCircuitQueryContext(table("tbl", 10), "tbl", 10, -1);
 
         Assertions.assertTrue(context.isReusable(connectContext(-1)));
         Assertions.assertFalse(context.isReusable(connectContext(0)));
@@ -59,20 +59,9 @@ public class ShortCircuitQueryContextTest {
     @Test
     public void testReusableStillChecksTableMetadata() {
         ShortCircuitQueryContext context =
-                new ShortCircuitQueryContext(table("tbl", 11), "tbl", 10, 0, false);
+                new ShortCircuitQueryContext(table("tbl", 11), "tbl", 10, 0);
 
         Assertions.assertFalse(context.isReusable(connectContext(0)));
-    }
-
-    @Test
-    public void testReusableRequiresSameEffectiveVariantV2Setting() {
-        ShortCircuitQueryContext context =
-                new ShortCircuitQueryContext(table("tbl", 10), "tbl", 10, -1, false);
-        Assertions.assertTrue(context.isReusable(connectContext(-1)));
-
-        ConnectContext variantV2Context = connectContext(-1);
-        variantV2Context.getSessionVariable().enableVariantV2 = true;
-        Assertions.assertFalse(context.isReusable(variantV2Context));
     }
 
     @Test
@@ -92,7 +81,7 @@ public class ShortCircuitQueryContextTest {
         Mockito.when(planner.getScanNodes()).thenReturn(Collections.singletonList(scanNode));
 
         ShortCircuitQueryContext context =
-                new ShortCircuitQueryContext(planner, Mockito.mock(Queriable.class), false);
+                new ShortCircuitQueryContext(planner, Mockito.mock(Queriable.class));
         TQueryOptions serializedQueryOptions = new TQueryOptions();
         new TDeserializer().deserialize(serializedQueryOptions, context.serializedQueryOptions.toByteArray());
 

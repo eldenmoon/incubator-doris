@@ -16,15 +16,18 @@
 // under the License.
 
 suite("test_variant_count_distinct", "p0,nonConcurrent") {
-    sql "SET enable_variant_v2 = true"
+    def variantV2Function = getFeConfig("enable_variant_v2").toBoolean() ? "parse_to_variant" : ""
+    if (!getFeConfig("enable_variant_v2").toBoolean()) {
+        return
+    }
     qt_count_distinct_array_subcolumn """
         SELECT COUNT(DISTINCT v['arr']), multi_distinct_count(v['arr'])
         FROM (
-            SELECT parse_to_variant('{"arr":[1,2,3]}') v
+            SELECT ${variantV2Function}('{"arr":[1,2,3]}') v
             UNION ALL
-            SELECT parse_to_variant('{"arr":[4,5]}')
+            SELECT ${variantV2Function}('{"arr":[4,5]}')
             UNION ALL
-            SELECT parse_to_variant('{"arr":[1,2,3]}')
+            SELECT ${variantV2Function}('{"arr":[1,2,3]}')
         ) t
     """
 }

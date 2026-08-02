@@ -260,9 +260,9 @@
 1
 1
 
--- !sql --
-\N
-\N
+-- !const_nested_subpath_v1 --
+true
+true
 
 -- !sql --
 

@@ -16,7 +16,15 @@
 // under the License.
 
 suite("test_variant_equality_contexts", "p0,nonConcurrent") {
-    sql "SET enable_variant_v2 = true"
+    def variantV2Function = getFeConfig("enable_variant_v2").toBoolean() ? "parse_to_variant" : ""
+    sql "SET default_variant_enable_doc_mode = false"
+    sql "SET default_variant_max_subcolumns_count = 0"
+    sql "SET default_variant_enable_typed_paths_to_sparse = false"
+    sql "SET default_variant_max_sparse_column_statistics_size = 10000"
+    sql "SET default_variant_sparse_hash_shard_count = 1"
+    if (!getFeConfig("enable_variant_v2").toBoolean()) {
+        return
+    }
     sql "SET enable_nereids_planner = true"
     sql "SET enable_fallback_to_original_planner = false"
     sql "SET enable_decimal256 = true"
@@ -71,17 +79,17 @@ suite("test_variant_equality_contexts", "p0,nonConcurrent") {
     }
 
     test {
-        sql "SELECT parse_to_variant('1') = parse_to_variant('1.0')"
+        sql "SELECT ${variantV2Function}('1') = ${variantV2Function}('1.0')"
         exception "CAST to a concrete type first"
     }
 
     test {
-        sql "SELECT parse_to_variant('1') != parse_to_variant('1.0')"
+        sql "SELECT ${variantV2Function}('1') != ${variantV2Function}('1.0')"
         exception "CAST to a concrete type first"
     }
 
     test {
-        sql "SELECT parse_to_variant('1') <=> parse_to_variant('1.0')"
+        sql "SELECT ${variantV2Function}('1') <=> ${variantV2Function}('1.0')"
         exception "CAST to a concrete type first"
     }
 
@@ -111,7 +119,7 @@ suite("test_variant_equality_contexts", "p0,nonConcurrent") {
 
     order_qt_group_by """
         SELECT CAST(v AS STRING), COUNT(*)
-        FROM (SELECT parse_to_variant(CAST(number % 2 AS STRING)) v
+        FROM (SELECT ${variantV2Function}(CAST(number % 2 AS STRING)) v
               FROM numbers("number" = "4")) t
         GROUP BY v
         ORDER BY 1
@@ -130,7 +138,7 @@ suite("test_variant_equality_contexts", "p0,nonConcurrent") {
     order_qt_group_by_variant_null_semantics """
         SELECT v IS NULL, CAST(v AS STRING), COUNT(*)
         FROM (
-            SELECT parse_to_variant(
+            SELECT ${variantV2Function}(
                        IF(number = 0, 'null', CAST((number - 1) % 2 AS STRING))) v
             FROM numbers("number" = "6")
         ) t
@@ -141,23 +149,23 @@ suite("test_variant_equality_contexts", "p0,nonConcurrent") {
     qt_count_distinct_canonical_et_nulls """
         SELECT COUNT(DISTINCT v), multi_distinct_count(v)
         FROM (
-            SELECT parse_to_variant('{"b":2,"a":1}') v
+            SELECT ${variantV2Function}('{"b":2,"a":1}') v
             UNION ALL
-            SELECT parse_to_variant('{"a":1,"b":2}')
+            SELECT ${variantV2Function}('{"a":1,"b":2}')
             UNION ALL
-            SELECT parse_to_variant('[1,2]')
+            SELECT ${variantV2Function}('[1,2]')
             UNION ALL
-            SELECT parse_to_variant('[2,1]')
+            SELECT ${variantV2Function}('[2,1]')
             UNION ALL
-            SELECT parse_to_variant('1')
+            SELECT ${variantV2Function}('1')
             UNION ALL
-            SELECT parse_to_variant('1.0')
+            SELECT ${variantV2Function}('1.0')
             UNION ALL
             SELECT CAST(CAST(1 AS BIGINT) AS VARIANT)
             UNION ALL
             SELECT CAST(CAST(1.00 AS DECIMAL(9, 2)) AS VARIANT)
             UNION ALL
-            SELECT parse_to_variant('null')
+            SELECT ${variantV2Function}('null')
             UNION ALL
             SELECT CAST(NULL AS VARIANT)
         ) t
@@ -173,10 +181,10 @@ suite("test_variant_equality_contexts", "p0,nonConcurrent") {
     order_qt_intersect_encoded_canonical_numeric """
         SELECT CAST(v AS STRING)
         FROM (
-            SELECT parse_to_variant(CAST(number AS STRING)) v
+            SELECT ${variantV2Function}(CAST(number AS STRING)) v
             FROM numbers("number" = "4")
             INTERSECT
-            SELECT parse_to_variant(CONCAT(CAST(number AS STRING), '.0')) v
+            SELECT ${variantV2Function}(CONCAT(CAST(number AS STRING), '.0')) v
             FROM numbers("number" = "3")
         ) t
         ORDER BY 1
@@ -185,10 +193,10 @@ suite("test_variant_equality_contexts", "p0,nonConcurrent") {
     order_qt_except_encoded_array_order """
         SELECT CAST(v AS STRING)
         FROM (
-            SELECT parse_to_variant(IF(number = 0, '[1,2]', '[2,1]')) v
+            SELECT ${variantV2Function}(IF(number = 0, '[1,2]', '[2,1]')) v
             FROM numbers("number" = "2")
             EXCEPT
-            SELECT parse_to_variant('[1,2]') v
+            SELECT ${variantV2Function}('[1,2]') v
         ) t
         ORDER BY 1
     """
@@ -208,13 +216,13 @@ suite("test_variant_equality_contexts", "p0,nonConcurrent") {
     order_qt_union_distinct_canonical """
         SELECT CAST(v AS STRING)
         FROM (
-            SELECT parse_to_variant('{"b":2,"a":1}') v
+            SELECT ${variantV2Function}('{"b":2,"a":1}') v
             UNION DISTINCT
-            SELECT parse_to_variant('{"a":1,"b":2}')
+            SELECT ${variantV2Function}('{"a":1,"b":2}')
             UNION DISTINCT
-            SELECT parse_to_variant('1')
+            SELECT ${variantV2Function}('1')
             UNION DISTINCT
-            SELECT parse_to_variant('1.0')
+            SELECT ${variantV2Function}('1.0')
         ) t
         ORDER BY 1
     """

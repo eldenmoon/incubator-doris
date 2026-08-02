@@ -848,7 +848,6 @@ public class SessionVariable implements Serializable, Writable {
     @Deprecated
     public static final String ENABLE_VARIANT_FLATTEN_NESTED = "enable_variant_flatten_nested";
     public static final String ENABLE_VARIANT_SCHEMA_AUTO_CAST = "enable_variant_schema_auto_cast";
-    public static final String ENABLE_VARIANT_V2 = "enable_variant_v2";
 
     // CLOUD_VARIABLES_BEGIN
     public static final String CLOUD_CLUSTER = "cloud_cluster";
@@ -3790,20 +3789,6 @@ public class SessionVariable implements Serializable, Writable {
     public boolean enableVariantSchemaAutoCast = true;
 
     @VarAttrDef.VarAttr(
-            name = ENABLE_VARIANT_V2,
-            needForward = true,
-            affectQueryResultInPlan = true,
-            fuzzy = true,
-            varType = VariableAnnotation.EXPERIMENTAL,
-            description = {
-                    "是否对计算表达式和符合条件的本地 INSERT SELECT sink 启用 ColumnVariantV2，默认关闭。",
-                    "Whether to enable ColumnVariantV2 for compute expressions and eligible local "
-                            + "INSERT SELECT sinks. The default is false."
-            }
-    )
-    public boolean enableVariantV2 = false;
-
-    @VarAttrDef.VarAttr(
             name = DEFAULT_VARIANT_ENABLE_TYPED_PATHS_TO_SPARSE,
             needForward = true,
             fuzzy = true
@@ -3926,7 +3911,6 @@ public class SessionVariable implements Serializable, Writable {
         // 10MB = 10 * 1024 * 1024 bytes
         int maxBytes = 10 * 1024 * 1024;
         this.exchangeMultiBlocksByteSize = minBytes + (int) (random.nextDouble() * (maxBytes - minBytes));
-        this.enableVariantV2 = random.nextBoolean();
         this.defaultVariantMaxSubcolumnsCount = random.nextInt(10);
         this.defaultVariantSparseHashShardCount = random.nextInt(5) + 1;
         this.useV3StorageFormat = random.nextBoolean();
@@ -6704,10 +6688,6 @@ public class SessionVariable implements Serializable, Writable {
 
     public boolean isEnableVariantSchemaAutoCast() {
         return enableVariantSchemaAutoCast;
-    }
-
-    public boolean isEnableVariantV2() {
-        return enableVariantV2;
     }
 
     public void setProfileLevel(String profileLevel) {

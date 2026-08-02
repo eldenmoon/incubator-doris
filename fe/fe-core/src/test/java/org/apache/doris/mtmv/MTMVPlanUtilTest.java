@@ -45,7 +45,6 @@ import org.apache.doris.nereids.types.NullType;
 import org.apache.doris.nereids.types.StringType;
 import org.apache.doris.nereids.types.TinyIntType;
 import org.apache.doris.nereids.types.VarcharType;
-import org.apache.doris.nereids.types.VariantType;
 
 import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
@@ -202,11 +201,6 @@ public class MTMVPlanUtilTest extends SqlTestBase {
 
         Config.enable_decimal_conversion = originalEnableDecimalConversion;
 
-        // Compute V2 is an execution representation, not a persisted MTMV column property.
-        Mockito.when(slot.getDataType()).thenReturn(VariantType.COMPUTE_V2_INSTANCE);
-        dataType = MTMVPlanUtil.getDataType(slot, 1, connectContext, "pcol",
-                Sets.newHashSet("slot_name"));
-        Assert.assertFalse(((VariantType) dataType).isComputeV2());
     }
 
     @Test

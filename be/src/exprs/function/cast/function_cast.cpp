@@ -255,9 +255,10 @@ WrapperType prepare_impl(FunctionContext* context, const DataTypePtr& origin_fro
             dynamic_cast<const DataTypeVariantV2*>(remove_nullable(from_type).get());
     const auto* to_variant_v2 =
             dynamic_cast<const DataTypeVariantV2*>(remove_nullable(to_type).get());
-    if (from_variant_v1 != nullptr && to_variant_v2 != nullptr) {
+    if ((from_variant_v1 != nullptr && to_variant_v2 != nullptr) ||
+        (from_variant_v2 != nullptr && to_variant_v1 != nullptr)) {
         return CastWrapper::create_unsupport_wrapper(
-                "Cast from legacy Variant to Variant V2 is not supported");
+                "Cast between legacy Variant and compute-only Variant V2 is not supported");
     }
 
     // variant needs to be judged first
@@ -266,10 +267,6 @@ WrapperType prepare_impl(FunctionContext* context, const DataTypePtr& origin_fro
             return create_cast_to_variant_v2_wrapper(from_type);
         }
         DORIS_CHECK(to_variant_v1 != nullptr);
-        if (from_variant_v2 != nullptr) {
-            // Keep the representation bridge one-way for explicit legacy-storage fallbacks.
-            return create_cast_from_variant_v2_wrapper(to_type);
-        }
         return create_cast_to_variant_wrapper(from_type, *to_variant_v1);
     }
     if (from_type->get_primitive_type() == PrimitiveType::TYPE_VARIANT) {

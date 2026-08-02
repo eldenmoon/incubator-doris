@@ -21,8 +21,8 @@
 
 namespace doris::CastWrapper {
 
-// CAST kernels for ColumnVariantV2. Runtime routing remains responsible for selecting V2 and for
-// requesting the legacy compatibility bridge only at an explicit storage fallback boundary.
+// CAST kernels for ColumnVariantV2. Runtime type routing selects these kernels only for
+// DataTypeVariantV2 inputs and outputs.
 WrapperType create_cast_to_variant_v2_wrapper(const DataTypePtr& from_type);
 WrapperType create_cast_from_variant_v2_wrapper(const DataTypePtr& to_type);
 

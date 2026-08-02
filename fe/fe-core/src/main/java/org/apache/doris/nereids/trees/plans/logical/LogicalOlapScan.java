@@ -45,7 +45,6 @@ import org.apache.doris.nereids.trees.plans.ScoreRangeInfo;
 import org.apache.doris.nereids.trees.plans.algebra.CatalogRelation;
 import org.apache.doris.nereids.trees.plans.algebra.OlapScan;
 import org.apache.doris.nereids.trees.plans.visitor.PlanVisitor;
-import org.apache.doris.nereids.types.VariantType;
 import org.apache.doris.nereids.util.Utils;
 import org.apache.doris.qe.ConnectContext;
 import org.apache.doris.rpc.RpcException;
@@ -822,9 +821,9 @@ public class LogicalOlapScan extends LogicalCatalogRelation implements OlapScan,
             if (colToSubPathsMap.containsKey(key.getValue())) {
                 for (List<String> subPath : colToSubPathsMap.get(key.getValue())) {
                     if (!subPath.isEmpty()) {
-                        SlotReference slotReference = createScanSlot(
-                                exprIdGenerator.getNextId(), baseSchema.get(i),
-                                baseSchema.get(i).getName()).withSubPath(subPath);
+                        SlotReference slotReference = SlotReference.fromColumn(
+                                exprIdGenerator.getNextId(), table, baseSchema.get(i), qualified()
+                        ).withSubPath(subPath);
                         slots.add(slotReference);
                         subPathToSlotMap.computeIfAbsent(slot, k -> Maps.newHashMap())
                                 .put(subPath, slotReference);
@@ -869,13 +868,14 @@ public class LogicalOlapScan extends LogicalCatalogRelation implements OlapScan,
         String name = column.getName();
         Pair<Long, String> key = Pair.of(indexId, name);
         Slot slot = cacheSlotWithSlotName.computeIfAbsent(key, k ->
-                createScanSlot(exprIdIdGenerator.getNextId(), column, name));
+                SlotReference.fromColumn(exprIdIdGenerator.getNextId(), table, column, name, qualified()));
         List<Slot> slots = Lists.newArrayList(slot);
         if (colToSubPathsMap.containsKey(key.getValue())) {
             for (List<String> subPath : colToSubPathsMap.get(key.getValue())) {
                 if (!subPath.isEmpty()) {
-                    SlotReference slotReference = createScanSlot(
-                            exprIdIdGenerator.getNextId(), column, name).withSubPath(subPath);
+                    SlotReference slotReference = SlotReference.fromColumn(
+                            exprIdIdGenerator.getNextId(), table, column, name, qualified()
+                    ).withSubPath(subPath);
                     slots.add(slotReference);
                     subPathToSlotMap.computeIfAbsent(slot, k -> Maps.newHashMap())
                             .put(subPath, slotReference);
@@ -933,6 +933,7 @@ public class LogicalOlapScan extends LogicalCatalogRelation implements OlapScan,
     }
 
     private List<SlotReference> createSlotsVectorized(List<Column> columns, boolean skipBinlogBeforeColumn) {
+        List<String> qualified = qualified();
         SlotReference[] slots = new SlotReference[columns.size()];
         IdGenerator<ExprId> exprIdGenerator = StatementScopeIdGenerator.getExprIdGenerator();
         for (int i = 0; i < columns.size(); i++) {
@@ -940,24 +941,13 @@ public class LogicalOlapScan extends LogicalCatalogRelation implements OlapScan,
                 continue;
             }
             ExprId nextId = exprIdGenerator.getNextId();
-            slots[i] = createScanSlot(nextId, columns.get(i), columns.get(i).getName());
+            slots[i] = SlotReference.fromColumn(nextId, table, columns.get(i), qualified);
         }
         return Arrays.asList(slots);
     }
 
     protected List<SlotReference> createSlotsVectorized(List<Column> columns) {
         return createSlotsVectorized(columns, false);
-    }
-
-    private SlotReference createScanSlot(ExprId exprId, Column column, String name) {
-        SlotReference slot = SlotReference.fromColumn(exprId, table, column, name, qualified());
-        ConnectContext context = ConnectContext.get();
-        if (context == null || !context.getSessionVariable().isEnableVariantV2()
-                || !(slot.getDataType() instanceof VariantType)) {
-            return slot;
-        }
-        return (SlotReference) slot.withNullableAndDataType(
-                slot.nullable(), ((VariantType) slot.getDataType()).withComputeV2(true));
     }
 
     @Override

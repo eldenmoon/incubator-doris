@@ -23,8 +23,6 @@ import org.apache.doris.catalog.ScalarType;
 import org.apache.doris.catalog.Type;
 import org.apache.doris.common.AnalysisException;
 import org.apache.doris.common.DdlException;
-import org.apache.doris.nereids.types.DataType;
-import org.apache.doris.nereids.types.VariantType;
 
 import java.util.HashSet;
 import java.util.Map;
@@ -49,11 +47,10 @@ public class MVColumnItem {
 
     public MVColumnItem(String name, Type type, AggregateType aggregateType, Expr defineExpr) {
         this.name = name;
-        this.type = clearVariantV2ExecutionType(type);
+        this.type = type;
         this.aggregationType = aggregateType;
         this.isAggregationTypeImplicit = false;
-        this.defineExpr = clearVariantV2ExecutionType(
-                Objects.requireNonNull(defineExpr, "defineExpr is null"));
+        this.defineExpr = Objects.requireNonNull(defineExpr, "defineExpr is null");
         baseColumnNames = extractBaseColumnNames(defineExpr);
     }
 
@@ -64,30 +61,14 @@ public class MVColumnItem {
     public MVColumnItem(String name, Expr defineExpr) {
         this.name = name;
         this.isAggregationTypeImplicit = false;
-        this.defineExpr = clearVariantV2ExecutionType(
-                Objects.requireNonNull(defineExpr, "defineExpr is null"));
+        this.defineExpr = Objects.requireNonNull(defineExpr, "defineExpr is null");
 
-        this.type = clearVariantV2ExecutionType(defineExpr.getType());
+        this.type = defineExpr.getType();
         if (this.type instanceof ScalarType && this.type.isStringType()) {
             this.type = new ScalarType(type.getPrimitiveType());
             ((ScalarType) this.type).setMaxLength();
         }
         baseColumnNames = extractBaseColumnNames(defineExpr);
-    }
-
-    private static Type clearVariantV2ExecutionType(Type type) {
-        DataType dataType = DataType.fromCatalogType(type);
-        return VariantType.containsVariant(dataType)
-                ? VariantType.withComputeV2(dataType, false).toCatalogDataType()
-                : type;
-    }
-
-    private static Expr clearVariantV2ExecutionType(Expr expr) {
-        expr.setType(clearVariantV2ExecutionType(expr.getType()));
-        for (Expr child : expr.getChildren()) {
-            clearVariantV2ExecutionType(child);
-        }
-        return expr;
     }
 
     public String getName() {

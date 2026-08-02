@@ -28,7 +28,6 @@
 #include "core/data_type/data_type_number.h"
 #include "core/data_type/data_type_string.h"
 #include "core/data_type/data_type_variant.h"
-#include "core/data_type/data_type_variant_v2.h"
 #include "core/data_type/define_primitive_type.h"
 #include "core/data_type/primitive_type.h"
 #include "core/field.h"
@@ -707,55 +706,6 @@ TEST(FunctionVariantCast, CastFromVariantStrictModeRegression) {
         ASSERT_EQ(null_map[2], 0);
         ASSERT_EQ(result_data.get_element(2), 100);
     }
-}
-
-TEST(FunctionVariantCast, VariantV2ToLegacyBridgeIsAvailable) {
-    auto source_type = std::make_shared<DataTypeVariantV2>();
-    auto source = source_type->create_column();
-    source->insert_default();
-    auto target_type = std::make_shared<DataTypeVariant>();
-    ColumnsWithTypeAndName arguments {{source->get_ptr(), source_type, "source"},
-                                      {nullptr, target_type, "target"}};
-    auto function = SimpleFunctionFactory::instance().get_function("CAST", arguments, target_type);
-    ASSERT_NE(function, nullptr);
-
-    Block block {arguments};
-    const size_t result_column = block.columns();
-    block.insert({nullptr, target_type, "result"});
-    RuntimeState state;
-    auto context = FunctionContext::create_context(&state, {}, {});
-    const Status status =
-            function->execute(context.get(), block, {0}, result_column, source->size());
-    ASSERT_TRUE(status.ok()) << status;
-    const auto& legacy =
-            assert_cast<const ColumnVariant&>(*block.get_by_position(result_column).column);
-    ASSERT_EQ(legacy.size(), 1);
-    DataTypeSerDe::FormatOptions options;
-    std::string json;
-    legacy.serialize_one_row_to_string(0, &json, options);
-    EXPECT_EQ(json, "{}");
-}
-
-TEST(FunctionVariantCast, LegacyVariantToVariantV2RemainsUnsupported) {
-    auto source_type = std::make_shared<DataTypeVariant>();
-    auto source = source_type->create_column();
-    source->insert_default();
-    auto target_type = std::make_shared<DataTypeVariantV2>();
-    ColumnsWithTypeAndName arguments {{source->get_ptr(), source_type, "source"},
-                                      {nullptr, target_type, "target"}};
-    auto function = SimpleFunctionFactory::instance().get_function("CAST", arguments, target_type);
-    ASSERT_NE(function, nullptr);
-
-    Block block {arguments};
-    const size_t result_column = block.columns();
-    block.insert({nullptr, target_type, "result"});
-    RuntimeState state;
-    auto context = FunctionContext::create_context(&state, {}, {});
-    const Status status =
-            function->execute(context.get(), block, {0}, result_column, source->size());
-    EXPECT_TRUE(status.is<ErrorCode::INVALID_ARGUMENT>()) << status;
-    EXPECT_NE(status.to_string().find("Cast from legacy Variant to Variant V2 is not supported"),
-              std::string::npos);
 }
 
 } // namespace doris
