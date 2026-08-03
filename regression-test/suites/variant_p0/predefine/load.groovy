@@ -15,9 +15,11 @@
 // specific language governing permissions and limitations
 // under the License.
 
-suite("regression_test_variant_predefine_schema", "p0"){
-    def enableVariantV2 = getFeConfig("enable_variant_v2").toBoolean()
-    def variantV2Function = enableVariantV2 ? "parse_to_variant" : ""
+suite("regression_test_variant_predefine_schema", "p0,nonConcurrent"){
+    setFeConfigTemporary([enable_variant_v2: false]) {
+    assertFalse(getFeConfig("enable_variant_v2").toBoolean())
+    def enableVariantV2 = false
+    def variantV2Function = ""
     def deprecatedFlattenNested = enableVariantV2 ? "false" : "true"
     def normalizedVariant = { column ->
         "regexp_replace(cast(${column} as string), " +
@@ -71,7 +73,7 @@ suite("regression_test_variant_predefine_schema", "p0"){
             INDEX idx_var_sub(`v1`) USING INVERTED PROPERTIES("parser" = "english") )
         ENGINE=OLAP DUPLICATE KEY(`id`) DISTRIBUTED BY HASH(`id`) BUCKETS 2
         PROPERTIES ( "replication_allocation" = "tag.location.default: 1", "deprecated_variant_enable_flatten_nested" = "${deprecatedFlattenNested}");
-    """ 
+    """
     sql """insert into test_predefine1 values(1, ${variantV2Function}('{"predefine_col1" : 1024}'))"""
     sql """insert into test_predefine1 values(2, ${variantV2Function}('{"predefine_col2" : 1.11111}'))"""
     sql """insert into test_predefine1 values(3, ${variantV2Function}('{"predefine_col3" : "11111.00000"}'))"""
@@ -102,9 +104,9 @@ suite("regression_test_variant_predefine_schema", "p0"){
                 'array_ipv6':array<ipv6>,
                 'array_float':array<decimalv3(26,9)>,
                 'array_boolean':array<boolean>,
-                'int_':int, 
-                'string_':string, 
-                'decimal_':decimalv3(26,9), 
+                'int_':int,
+                'string_':string,
+                'decimal_':decimalv3(26,9),
                 'datetime_':datetime,
                 'datetimev2_':datetimev2(6),
                 'date_':date,
@@ -204,7 +206,7 @@ suite("regression_test_variant_predefine_schema", "p0"){
     sql "insert into test_predefine2 values(2, ${variantV2Function}('${json2}'))"
     sql "insert into test_predefine2 values(3, ${variantV2Function}('${json3}'))"
     sql "insert into test_predefine2 values(4, ${variantV2Function}('${json4}'))"
-       
+
     // Validate the common array values through typed subpaths. Root Variant rendering is
     // intentionally not compared because V1 and V2 format booleans and decimals differently.
     qt_sql """select id,
@@ -214,7 +216,7 @@ suite("regression_test_variant_predefine_schema", "p0"){
 
     for (int i = 10; i < 100; i++) {
         sql "insert into test_predefine2 values(${i}, ${variantV2Function}('${json4}'))"
-    } 
+    }
 
     // // schema change
     // // 1. add column
@@ -376,5 +378,6 @@ suite("regression_test_variant_predefine_schema", "p0"){
     qt_sql "select variant_type(var) is not null from test_variant_type_not_null"
     if (!enableVariantV2) {
         qt_variant_type_not_null_v1 "select variant_type(var) from test_variant_type_not_null"
+    }
     }
 }

@@ -270,6 +270,17 @@ TEST(DataTypeVariantV2SerdeOutputTest, SqlScalarsFollowLegacyOutputAndDataFormat
     expect_text_surfaces(serde, *encoded_doubles, *doubles, double_expected, double_expected);
 }
 
+TEST(DataTypeVariantV2SerdeOutputTest, NestedValuesUseJsonOutput) {
+    DataTypeVariantV2SerDe nested_serde(2);
+    auto strings = typed_strings({std::string_view("x"), std::string_view("a\"\n")});
+    ColumnPtr encoded_strings = encoded_copy(*strings);
+
+    EXPECT_EQ(to_string_value(nested_serde, *strings, 0), R"("x")");
+    EXPECT_EQ(to_string_value(nested_serde, *encoded_strings, 0), R"("x")");
+    EXPECT_EQ(to_string_value(nested_serde, *strings, 1), R"("a\"\n")");
+    EXPECT_EQ(to_string_value(nested_serde, *encoded_strings, 1), R"("a\"\n")");
+}
+
 TEST(DataTypeVariantV2SerdeOutputTest, DocumentsTemporalAndColumnJsonAreExact) {
     DataTypeVariantV2SerDe serde;
     auto documents = encoded_json({R"({"a":[1,null,"x"]})", "[]", "null"});

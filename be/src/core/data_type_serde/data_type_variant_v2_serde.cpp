@@ -494,7 +494,13 @@ void DataTypeVariantV2SerDe::to_string(const IColumn& column, size_t row_num, Bu
                                        const FormatOptions& options) const {
     visit_variant_v2_values(
             column, row_num, row_num + 1, {}, [](size_t) {},
-            [&](size_t, VariantRef value) { write_sql_value(value, bw, options); });
+            [&](size_t, VariantRef value) {
+                if (_nesting_level > 1) {
+                    write_json_value(value, bw, options);
+                } else {
+                    write_sql_value(value, bw, options);
+                }
+            });
 }
 
 Status DataTypeVariantV2SerDe::write_column_to_mysql_binary(const IColumn& column,

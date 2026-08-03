@@ -14,8 +14,10 @@
 // KIND, either express or implied.  See the License for the
 // specific language governing permissions and limitations
 // under the License.
-suite("test_predefine_typed_to_sparse_1shard", "p0"){
-    def enableVariantV2 = getFeConfig("enable_variant_v2").toBoolean()
+suite("test_predefine_typed_to_sparse_1shard", "p0,nonConcurrent") {
+    setFeConfigTemporary([enable_variant_v2: false]) {
+    assertFalse(getFeConfig("enable_variant_v2").toBoolean())
+    def enableVariantV2 = false
     def variantV2Function = enableVariantV2 ? "parse_to_variant" : ""
     def variantTypeExpression = "variant_type(var)"
     def checkTypedArrays = { String table ->
@@ -164,4 +166,5 @@ suite("test_predefine_typed_to_sparse_1shard", "p0"){
     checkTypedArrays(tableName)
     qt_sql """select ${typedValues} from ${tableName} order by id"""
 
+    }
 }

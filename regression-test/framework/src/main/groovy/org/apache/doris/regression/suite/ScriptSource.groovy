@@ -83,23 +83,8 @@ class SqlFileSource implements ScriptSource {
         SuiteScript script = new SuiteScript() {
             @Override
             Object run() {
+                List<String> sqls = getSqls(file.text)
                 suite(suiteName, groupName) {
-                    String sqlText = file.text
-                    boolean enableVariantV2 = getFeConfig("enable_variant_v2").toBoolean()
-                    if (sqlText.contains("parse_to_variant_if_v2(")) {
-                        String variantV2Function = enableVariantV2 ? "parse_to_variant" : ""
-                        sqlText = sqlText.replace("parse_to_variant_if_v2(", "${variantV2Function}(")
-                    }
-                    if (sqlText.contains("variant_decimal_type_if_v2")) {
-                        String decimalType = enableVariantV2 ? "decimal(32, 6)" : "decimal(76, 56)"
-                        sqlText = sqlText.replace("variant_decimal_type_if_v2", decimalType)
-                        if (enableVariantV2) {
-                            // rqg7 keeps Decimal256 coverage on V1. Variant V2 writer currently supports
-                            // Decimal128, so use the corresponding predefined type for the V2 run.
-                            sqlText = sqlText.replace("decimalv3(76,56)", "decimalv3(32,6)")
-                        }
-                    }
-                    List<String> sqls = SqlFileSource.this.getSqls(sqlText)
                     String tag = suiteName
                     String exceptionStr = ""
                     boolean order = suiteName.endsWith("_order")

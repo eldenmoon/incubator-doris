@@ -15,19 +15,14 @@
 // specific language governing permissions and limitations
 // under the License.
 
-suite("test_variant_count_distinct", "p0,nonConcurrent") {
-    def variantV2Function = getFeConfig("enable_variant_v2").toBoolean() ? "parse_to_variant" : ""
-    if (!getFeConfig("enable_variant_v2").toBoolean()) {
-        return
+import org.apache.doris.regression.util.SqlUtils
+
+suite("q02", "p0,nonConcurrent") {
+    setFeConfigTemporary([enable_variant_v2: true]) {
+        assertTrue(getFeConfig("enable_variant_v2").toBoolean())
+        List<String> sqls = SqlUtils.splitAndGetNonEmptySql(new File(context.dataPath, "q02.sql").text)
+        sqls.eachWithIndex { String statement, int index ->
+            quickTest(index == 0 ? "q02" : "q02_${index + 1}", statement, false)
+        }
     }
-    qt_count_distinct_array_subcolumn """
-        SELECT COUNT(DISTINCT v['arr']), multi_distinct_count(v['arr'])
-        FROM (
-            SELECT ${variantV2Function}('{"arr":[1,2,3]}') v
-            UNION ALL
-            SELECT ${variantV2Function}('{"arr":[4,5]}')
-            UNION ALL
-            SELECT ${variantV2Function}('{"arr":[1,2,3]}')
-        ) t
-    """
 }

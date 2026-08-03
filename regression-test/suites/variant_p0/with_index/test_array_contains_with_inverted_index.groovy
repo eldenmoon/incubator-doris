@@ -15,8 +15,10 @@
 // specific language governing permissions and limitations
 // under the License.
 
-suite("test_array_contains_with_inverted_index") {
-    def variantV2Function = getFeConfig("enable_variant_v2").toBoolean() ? "parse_to_variant" : ""
+suite("test_array_contains_with_inverted_index", "p0,nonConcurrent") {
+    setFeConfigTemporary([enable_variant_v2: false]) {
+    assertFalse(getFeConfig("enable_variant_v2").toBoolean())
+    def variantV2Function = ""
     // prepare test table
     def indexTblName = "tai"
     def rawTypedInventors = "cast(inventors['inventors'] as array<text>)"
@@ -123,5 +125,6 @@ suite("test_array_contains_with_inverted_index") {
             order_qt_sql """ select /*+SET_VAR(enable_segment_limit_pushdown = true)*/ ${resultColumns} from tai where (${predicate} and apply_date = '2017-01-01') or apply_date = '2019-01-01' order by id; """
             order_qt_sql """ select /*+SET_VAR(enable_segment_limit_pushdown = false)*/ ${resultColumns} from tai where (${predicate} and apply_date = '2017-01-01') or apply_date = '2019-01-01' order by id; """
         }
+    }
     }
 }

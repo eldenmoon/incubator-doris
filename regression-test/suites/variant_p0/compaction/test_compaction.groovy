@@ -20,7 +20,8 @@ import org.awaitility.Awaitility
 
 suite("test_compaction_variant") {
     def variantV2Function = getFeConfig("enable_variant_v2").toBoolean() ? "parse_to_variant" : ""
-    // ColumnVariantV2 intentionally does not support nested arrays yet.
+    // ColumnVariantV2 casts the nested array [[[1]]] to NULL instead of [NULL]. This changes the
+    // pre-compaction result set, so this case cannot share the V1 expectation yet.
     if (getFeConfig("enable_variant_v2").toBoolean()) {
         return
     }
@@ -59,7 +60,8 @@ suite("test_compaction_variant") {
                 )
                 ${key_type} KEY(`k`)
                 DISTRIBUTED BY HASH(k) BUCKETS ${buckets}
-                properties("replication_num" = "1", "disable_auto_compaction" = "true");
+                properties("replication_num" = "1", "disable_auto_compaction" = "true",
+                           "deprecated_variant_enable_flatten_nested" = "false");
             """
         }
 

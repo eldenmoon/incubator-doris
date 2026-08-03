@@ -17,7 +17,8 @@
 
 suite ("multi_slot") {
     def variantV2Function = getFeConfig("enable_variant_v2").toBoolean() ? "parse_to_variant" : ""
-    // Multi-slot Variant materialization is intentionally kept on V1 for now.
+    // ColumnVariantV2 returns a scalar subpath type for element_at, while the materialized-view
+    // expression currently declares a Variant result. Keep this case on V1 until they agree.
     if (getFeConfig("enable_variant_v2").toBoolean()) {
         return
     }
@@ -64,7 +65,7 @@ suite ("multi_slot") {
         `handle_time` datetime NOT NULL ,
         `client_request` variant NULL,
         `status` int NULL
-    )  
+    )
     DISTRIBUTED BY HASH(`handle_time`)
     BUCKETS 10 PROPERTIES (
       "is_being_synced" = "false",
@@ -74,7 +75,7 @@ suite ("multi_slot") {
       "light_schema_change" = "true",
       "disable_auto_compaction" = "false",
       "replication_num" = "1"
-    );  
+    );
     """
     sql """insert into test_mv values ('2021-01-01 11:11:11', ${variantV2Function}('{"url" : "http://xxx.xxx.xxx"}'), 12)"""
     createMV("create materialized view mv_1 as select `handle_time` as b1, `client_request`['url'] as `b2`, `status` as b3 from test_mv")

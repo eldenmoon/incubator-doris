@@ -234,16 +234,16 @@ null	false	2
 
 -- !array_variant_payload_through_sort --
 0	[1, null]
-1	[x]
+1	["x"]
 2	\N
 
 -- !array_variant_payload_through_topn --
 0	[1, null]
-1	[x]
+1	["x"]
 
 -- !nested_variant_container_constructors --
 0	[[1, null]]	{"col1":[1, null]}	{"k":[1, null]}
-1	[[x]]	{"col1":[x]}	{"k":[x]}
+1	[["x"]]	{"col1":["x"]}	{"k":["x"]}
 2	[null]	{"col1":null}	{"k":null}
 
 -- !explode_array_of_variant --
@@ -262,4 +262,3 @@ null	false	2
 2	false	[]	true	\N
 3	false	[null,1]	false	1
 3	false	[null,1]	false	null
-

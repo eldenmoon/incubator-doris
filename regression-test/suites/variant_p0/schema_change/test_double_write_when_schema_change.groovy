@@ -18,7 +18,6 @@
 suite("double_write_schema_change_with_variant", "nonConcurrent") {
     def enableVariantV2 = getFeConfig("enable_variant_v2").toBoolean()
     def variantV2Function = enableVariantV2 ? "parse_to_variant" : ""
-    def deprecatedFlattenNested = enableVariantV2 ? "false" : "true"
     def set_be_config = { key, value ->
         String backend_id;
         def backendId_to_backendIP = [:]
@@ -36,8 +35,8 @@ suite("double_write_schema_change_with_variant", "nonConcurrent") {
             table "${table_name}"
 
             // set http request header params
-            set 'read_json_by_line', 'true' 
-            set 'format', 'json' 
+            set 'read_json_by_line', 'true'
+            set 'format', 'json'
             set 'max_filter_ratio', '0.1'
             file file_name // import json file
             time 10000 // limit inflight 10s
@@ -70,7 +69,7 @@ suite("double_write_schema_change_with_variant", "nonConcurrent") {
         )
         DUPLICATE KEY(`k`)
         DISTRIBUTED BY HASH(k) BUCKETS 2
-        properties("replication_num" = "1", "disable_auto_compaction" = "false", "deprecated_variant_enable_flatten_nested" = "${deprecatedFlattenNested}");
+        properties("replication_num" = "1", "disable_auto_compaction" = "false", "deprecated_variant_enable_flatten_nested" = "false");
     """
 
     set_be_config.call("memory_limitation_per_thread_for_schema_change_bytes", "6294967296")
@@ -78,7 +77,7 @@ suite("double_write_schema_change_with_variant", "nonConcurrent") {
     load_json_data.call(table_name, """${getS3Url() + '/regression/gharchive.m/2015-01-01-0.json'}""")
     load_json_data.call(table_name, """${getS3Url() + '/regression/gharchive.m/2015-01-01-1.json'}""")
     load_json_data.call(table_name, """${getS3Url() + '/regression/gharchive.m/2015-01-01-2.json'}""")
-    load_json_data.call(table_name, """${getS3Url() + '/regression/gharchive.m/2015-01-01-3.json'}""") 
+    load_json_data.call(table_name, """${getS3Url() + '/regression/gharchive.m/2015-01-01-3.json'}""")
 
     def getJobState = { indexName ->
          def jobStateResult = sql """  SHOW ALTER TABLE COLUMN WHERE IndexName='${indexName}' ORDER BY createtime DESC LIMIT 1 """
@@ -115,15 +114,15 @@ suite("double_write_schema_change_with_variant", "nonConcurrent") {
     double_write.call()
     qt_sql "select v['type'], v['id'], v['created_at'] from ${table_name} where cast(v['id'] as bigint) != 25061216922 order by k, cast(v['id'] as bigint), cast(v['payload']['commits'] as string) limit 10"
 
-    // Whole-row and subpath reads assemble nested-array materialized paths, which V2 does not
-    // support yet. The Schema Change work above still runs with the global V2 session setting.
-    sql "set enable_two_phase_read_opt = false"    
+    sql "set enable_two_phase_read_opt = false"
     qt_two_phase_off """select k, cast(v['id'] as string), cast(v['payload']['push_id'] as bigint)
         from github_events order by k, 2, 3 limit 10"""
-    sql "set enable_two_phase_read_opt = true"    
+    sql "set enable_two_phase_read_opt = true"
     qt_two_phase_on """select k, cast(v['id'] as string), cast(v['payload']['push_id'] as bigint)
         from github_events order by k, 2, 3 limit 10"""
-    if (!enableVariantV2) {
+    // V1 can expose a non-JSON commits text value for some loaded rows, while V2 serializes the
+    // nested value as JSON. Keep the JSON parse assertion V2-only.
+    if (enableVariantV2) {
         order_qt_sql """select k, json_extract(json_parse(cast(v['payload']['commits'] as text)), '\$[0].sha') from github_events where length(cast(v['payload']['commits'] as text)) > 100 and k > 1 order by k, 2 limit 10"""
     }
 

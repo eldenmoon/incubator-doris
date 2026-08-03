@@ -19,9 +19,6 @@ import org.codehaus.groovy.runtime.IOGroovyMethods
 
 suite("regression_test_variant_delete_and_update", "variant_type"){
     def variantV2Function = getFeConfig("enable_variant_v2").toBoolean() ? "parse_to_variant" : ""
-    def enableVariantV2 = getFeConfig("enable_variant_v2").toBoolean()
-    def deprecatedFlattenNested = enableVariantV2 ? "false" : "true"
-    // This suite writes nested array values, which ColumnVariantV2 does not support yet.
     // MOR
     def table_name = "var_delete_update"
     sql "DROP TABLE IF EXISTS ${table_name}"
@@ -33,7 +30,7 @@ suite("regression_test_variant_delete_and_update", "variant_type"){
         )
         UNIQUE KEY(`k`)
         DISTRIBUTED BY HASH(k) BUCKETS 3
-        properties("replication_num" = "1", "enable_unique_key_merge_on_write" = "false", "deprecated_variant_enable_flatten_nested" = "${deprecatedFlattenNested}");
+        properties("replication_num" = "1", "enable_unique_key_merge_on_write" = "false", "deprecated_variant_enable_flatten_nested" = "false");
     """
     // test mor table
 
@@ -56,11 +53,12 @@ suite("regression_test_variant_delete_and_update", "variant_type"){
         CREATE TABLE IF NOT EXISTS ${table_name} (
             k bigint,
             v  variant,
-            vs string 
+            vs string
         )
         UNIQUE KEY(`k`)
         DISTRIBUTED BY HASH(k) BUCKETS 4
-        properties("replication_num" = "1", "enable_unique_key_merge_on_write" = "true");
+        properties("replication_num" = "1", "enable_unique_key_merge_on_write" = "true",
+                   "deprecated_variant_enable_flatten_nested" = "false");
     """
     sql "insert into var_delete_update_mow select k, ${variantV2Function}(cast(v as string)), cast(v as string) from var_delete_update"
     sql "delete from ${table_name} where k = 1"
@@ -123,19 +121,19 @@ suite("regression_test_variant_delete_and_update", "variant_type"){
         for (int k = 1; k <= 60; k++) {
             int x = new Random().nextInt(61) % 10;
             sql """insert into ${table_name}(k,vs) values(${x}, '{"k${x}" : ${x}}'),(${x+1}, '{"k${x+1}" : ${x+1}}'),(${x+2}, '{"k${x+2}" : ${x+2}}'),(${x+3}, '{"k${x+3}" : ${x+3}}')"""
-        } 
+        }
     }
     def t2 = Thread.startDaemon {
         for (int k = 1; k <= 60; k++) {
             int x = new Random().nextInt(61) % 10;
             sql """insert into ${table_name}(k,v) values(${x}, ${variantV2Function}('{"k${x}" : ${x}}')),(${x+1}, ${variantV2Function}('{"k${x+1}" : ${x+1}}')),(${x+2}, ${variantV2Function}('{"k${x+2}" : ${x+2}}')),(${x+3}, ${variantV2Function}('{"k${x+3}" : ${x+3}}'))"""
-        } 
+        }
     }
     def t3 = Thread.startDaemon {
         for (int k = 1; k <= 60; k++) {
             int x = new Random().nextInt(61) % 10;
             sql """insert into ${table_name}(k,v) values(${x}, ${variantV2Function}('{"k${x}" : ${x}}')),(${x+1}, ${variantV2Function}('{"k${x+1}" : ${x+1}}')),(${x+2}, ${variantV2Function}('{"k${x+2}" : ${x+2}}')),(${x+3}, ${variantV2Function}('{"k${x+3}" : ${x+3}}'))"""
-        } 
+        }
     }
     t1.join()
     t2.join()
@@ -143,10 +141,6 @@ suite("regression_test_variant_delete_and_update", "variant_type"){
     sql "sync"
 
     sql "set enable_unique_key_partial_update=false;"
-    // Row-store partial update still uses the legacy Variant SerDe.
-    if (enableVariantV2) {
-        return
-    }
      // case 1: concurrent partial update
     def tableName = "test_primary_key_partial_update_parallel"
     sql """ DROP TABLE IF EXISTS ${tableName} """

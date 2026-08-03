@@ -15,10 +15,11 @@
 // specific language governing permissions and limitations
 // under the License.
 
-suite("regression_test_variant_types", "var_view") {
+suite("regression_test_variant_types", "var_view,nonConcurrent") {
+    setFeConfigTemporary([enable_variant_v2: false]) {
+    assertFalse(getFeConfig("enable_variant_v2").toBoolean())
     def variantV2Function = getFeConfig("enable_variant_v2").toBoolean() ? "parse_to_variant" : ""
-    def enableVariantV2 = getFeConfig("enable_variant_v2").toBoolean()
-    def deprecatedFlattenNested = enableVariantV2 ? "false" : "true"
+    def enableVariantV2 = false
     def normalizedVariantJson = "sort_json_object_keys(cast(var as json))"
     def table_name = "test_variant_types"
     def checkSupportedValues = {
@@ -40,7 +41,7 @@ suite("regression_test_variant_types", "var_view") {
     sql """ set default_variant_max_sparse_column_statistics_size = 10 """
     sql """ set default_variant_sparse_hash_shard_count = 10 """
     sql "drop table if exists ${table_name}"
-    
+
     sql """
         create table ${table_name} (
             id int,
@@ -66,9 +67,9 @@ suite("regression_test_variant_types", "var_view") {
     } else {
         qt_sql_scalar "desc ${table_name}"
     }
-    
+
     sql """ insert into ${table_name} (id, var) values (2, ${variantV2Function}('{"g": [1, 2, 3], "h": [1.1, 2.2], "i": ["string", "string2"], "j": [true, false], "l": [18446744073709551615, 18446744073709551605]}')); """
-    
+
     if (!enableVariantV2) {
         qt_sql_v1 """select id, ${normalizedVariantJson} from ${table_name} order by id"""
     }
@@ -94,7 +95,7 @@ suite("regression_test_variant_types", "var_view") {
     }
 
     sql """ insert into ${table_name} (id, var) values (4, ${variantV2Function}('{"n": [2, "string", null, true, 1.1, 18446744073709551615]}')); """
-    
+
     if (!enableVariantV2) {
         qt_sql_v1 """select id, ${normalizedVariantJson} from ${table_name} order by id"""
     }
@@ -105,9 +106,9 @@ suite("regression_test_variant_types", "var_view") {
     } else {
         qt_sql_array_json "desc ${table_name}"
     }
-    
+
     sql """ insert into ${table_name} (id, var) values (5, ${variantV2Function}('{"o": [18446744073709551615, ["string", null]]}')); """
-    
+
     if (!enableVariantV2) {
         qt_sql_v1 """select id, ${normalizedVariantJson} from ${table_name} order by id"""
     }
@@ -119,15 +120,10 @@ suite("regression_test_variant_types", "var_view") {
         qt_sql_json "desc ${table_name}"
     }
 
-     // Nested array paths are outside the V2 support boundary.
-     if (enableVariantV2) {
-         return
-     }
-
      sql "drop table if exists ${table_name}"
 
      sql """ set enable_variant_flatten_nested = true """
-    
+
     sql """
         create table ${table_name} (
             id int,
@@ -135,7 +131,7 @@ suite("regression_test_variant_types", "var_view") {
         ) engine = olap
         duplicate key (id)
         distributed by hash(id) buckets 1
-        properties ("replication_num" = "1", "deprecated_variant_enable_flatten_nested" = "${deprecatedFlattenNested}")
+        properties ("replication_num" = "1", "deprecated_variant_enable_flatten_nested" = "false")
     """
 
     sql """ set enable_variant_flatten_nested = false """
@@ -146,7 +142,7 @@ suite("regression_test_variant_types", "var_view") {
         order by id"""
 
     qt_sql_array_largeint "desc ${table_name}"
-    
+
     // Avoid relying on bool-to-number rendering when this path evolves to array<json>.
     sql """ insert into ${table_name} (id, var) values (2, ${variantV2Function}('{"a": [{"b" : 2}]}')); """
 
@@ -162,4 +158,5 @@ suite("regression_test_variant_types", "var_view") {
         order by id"""
 
     qt_sql_array_json "desc ${table_name}"
+    }
 }
