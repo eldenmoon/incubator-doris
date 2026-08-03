@@ -21,11 +21,8 @@ suite("test_array_contains_with_inverted_index", "p0,nonConcurrent") {
     def variantV2Function = "parse_to_variant"
     // prepare test table
     def indexTblName = "tai"
-    def rawTypedInventors = "cast(inventors['inventors'] as array<text>)"
-    // V1 represents both missing and empty typed-array paths as NULL, whereas V2
-    // materializes them as []. Normalize only that representation boundary.
-    def typedInventors = "if(size(array_filter(x -> x is not null and x != 'null', ${rawTypedInventors})) = 0, cast(null as array<text>), ${rawTypedInventors})"
-    def resultColumns = "apply_date, id"
+    def typedInventors = "cast(inventors['inventors'] as array<text>)"
+    def resultColumns = "*"
     setFeConfigTemporary([enable_inverted_index_v1_for_variant: true]) {
 
         // Pin enable_segment_limit_pushdown to keep inverted-index pushdown stable under fuzzy testing
@@ -80,8 +77,8 @@ suite("test_array_contains_with_inverted_index", "p0,nonConcurrent") {
         sql """ set enable_segment_limit_pushdown = true """
 
         qt_sql """ select count() from ${indexTblName}"""
-        order_qt_typed_array """select apply_date, id, ${rawTypedInventors} from ${indexTblName}
-                where arrays_overlap(${rawTypedInventors}, cast(['a','b','c'] as array<text>))
+        order_qt_typed_array """select apply_date, id, ${typedInventors} from ${indexTblName}
+                where arrays_overlap(${typedInventors}, cast(['a','b','c'] as array<text>))
                 order by id"""
         def param_contains = ["'s'", "''", null]
         for (int i = 0 ; i < param_contains.size(); ++i) {

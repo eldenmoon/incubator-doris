@@ -8,9 +8,9 @@ var.c	text	Yes	false	\N	NONE
 var.d	boolean	Yes	false	\N	NONE
 var.f	largeint	Yes	false	\N	NONE
 
--- !sql_v1 --
+-- !sql --
 1	{"a":1,"b":1.1,"c":"string","d":1,"f":18446744073709551615}
-2	{"g":[1,2,3],"h":[1.1,2.2],"i":["string","string2"],"j":[1,0],"l":[18446744073709551615,18446744073709551605]}
+2	{"g":[1, 2, 3],"h":[1.1, 2.2],"i":["string", "string2"],"j":[1, 0],"l":[18446744073709551615, 18446744073709551605]}
 
 -- !supported_values --
 1	1	1.1	string	true	18446744073709551615	\N	\N	\N	\N	\N	\N
@@ -33,10 +33,10 @@ var.i	array<text>	Yes	false	\N	NONE
 var.j	array<boolean>	Yes	false	\N	NONE
 var.l	array<largeint>	Yes	false	\N	NONE
 
--- !sql_v1 --
+-- !sql --
 1	{"a":1,"b":1.1,"c":"string","d":1,"f":18446744073709551615}
-2	{"g":[1,2,3],"h":[1.1,2.2],"i":["string","string2"],"j":[1,0],"l":[18446744073709551615,18446744073709551605]}
-3	{"m":[1,18446744073709551605]}
+2	{"g":[1, 2, 3],"h":[1.1, 2.2],"i":["string", "string2"],"j":[1, 0],"l":[18446744073709551615, 18446744073709551605]}
+3	{"m":[1, 18446744073709551605]}
 
 -- !supported_values --
 1	1	1.1	string	true	18446744073709551615	\N	\N	\N	\N	\N	\N
@@ -61,11 +61,11 @@ var.j	array<boolean>	Yes	false	\N	NONE
 var.l	array<largeint>	Yes	false	\N	NONE
 var.m	array<largeint>	Yes	false	\N	NONE
 
--- !sql_v1 --
+-- !sql --
 1	{"a":1,"b":1.1,"c":"string","d":1,"f":18446744073709551615}
-2	{"g":[1,2,3],"h":[1.1,2.2],"i":["string","string2"],"j":[1,0],"l":[18446744073709551615,18446744073709551605]}
-3	{"m":[1,18446744073709551605]}
-4	{"n":[2,"string",null,true,1.1,18446744073709551615]}
+2	{"g":[1, 2, 3],"h":[1.1, 2.2],"i":["string", "string2"],"j":[1, 0],"l":[18446744073709551615, 18446744073709551605]}
+3	{"m":[1, 18446744073709551605]}
+4	{"n":[2, "string", null, true, 1.1, 18446744073709551615]}
 
 -- !supported_values --
 1	1	1.1	string	true	18446744073709551615	\N	\N	\N	\N	\N	\N
@@ -92,11 +92,11 @@ var.l	array<largeint>	Yes	false	\N	NONE
 var.m	array<largeint>	Yes	false	\N	NONE
 var.n	array<json>	Yes	false	\N	NONE
 
--- !sql_v1 --
+-- !sql --
 1	{"a":1,"b":1.1,"c":"string","d":1,"f":18446744073709551615}
-2	{"g":[1,2,3],"h":[1.1,2.2],"i":["string","string2"],"j":[1,0],"l":[18446744073709551615,18446744073709551605]}
-3	{"m":[1,18446744073709551605]}
-4	{"n":[2,"string",null,true,1.1,18446744073709551615]}
+2	{"g":[1, 2, 3],"h":[1.1, 2.2],"i":["string", "string2"],"j":[1, 0],"l":[18446744073709551615, 18446744073709551605]}
+3	{"m":[1, 18446744073709551605]}
+4	{"n":[2, "string", null, true, 1.1, 18446744073709551615]}
 5	{"o":[18446744073709551615,["string",null]]}
 
 -- !supported_values --

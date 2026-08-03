@@ -18,9 +18,8 @@
 suite("regression_test_variant_predefine_schema", "p0,nonConcurrent"){
     setFeConfigTemporary([enable_variant_v2: true]) {
     assertTrue(getFeConfig("enable_variant_v2").toBoolean())
-    def enableVariantV2 = true
     def variantV2Function = "parse_to_variant"
-    def deprecatedFlattenNested = enableVariantV2 ? "false" : "true"
+    def deprecatedFlattenNested = "false"
     def normalizedVariant = { column ->
         "regexp_replace(cast(${column} as string), " +
                 "'([0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2})[.]000000', '\\\\1')"
@@ -207,8 +206,8 @@ suite("regression_test_variant_predefine_schema", "p0,nonConcurrent"){
     sql "insert into test_predefine2 values(3, ${variantV2Function}('${json3}'))"
     sql "insert into test_predefine2 values(4, ${variantV2Function}('${json4}'))"
 
-    // Validate the common array values through typed subpaths. Root Variant rendering is
-    // intentionally not compared because V1 and V2 format booleans and decimals differently.
+    qt_predefine2_full """select id, ${normalizedVariant("v1")}
+                         from test_predefine2 order by id"""
     qt_sql """select id,
               arrays_overlap(cast(v1['array_int'] as array<int>), cast([1, 3] as array<int>)),
               arrays_overlap(cast(v1['array_string'] as array<string>), cast(['a', 'c'] as array<string>))
@@ -265,8 +264,7 @@ suite("regression_test_variant_predefine_schema", "p0,nonConcurrent"){
     sql """insert into test_predefine3 values (1, ${variantV2Function}('{"auto_type" : 12345}'))"""
     sql """insert into test_predefine3 values (1, ${variantV2Function}('{"auto_type" : 1.0}'))"""
     trigger_and_wait_compaction("test_predefine3", "full", 1800)
-    qt_sql """select if(variant_type(v) = 'object', '{"auto_type":"jsonb"}', variant_type(v))
-              from test_predefine3"""
+    qt_sql """select variant_type(v) from test_predefine3"""
 
     // test array
     sql "DROP TABLE IF EXISTS region_insert"
@@ -356,10 +354,7 @@ suite("regression_test_variant_predefine_schema", "p0,nonConcurrent"){
     """
     sql """insert into test_variant_type values(1, ${variantV2Function}('{"dcm" : 1.1, "db" : 2.2, "dt" : "2021-01-01 00:00:00", "a.b.c" : [1, 2, 3]}'))"""
     sql """insert into test_variant_type values(1, null)"""
-    qt_sql "select variant_type(var) is not null from test_variant_type"
-    if (!enableVariantV2) {
-        qt_variant_type_v1 "select variant_type(var) from test_variant_type"
-    }
+    qt_variant_type "select variant_type(var) from test_variant_type"
 
     sql "DROP TABLE IF EXISTS test_variant_type_not_null"
     sql """
@@ -375,9 +370,6 @@ suite("regression_test_variant_predefine_schema", "p0,nonConcurrent"){
     );
     """
     sql """insert into test_variant_type_not_null values(1, ${variantV2Function}('{"dcm" : 1.1, "db" : 2.2, "dt" : "2021-01-01 00:00:00", "a.b.c" : [1, 2, 3]}'))"""
-    qt_sql "select variant_type(var) is not null from test_variant_type_not_null"
-    if (!enableVariantV2) {
-        qt_variant_type_not_null_v1 "select variant_type(var) from test_variant_type_not_null"
-    }
+    qt_variant_type_not_null "select variant_type(var) from test_variant_type_not_null"
     }
 }

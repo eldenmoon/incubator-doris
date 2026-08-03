@@ -17,9 +17,7 @@
 suite("predefined_typed_to_sparse", "p0,nonConcurrent") {
     setFeConfigTemporary([enable_variant_v2: true]) {
     assertTrue(getFeConfig("enable_variant_v2").toBoolean())
-    def enableVariantV2 = true
-    def variantV2Function = enableVariantV2 ? "parse_to_variant" : ""
-    def variantTypeExpression = "variant_type(var)"
+    def variantV2Function = "parse_to_variant"
     def checkTypedArrays = { String table ->
         qt_sql """select id, cast(var['array_decimal_1'] as array<decimalv3(26, 9)>),
                     cast(var['array_ipv6_1'] as array<ipv6>) from ${table}
@@ -152,10 +150,12 @@ suite("predefined_typed_to_sparse", "p0,nonConcurrent") {
       load_json_data.call(tableName, getS3Url() + "/regression/variant/schema_tmpt${i}.json")
     }
 
+    qt_loaded_rows """select * from ${tableName} order by id limit 10"""
     checkTypedArrays(tableName)
 
     trigger_and_wait_compaction(tableName, "cumulative", 1800)
 
+    qt_loaded_rows """select * from ${tableName} order by id limit 10"""
     checkTypedArrays(tableName)
 
     sql "DROP TABLE IF EXISTS ${tableName}"
@@ -232,20 +232,16 @@ suite("predefined_typed_to_sparse", "p0,nonConcurrent") {
       """
     }
 
-    if (!enableVariantV2) {
-        qt_variant_type_v1 """select ${variantTypeExpression} from ${tableName} limit 1"""
-    }
-    qt_variant_type_supported """select variant_type(var) is not null from ${tableName} limit 1"""
+    qt_variant_type """select variant_type(var) from ${tableName} limit 1"""
     checkTypedArrays(tableName)
+    qt_full_values """select * from ${tableName} order by id"""
     qt_sql """select ${typedValues} from ${tableName} order by id"""
 
     trigger_and_wait_compaction(tableName, "cumulative", 1800)
 
-    if (!enableVariantV2) {
-        qt_variant_type_v1 """select ${variantTypeExpression} from ${tableName} limit 1"""
-    }
-    qt_variant_type_supported """select variant_type(var) is not null from ${tableName} limit 1"""
+    qt_variant_type """select variant_type(var) from ${tableName} limit 1"""
     checkTypedArrays(tableName)
+    qt_full_values """select * from ${tableName} order by id"""
     qt_sql """select ${typedValues} from ${tableName} order by id"""
 
     }
