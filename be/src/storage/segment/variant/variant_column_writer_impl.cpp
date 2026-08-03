@@ -849,13 +849,13 @@ Status UnifiedSparseColumnWriter::append_shredded(const TabletColumn* parent_col
                                                   const VariantShreddedColumns& shredded,
                                                   size_t num_rows,
                                                   OlapBlockDataConvertor* converter) {
-    if (shredded.sparse_buckets.size() != cast_set<size_t>(_bucket_num)) {
+    if (shredded.binary_buckets.size() != cast_set<size_t>(_bucket_num)) {
         return Status::InvalidArgument("Variant shredder produced {} sparse buckets, expected {}",
-                                       shredded.sparse_buckets.size(), _bucket_num);
+                                       shredded.binary_buckets.size(), _bucket_num);
     }
     converter->resize(_first_column_id + _bucket_num);
     for (int bucket = 0; bucket < _bucket_num; ++bucket) {
-        const auto& source = shredded.sparse_buckets[bucket];
+        const auto& source = shredded.binary_buckets[bucket];
         if (source.column->size() != num_rows) {
             return Status::InvalidArgument("Variant sparse bucket {} has {} rows, expected {}",
                                            bucket, source.column->size(), num_rows);
@@ -867,7 +867,7 @@ Status UnifiedSparseColumnWriter::append_shredded(const TabletColumn* parent_col
         if (num_rows > 0) {
             converter->add_column_data_convertor_at(bucket_column, column_id);
             RETURN_IF_ERROR(converter->set_source_content_with_specifid_column(
-                    {source.column, shredded.sparse_type, ""}, 0, num_rows, column_id));
+                    {source.column, shredded.binary_type, ""}, 0, num_rows, column_id));
             auto [status, converted] = converter->convert_column_data(column_id);
             RETURN_IF_ERROR(status);
             ColumnWriter* writer =
@@ -1160,13 +1160,13 @@ Status VariantDocWriter::init(const TabletColumn* parent_column, int bucket_num,
 Status VariantDocWriter::append_shredded(const TabletColumn* parent_column,
                                          const VariantShreddedColumns& shredded, size_t num_rows,
                                          OlapBlockDataConvertor* converter) {
-    if (shredded.doc_buckets.size() != cast_set<size_t>(_bucket_num)) {
+    if (shredded.binary_buckets.size() != cast_set<size_t>(_bucket_num)) {
         return Status::InvalidArgument("Variant shredder produced {} doc buckets, expected {}",
-                                       shredded.doc_buckets.size(), _bucket_num);
+                                       shredded.binary_buckets.size(), _bucket_num);
     }
     converter->resize(_first_column_id + _bucket_num);
     for (int bucket = 0; bucket < _bucket_num; ++bucket) {
-        const auto& source = shredded.doc_buckets[bucket];
+        const auto& source = shredded.binary_buckets[bucket];
         if (source.column->size() != num_rows) {
             return Status::InvalidArgument("Variant doc bucket {} has {} rows, expected {}", bucket,
                                            source.column->size(), num_rows);
@@ -1176,7 +1176,7 @@ Status VariantDocWriter::append_shredded(const TabletColumn* parent_column,
         if (num_rows > 0) {
             converter->add_column_data_convertor_at(bucket_column, column_id);
             RETURN_IF_ERROR(converter->set_source_content_with_specifid_column(
-                    {source.column, shredded.doc_type, ""}, 0, num_rows, column_id));
+                    {source.column, shredded.binary_type, ""}, 0, num_rows, column_id));
             auto [status, converted] = converter->convert_column_data(column_id);
             RETURN_IF_ERROR(status);
             RETURN_IF_ERROR(_doc_value_column_writers[bucket]->append(
@@ -2510,12 +2510,12 @@ Status VariantDocCompactWriter::_finalize_v2(const TabletColumn& parent_column, 
     int bucket_value = -1;
     RETURN_IF_ERROR(
             parse_doc_compact_bucket(get_column()->path_info_ptr()->get_path(), &bucket_value));
-    if (cast_set<size_t>(bucket_value) >= shredded.doc_buckets.size()) {
+    if (cast_set<size_t>(bucket_value) >= shredded.binary_buckets.size()) {
         return Status::Corruption("Invalid Variant doc compact bucket {} in path {}", bucket_value,
                                   get_column()->path_info_ptr()->get_path());
     }
-    for (size_t bucket = 0; bucket < shredded.doc_buckets.size(); ++bucket) {
-        const auto& source = shredded.doc_buckets[bucket];
+    for (size_t bucket = 0; bucket < shredded.binary_buckets.size(); ++bucket) {
+        const auto& source = shredded.binary_buckets[bucket];
         const auto* map = check_and_get_column<ColumnMap>(source.column.get());
         if (map == nullptr || map->size() != num_rows) {
             return Status::Corruption("Variant doc compact bucket {} is not a {}-row map", bucket,
@@ -2533,9 +2533,9 @@ Status VariantDocCompactWriter::_finalize_v2(const TabletColumn& parent_column, 
 
     RETURN_IF_ERROR(_write_materialized_subcolumns(parent_column, shredded, converter, num_rows,
                                                    column_id));
-    const auto& source = shredded.doc_buckets[bucket_value];
+    const auto& source = shredded.binary_buckets[bucket_value];
     RETURN_IF_ERROR(_write_doc_value_column(parent_column, bucket_value, source.column,
-                                            shredded.doc_type, converter, column_id, num_rows));
+                                            shredded.binary_type, converter, column_id, num_rows));
     RETURN_IF_ERROR(finish_and_write_column_writer(_doc_value_column_writer.get()));
     source.statistics.to_pb(_opts.meta->mutable_variant_statistics());
     return Status::OK();

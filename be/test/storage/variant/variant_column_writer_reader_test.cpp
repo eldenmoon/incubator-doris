@@ -1772,7 +1772,7 @@ static TabletColumn make_string_typed_path_template(std::string_view path) {
 }
 
 static void expect_no_sparse_paths(const segment_v2::VariantShreddedColumns& shredded) {
-    for (const auto& bucket : shredded.sparse_buckets) {
+    for (const auto& bucket : shredded.binary_buckets) {
         ASSERT_TRUE(bucket.column);
         const auto& sparse = assert_cast<const ColumnMap&>(*bucket.column);
         const auto& keys = assert_cast<const ColumnString&>(sparse.get_keys());
@@ -2205,8 +2205,8 @@ TEST_F(VariantColumnWriterReaderTest, v2_shredder_drops_typed_cast_null_from_spa
     segment_v2::VariantShreddedColumns shredded;
     ASSERT_TRUE(shredder.finish(&shredded).ok());
 
-    ASSERT_EQ(shredded.sparse_buckets.size(), 1);
-    const auto& sparse = assert_cast<const ColumnMap&>(*shredded.sparse_buckets[0].column);
+    ASSERT_EQ(shredded.binary_buckets.size(), 1);
+    const auto& sparse = assert_cast<const ColumnMap&>(*shredded.binary_buckets[0].column);
     const auto& keys = assert_cast<const ColumnString&>(sparse.get_keys());
     ASSERT_EQ(keys.size(), 1);
     EXPECT_EQ(keys.get_data_at(0).to_string(), "bad");

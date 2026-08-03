@@ -61,30 +61,17 @@ struct VariantShredderOptions {
     bool check_duplicate_json_path = false;
 };
 
-struct VariantShredderDebugStats {
-    size_t metadata_plans = 0;
-    size_t path_plans = 0;
-    size_t promotions = 0;
-};
-
 struct VariantShreddedColumns {
     size_t num_rows = 0;
     ColumnPtr root_jsonb;
     DorisVector<VariantPathColumn> materialized;
-    DataTypePtr sparse_type;
-    struct SparseBucket {
+    DataTypePtr binary_type;
+    struct BinaryBucket {
         ColumnPtr column;
         VariantStatistics statistics;
     };
-    DorisVector<SparseBucket> sparse_buckets;
-    DataTypePtr doc_type;
-    struct DocBucket {
-        ColumnPtr column;
-        VariantStatistics statistics;
-    };
-    DorisVector<DocBucket> doc_buckets;
+    DorisVector<BinaryBucket> binary_buckets;
     VariantStatistics statistics;
-    VariantShredderDebugStats debug;
 };
 
 // Incremental native Variant V2 shredder. Input must be encoded E state. A failed append or finish

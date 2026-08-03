@@ -973,7 +973,9 @@ struct VariantPathBuilder::Impl {
         column = IColumn::mutate(std::move(promoted));
         type = std::move(target);
         nullable_type = make_nullable(type);
+#ifdef BE_TEST
         ++promotions;
+#endif
         return Status::OK();
     }
 
@@ -984,7 +986,9 @@ struct VariantPathBuilder::Impl {
     DorisVector<uint32_t> rowids;
     size_t logical_rows = 0;
     uint32_t non_null = 0;
+#ifdef BE_TEST
     size_t promotions = 0;
+#endif
 };
 
 VariantPathBuilder::VariantPathBuilder(PathInData path, size_t prefix_rows)
@@ -1068,10 +1072,6 @@ const DataTypePtr& VariantPathBuilder::type() const {
     return _impl->nullable_type;
 }
 
-ColumnPtr VariantPathBuilder::column() const {
-    return _impl->column ? _impl->column->get_ptr() : nullptr;
-}
-
 std::span<const uint32_t> VariantPathBuilder::rowids() const {
     return _impl->rowids;
 }
@@ -1080,6 +1080,7 @@ uint32_t VariantPathBuilder::non_null_rows() const {
     return _impl->non_null;
 }
 
+#ifdef BE_TEST
 size_t VariantPathBuilder::rows() const {
     return _impl->logical_rows;
 }
@@ -1087,6 +1088,7 @@ size_t VariantPathBuilder::rows() const {
 size_t VariantPathBuilder::promotion_count() const {
     return _impl->promotions;
 }
+#endif
 
 size_t VariantPathBuilder::byte_size() const {
     return sizeof(Impl) + path_allocated_bytes(_impl->path) +
@@ -1094,6 +1096,7 @@ size_t VariantPathBuilder::byte_size() const {
            (_impl->column ? _impl->column->allocated_bytes() : 0);
 }
 
+#ifdef BE_TEST
 bool VariantPathBuilder::is_null_at(size_t row) const {
     if (row >= _impl->logical_rows) {
         throw Exception(ErrorCode::OUT_OF_BOUND, "Variant path row {} exceeds {} rows for path {}",
@@ -1105,6 +1108,7 @@ bool VariantPathBuilder::is_null_at(size_t row) const {
     return !std::binary_search(_impl->rowids.begin(), _impl->rowids.end(),
                                static_cast<uint32_t>(row));
 }
+#endif
 
 Status VariantPathBuilder::materialize(ColumnPtr* result) const {
     if (result == nullptr) {
@@ -1216,8 +1220,15 @@ VariantPathSelection select_variant_paths(std::span<const VariantPathSelectionCa
 }
 
 struct VariantMetadataPathPlan::Impl {
+    struct TransparentStringHash {
+        using is_transparent = void;
+
+        size_t operator()(std::string_view value) const {
+            return std::hash<std::string_view> {}(value);
+        }
+    };
+
     struct MetadataPlan {
-        std::string bytes;
         DorisVector<std::string> keys;
     };
 
@@ -1228,7 +1239,7 @@ struct VariantMetadataPathPlan::Impl {
         std::unordered_map<uint64_t, uint32_t> transitions;
     };
 
-    std::unordered_map<std::string, uint32_t> metadata_ids;
+    std::unordered_map<std::string, uint32_t, TransparentStringHash, std::equal_to<>> metadata_ids;
     DorisVector<MetadataPlan> metadata;
     std::unordered_map<PathInData, uint32_t, PathInData::Hash> path_ids = {{PathInData(), 0}};
     DorisVector<PathPlan> paths = {PathPlan {.path = PathInData(), .transitions = {}}};
@@ -1245,7 +1256,7 @@ Status VariantMetadataPathPlan::intern_metadata(VariantMetadataRef metadata, uin
         return Status::InvalidArgument("Variant metadata plan id must not be null");
     }
     try {
-        std::string bytes(metadata.data, metadata.size);
+        const std::string_view bytes(metadata.data, metadata.size);
         if (const auto found = _impl->metadata_ids.find(bytes);
             found != _impl->metadata_ids.end()) {
             *plan_id = found->second;
@@ -1255,7 +1266,7 @@ Status VariantMetadataPathPlan::intern_metadata(VariantMetadataRef metadata, uin
         if (new_id > std::numeric_limits<uint32_t>::max()) {
             return Status::InvalidArgument("Variant metadata plan count exceeds uint32 limit");
         }
-        Impl::MetadataPlan plan {.bytes = std::move(bytes), .keys = {}};
+        Impl::MetadataPlan plan {.keys = {}};
         const uint32_t key_count = metadata.dict_size();
         plan.keys.reserve(key_count);
         for (uint32_t field_id = 0; field_id < key_count; ++field_id) {
@@ -1263,7 +1274,7 @@ Status VariantMetadataPathPlan::intern_metadata(VariantMetadataRef metadata, uin
             plan.keys.emplace_back(key.data, key.size);
         }
         *plan_id = static_cast<uint32_t>(new_id);
-        _impl->metadata_ids.emplace(plan.bytes, *plan_id);
+        _impl->metadata_ids.emplace(std::string(bytes), *plan_id);
         _impl->metadata.push_back(std::move(plan));
         return Status::OK();
     } catch (const Exception& exception) {
@@ -1328,13 +1339,11 @@ const PathInData& VariantMetadataPathPlan::path(uint32_t path_id) const {
     return _impl->paths[path_id].path;
 }
 
+#ifdef BE_TEST
 size_t VariantMetadataPathPlan::metadata_plan_count() const {
     return _impl->metadata.size();
 }
-
-size_t VariantMetadataPathPlan::path_plan_count() const {
-    return _impl->paths.size();
-}
+#endif
 
 size_t VariantMetadataPathPlan::byte_size() const {
     size_t size = sizeof(Impl);
@@ -1346,7 +1355,6 @@ size_t VariantMetadataPathPlan::byte_size() const {
     }
     size += _impl->metadata.capacity() * sizeof(Impl::MetadataPlan);
     for (const auto& metadata : _impl->metadata) {
-        size += metadata.bytes.capacity();
         size += metadata.keys.capacity() * sizeof(std::string);
         for (const auto& key : metadata.keys) {
             size += key.capacity();

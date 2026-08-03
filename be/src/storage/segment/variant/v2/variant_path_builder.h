@@ -37,7 +37,6 @@ struct VariantPathColumn {
     DataTypePtr type;
     ColumnPtr column;
     uint32_t non_null_rows = 0;
-    bool is_typed_path = false;
 };
 
 // An incrementally promotable builder for one flattened Variant path. Present leaves are stored
@@ -59,14 +58,14 @@ public:
 
     const PathInData& path() const;
     const DataTypePtr& type() const;
-    // Returns the compact present-value column. Its indices correspond one-to-one with rowids().
-    ColumnPtr column() const;
     std::span<const uint32_t> rowids() const;
     uint32_t non_null_rows() const;
+#ifdef BE_TEST
     size_t rows() const;
     size_t promotion_count() const;
-    size_t byte_size() const;
     bool is_null_at(size_t row) const;
+#endif
+    size_t byte_size() const;
 
     Status materialize(ColumnPtr* result) const;
     Status write_sparse_cell(size_t value_index, ColumnString::Chars* chars) const;
@@ -110,8 +109,9 @@ public:
                          uint32_t* child_path_id);
 
     const PathInData& path(uint32_t path_id) const;
+#ifdef BE_TEST
     size_t metadata_plan_count() const;
-    size_t path_plan_count() const;
+#endif
     size_t byte_size() const;
 
 private:

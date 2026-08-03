@@ -291,11 +291,9 @@ struct VariantShredder::Impl {
         return Status::OK();
     }
 
-    Status publish_root_and_materialized(
-            const VariantPathSelection& selection,
-            const DorisVector<VariantPathSelectionCandidate>& candidates,
-            const DorisVector<VariantPathBuilder*>& candidate_builders,
-            VariantShreddedColumns* result) {
+    Status publish_root_and_materialized(const VariantPathSelection& selection,
+                                         const DorisVector<VariantPathBuilder*>& candidate_builders,
+                                         VariantShreddedColumns* result) {
         result->num_rows = rows;
         result->root_jsonb = std::move(root_values);
         result->materialized.reserve(selection.materialized.size());
@@ -311,8 +309,7 @@ struct VariantShredder::Impl {
             result->materialized.push_back({.path = publication_path,
                                             .type = builder.type(),
                                             .column = std::move(materialized),
-                                            .non_null_rows = builder.non_null_rows(),
-                                            .is_typed_path = candidates[selected].is_typed_path});
+                                            .non_null_rows = builder.non_null_rows()});
         }
         return Status::OK();
     }
@@ -429,12 +426,12 @@ struct VariantShredder::Impl {
                           const DorisVector<VariantPathBuilder*>& candidate_builders,
                           VariantShreddedColumns* result) const {
         const DataTypePtr string_type = std::make_shared<DataTypeString>();
-        result->sparse_type = std::make_shared<DataTypeMap>(string_type, string_type);
+        result->binary_type = std::make_shared<DataTypeMap>(string_type, string_type);
         DorisVector<MutableColumnPtr> sparse_owners;
         DorisVector<ColumnMap*> sparse_maps;
         sparse_owners.reserve(options.sparse_bucket_count);
         sparse_maps.reserve(options.sparse_bucket_count);
-        result->sparse_buckets.reserve(options.sparse_bucket_count);
+        result->binary_buckets.reserve(options.sparse_bucket_count);
         for (uint32_t bucket = 0; bucket < options.sparse_bucket_count; ++bucket) {
             auto map = ColumnMap::create(ColumnString::create(), ColumnString::create(),
                                          ColumnArray::ColumnOffsets::create());
@@ -448,7 +445,7 @@ struct VariantShredder::Impl {
         DorisVector<VariantStatistics> bucket_statistics(options.sparse_bucket_count);
         publish_sparse_statistics(sparse_plan, &bucket_statistics, result);
         for (uint32_t bucket = 0; bucket < options.sparse_bucket_count; ++bucket) {
-            result->sparse_buckets.push_back({.column = std::move(sparse_owners[bucket]),
+            result->binary_buckets.push_back({.column = std::move(sparse_owners[bucket]),
                                               .statistics = std::move(bucket_statistics[bucket])});
         }
         return Status::OK();
@@ -489,7 +486,7 @@ struct VariantShredder::Impl {
 
     Status publish_doc(const DorisVector<DocPlan>& plan, VariantShreddedColumns* result) const {
         const DataTypePtr string_type = std::make_shared<DataTypeString>();
-        result->doc_type = std::make_shared<DataTypeMap>(string_type, string_type);
+        result->binary_type = std::make_shared<DataTypeMap>(string_type, string_type);
         DorisVector<MutableColumnPtr> owners;
         DorisVector<ColumnMap*> maps;
         owners.reserve(options.doc_bucket_count);
@@ -508,22 +505,12 @@ struct VariantShredder::Impl {
             statistics[entry.bucket].doc_value_column_non_null_size[*entry.path] = count;
             result->statistics.doc_value_column_non_null_size[*entry.path] += count;
         }
-        result->doc_buckets.reserve(options.doc_bucket_count);
+        result->binary_buckets.reserve(options.doc_bucket_count);
         for (uint32_t bucket = 0; bucket < options.doc_bucket_count; ++bucket) {
-            result->doc_buckets.push_back({.column = std::move(owners[bucket]),
-                                           .statistics = std::move(statistics[bucket])});
+            result->binary_buckets.push_back({.column = std::move(owners[bucket]),
+                                              .statistics = std::move(statistics[bucket])});
         }
         return Status::OK();
-    }
-
-    void publish_debug(VariantShreddedColumns* result) const {
-        result->debug.metadata_plans = path_plan.metadata_plan_count();
-        result->debug.path_plans = path_plan.path_plan_count();
-        for (const auto& builder : builders) {
-            if (builder) {
-                result->debug.promotions += builder->promotion_count();
-            }
-        }
     }
 
     Status finish_ordinary(const DorisVector<VariantPathSelectionCandidate>& candidates,
@@ -535,14 +522,12 @@ struct VariantShredder::Impl {
         RETURN_IF_ERROR(convert_typed_candidates(all, candidate_builders, storage_types));
         const VariantPathSelection selection = select_variant_paths(
                 candidates, options.max_subcolumns_count, options.typed_paths_to_sparse);
-        RETURN_IF_ERROR(
-                publish_root_and_materialized(selection, candidates, candidate_builders, result));
+        RETURN_IF_ERROR(publish_root_and_materialized(selection, candidate_builders, result));
         RETURN_IF_ERROR(publish_sparse(selection, candidate_builders, result));
         return Status::OK();
     }
 
-    Status finish_doc(const DorisVector<VariantPathSelectionCandidate>& candidates,
-                      const DorisVector<VariantPathBuilder*>& candidate_builders,
+    Status finish_doc(const DorisVector<VariantPathBuilder*>& candidate_builders,
                       const DorisVector<DataTypePtr>& storage_types,
                       VariantShreddedColumns* result) {
         DorisVector<DocPlan> doc_plan;
@@ -558,7 +543,7 @@ struct VariantShredder::Impl {
             RETURN_IF_ERROR(convert_typed_candidates(selection.materialized, candidate_builders,
                                                      storage_types));
         }
-        return publish_root_and_materialized(selection, candidates, candidate_builders, result);
+        return publish_root_and_materialized(selection, candidate_builders, result);
     }
 
     Status finish_impl(VariantShreddedColumns* result) {
@@ -569,11 +554,10 @@ struct VariantShredder::Impl {
         RETURN_IF_ERROR(
                 prepare_logical_candidates(&candidates, &candidate_builders, &storage_types));
         if (options.physical_layout == VariantShredderPhysicalLayout::DOC) {
-            RETURN_IF_ERROR(finish_doc(candidates, candidate_builders, storage_types, result));
+            RETURN_IF_ERROR(finish_doc(candidate_builders, storage_types, result));
         } else {
             RETURN_IF_ERROR(finish_ordinary(candidates, candidate_builders, storage_types, result));
         }
-        publish_debug(result);
         return Status::OK();
     }
 
