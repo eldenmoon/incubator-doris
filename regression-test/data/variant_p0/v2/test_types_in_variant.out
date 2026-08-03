@@ -37,7 +37,7 @@
 1	{"a":[{"b":18446744073709551615}]}
 
 -- !sql_array_largeint --
-id	int	Yes	true	\N
+id	int	Yes	true	\N	
 var	variant<PROPERTIES ("variant_max_subcolumns_count" = "0","variant_enable_typed_paths_to_sparse" = "false","variant_max_sparse_column_statistics_size" = "10","variant_sparse_hash_shard_count" = "10")>	Yes	false	\N	NONE
 var.a	json	Yes	false	\N	NONE
 
@@ -46,7 +46,7 @@ var.a	json	Yes	false	\N	NONE
 2	{"a":[{"b":2}]}
 
 -- !sql_array_largeint --
-id	int	Yes	true	\N
+id	int	Yes	true	\N	
 var	variant<PROPERTIES ("variant_max_subcolumns_count" = "0","variant_enable_typed_paths_to_sparse" = "false","variant_max_sparse_column_statistics_size" = "10","variant_sparse_hash_shard_count" = "10")>	Yes	false	\N	NONE
 var.a	json	Yes	false	\N	NONE
 
@@ -56,6 +56,7 @@ var.a	json	Yes	false	\N	NONE
 3	{"a":[{"b":1.1}]}
 
 -- !sql_array_json --
-id	int	Yes	true	\N
+id	int	Yes	true	\N	
 var	variant<PROPERTIES ("variant_max_subcolumns_count" = "0","variant_enable_typed_paths_to_sparse" = "false","variant_max_sparse_column_statistics_size" = "10","variant_sparse_hash_shard_count" = "10")>	Yes	false	\N	NONE
 var.a	json	Yes	false	\N	NONE
+

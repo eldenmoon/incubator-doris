@@ -7,13 +7,13 @@ object
 {"other_1":"1"}
 
 -- !sql_compaction_before --
-id	bigint	No	true	\N
+id	bigint	No	true	\N	
 var	variant<'boolean_*':boolean,'tinyint_*':tinyint,'smallint_*':smallint,'int_*':int,'bigint_*':bigint,'largeint_*':largeint,'char_*':text,'string_*':text,'float_*':float,'double_*':double,'decimal32_*':decimalv3(8,2),'decimal64_*':decimalv3(16,9),'decimal128_*':decimalv3(36,9),'datetime_*':datetimev2(0),'date_*':datev2,'ipv4_*':ipv4,'ipv6_*':ipv6,'array_boolean_*':array<boolean>,'array_tinyint_*':array<tinyint>,'array_smallint_*':array<smallint>,'array_int_*':array<int>,'array_bigint_*':array<bigint>,'array_largeint_*':array<largeint>,'array_char_*':array<text>,'array_string_*':array<text>,'array_float_*':array<float>,'array_double_*':array<double>,'array_decimal32_*':array<decimalv3(8,2)>,'array_decimal64_*':array<decimalv3(16,9)>,'array_decimal128_*':array<decimalv3(36,9)>,'array_datetime_*':array<datetimev2(0)>,'array_date_*':array<datev2>,'array_ipv4_*':array<ipv4>,'array_ipv6_*':array<ipv6>,PROPERTIES ("variant_max_subcolumns_count" = "1","variant_enable_typed_paths_to_sparse" = "true","variant_max_sparse_column_statistics_size" = "10000","variant_sparse_hash_shard_count" = "3")>	No	false	\N	NONE
 var.other_1	text	Yes	false	\N	NONE
 var.tinyint_1	tinyint	Yes	false	\N	NONE
 
 -- !sql_compaction_after --
-id	bigint	No	true	\N
+id	bigint	No	true	\N	
 var	variant<'boolean_*':boolean,'tinyint_*':tinyint,'smallint_*':smallint,'int_*':int,'bigint_*':bigint,'largeint_*':largeint,'char_*':text,'string_*':text,'float_*':float,'double_*':double,'decimal32_*':decimalv3(8,2),'decimal64_*':decimalv3(16,9),'decimal128_*':decimalv3(36,9),'datetime_*':datetimev2(0),'date_*':datev2,'ipv4_*':ipv4,'ipv6_*':ipv6,'array_boolean_*':array<boolean>,'array_tinyint_*':array<tinyint>,'array_smallint_*':array<smallint>,'array_int_*':array<int>,'array_bigint_*':array<bigint>,'array_largeint_*':array<largeint>,'array_char_*':array<text>,'array_string_*':array<text>,'array_float_*':array<float>,'array_double_*':array<double>,'array_decimal32_*':array<decimalv3(8,2)>,'array_decimal64_*':array<decimalv3(16,9)>,'array_decimal128_*':array<decimalv3(36,9)>,'array_datetime_*':array<datetimev2(0)>,'array_date_*':array<datev2>,'array_ipv4_*':array<ipv4>,'array_ipv6_*':array<ipv6>,PROPERTIES ("variant_max_subcolumns_count" = "1","variant_enable_typed_paths_to_sparse" = "true","variant_max_sparse_column_statistics_size" = "10000","variant_sparse_hash_shard_count" = "3")>	No	false	\N	NONE
 var.tinyint_1	tinyint	Yes	false	\N	NONE
 
@@ -24,13 +24,13 @@ var.tinyint_1	tinyint	Yes	false	\N	NONE
 {"tinyint_1":2}
 
 -- !sql_compaction_before --
-id	bigint	No	true	\N
+id	bigint	No	true	\N	
 var	variant<'boolean_*':boolean,'tinyint_*':tinyint,'smallint_*':smallint,'int_*':int,'bigint_*':bigint,'largeint_*':largeint,'char_*':text,'string_*':text,'float_*':float,'double_*':double,'decimal32_*':decimalv3(8,2),'decimal64_*':decimalv3(16,9),'decimal128_*':decimalv3(36,9),'datetime_*':datetimev2(0),'date_*':datev2,'ipv4_*':ipv4,'ipv6_*':ipv6,'array_boolean_*':array<boolean>,'array_tinyint_*':array<tinyint>,'array_smallint_*':array<smallint>,'array_int_*':array<int>,'array_bigint_*':array<bigint>,'array_largeint_*':array<largeint>,'array_char_*':array<text>,'array_string_*':array<text>,'array_float_*':array<float>,'array_double_*':array<double>,'array_decimal32_*':array<decimalv3(8,2)>,'array_decimal64_*':array<decimalv3(16,9)>,'array_decimal128_*':array<decimalv3(36,9)>,'array_datetime_*':array<datetimev2(0)>,'array_date_*':array<datev2>,'array_ipv4_*':array<ipv4>,'array_ipv6_*':array<ipv6>,PROPERTIES ("variant_max_subcolumns_count" = "1","variant_enable_typed_paths_to_sparse" = "true","variant_max_sparse_column_statistics_size" = "10000","variant_sparse_hash_shard_count" = "3")>	No	false	\N	NONE
 var.smallint_1	smallint	Yes	false	\N	NONE
 var.tinyint_1	tinyint	Yes	false	\N	NONE
 
 -- !sql_compaction_after --
-id	bigint	No	true	\N
+id	bigint	No	true	\N	
 var	variant<'boolean_*':boolean,'tinyint_*':tinyint,'smallint_*':smallint,'int_*':int,'bigint_*':bigint,'largeint_*':largeint,'char_*':text,'string_*':text,'float_*':float,'double_*':double,'decimal32_*':decimalv3(8,2),'decimal64_*':decimalv3(16,9),'decimal128_*':decimalv3(36,9),'datetime_*':datetimev2(0),'date_*':datev2,'ipv4_*':ipv4,'ipv6_*':ipv6,'array_boolean_*':array<boolean>,'array_tinyint_*':array<tinyint>,'array_smallint_*':array<smallint>,'array_int_*':array<int>,'array_bigint_*':array<bigint>,'array_largeint_*':array<largeint>,'array_char_*':array<text>,'array_string_*':array<text>,'array_float_*':array<float>,'array_double_*':array<double>,'array_decimal32_*':array<decimalv3(8,2)>,'array_decimal64_*':array<decimalv3(16,9)>,'array_decimal128_*':array<decimalv3(36,9)>,'array_datetime_*':array<datetimev2(0)>,'array_date_*':array<datev2>,'array_ipv4_*':array<ipv4>,'array_ipv6_*':array<ipv6>,PROPERTIES ("variant_max_subcolumns_count" = "1","variant_enable_typed_paths_to_sparse" = "true","variant_max_sparse_column_statistics_size" = "10000","variant_sparse_hash_shard_count" = "3")>	No	false	\N	NONE
 var.smallint_1	smallint	Yes	false	\N	NONE
 
@@ -44,13 +44,13 @@ var.smallint_1	smallint	Yes	false	\N	NONE
 {"smallint_1":3}
 
 -- !sql_compaction_before --
-id	bigint	No	true	\N
+id	bigint	No	true	\N	
 var	variant<'boolean_*':boolean,'tinyint_*':tinyint,'smallint_*':smallint,'int_*':int,'bigint_*':bigint,'largeint_*':largeint,'char_*':text,'string_*':text,'float_*':float,'double_*':double,'decimal32_*':decimalv3(8,2),'decimal64_*':decimalv3(16,9),'decimal128_*':decimalv3(36,9),'datetime_*':datetimev2(0),'date_*':datev2,'ipv4_*':ipv4,'ipv6_*':ipv6,'array_boolean_*':array<boolean>,'array_tinyint_*':array<tinyint>,'array_smallint_*':array<smallint>,'array_int_*':array<int>,'array_bigint_*':array<bigint>,'array_largeint_*':array<largeint>,'array_char_*':array<text>,'array_string_*':array<text>,'array_float_*':array<float>,'array_double_*':array<double>,'array_decimal32_*':array<decimalv3(8,2)>,'array_decimal64_*':array<decimalv3(16,9)>,'array_decimal128_*':array<decimalv3(36,9)>,'array_datetime_*':array<datetimev2(0)>,'array_date_*':array<datev2>,'array_ipv4_*':array<ipv4>,'array_ipv6_*':array<ipv6>,PROPERTIES ("variant_max_subcolumns_count" = "1","variant_enable_typed_paths_to_sparse" = "true","variant_max_sparse_column_statistics_size" = "10000","variant_sparse_hash_shard_count" = "3")>	No	false	\N	NONE
 var.int_1	int	Yes	false	\N	NONE
 var.smallint_1	smallint	Yes	false	\N	NONE
 
 -- !sql_compaction_after --
-id	bigint	No	true	\N
+id	bigint	No	true	\N	
 var	variant<'boolean_*':boolean,'tinyint_*':tinyint,'smallint_*':smallint,'int_*':int,'bigint_*':bigint,'largeint_*':largeint,'char_*':text,'string_*':text,'float_*':float,'double_*':double,'decimal32_*':decimalv3(8,2),'decimal64_*':decimalv3(16,9),'decimal128_*':decimalv3(36,9),'datetime_*':datetimev2(0),'date_*':datev2,'ipv4_*':ipv4,'ipv6_*':ipv6,'array_boolean_*':array<boolean>,'array_tinyint_*':array<tinyint>,'array_smallint_*':array<smallint>,'array_int_*':array<int>,'array_bigint_*':array<bigint>,'array_largeint_*':array<largeint>,'array_char_*':array<text>,'array_string_*':array<text>,'array_float_*':array<float>,'array_double_*':array<double>,'array_decimal32_*':array<decimalv3(8,2)>,'array_decimal64_*':array<decimalv3(16,9)>,'array_decimal128_*':array<decimalv3(36,9)>,'array_datetime_*':array<datetimev2(0)>,'array_date_*':array<datev2>,'array_ipv4_*':array<ipv4>,'array_ipv6_*':array<ipv6>,PROPERTIES ("variant_max_subcolumns_count" = "1","variant_enable_typed_paths_to_sparse" = "true","variant_max_sparse_column_statistics_size" = "10000","variant_sparse_hash_shard_count" = "3")>	No	false	\N	NONE
 var.int_1	int	Yes	false	\N	NONE
 
@@ -68,13 +68,13 @@ var.int_1	int	Yes	false	\N	NONE
 {"int_1":4}
 
 -- !sql_compaction_before --
-id	bigint	No	true	\N
+id	bigint	No	true	\N	
 var	variant<'boolean_*':boolean,'tinyint_*':tinyint,'smallint_*':smallint,'int_*':int,'bigint_*':bigint,'largeint_*':largeint,'char_*':text,'string_*':text,'float_*':float,'double_*':double,'decimal32_*':decimalv3(8,2),'decimal64_*':decimalv3(16,9),'decimal128_*':decimalv3(36,9),'datetime_*':datetimev2(0),'date_*':datev2,'ipv4_*':ipv4,'ipv6_*':ipv6,'array_boolean_*':array<boolean>,'array_tinyint_*':array<tinyint>,'array_smallint_*':array<smallint>,'array_int_*':array<int>,'array_bigint_*':array<bigint>,'array_largeint_*':array<largeint>,'array_char_*':array<text>,'array_string_*':array<text>,'array_float_*':array<float>,'array_double_*':array<double>,'array_decimal32_*':array<decimalv3(8,2)>,'array_decimal64_*':array<decimalv3(16,9)>,'array_decimal128_*':array<decimalv3(36,9)>,'array_datetime_*':array<datetimev2(0)>,'array_date_*':array<datev2>,'array_ipv4_*':array<ipv4>,'array_ipv6_*':array<ipv6>,PROPERTIES ("variant_max_subcolumns_count" = "1","variant_enable_typed_paths_to_sparse" = "true","variant_max_sparse_column_statistics_size" = "10000","variant_sparse_hash_shard_count" = "3")>	No	false	\N	NONE
 var.bigint_1	bigint	Yes	false	\N	NONE
 var.int_1	int	Yes	false	\N	NONE
 
 -- !sql_compaction_after --
-id	bigint	No	true	\N
+id	bigint	No	true	\N	
 var	variant<'boolean_*':boolean,'tinyint_*':tinyint,'smallint_*':smallint,'int_*':int,'bigint_*':bigint,'largeint_*':largeint,'char_*':text,'string_*':text,'float_*':float,'double_*':double,'decimal32_*':decimalv3(8,2),'decimal64_*':decimalv3(16,9),'decimal128_*':decimalv3(36,9),'datetime_*':datetimev2(0),'date_*':datev2,'ipv4_*':ipv4,'ipv6_*':ipv6,'array_boolean_*':array<boolean>,'array_tinyint_*':array<tinyint>,'array_smallint_*':array<smallint>,'array_int_*':array<int>,'array_bigint_*':array<bigint>,'array_largeint_*':array<largeint>,'array_char_*':array<text>,'array_string_*':array<text>,'array_float_*':array<float>,'array_double_*':array<double>,'array_decimal32_*':array<decimalv3(8,2)>,'array_decimal64_*':array<decimalv3(16,9)>,'array_decimal128_*':array<decimalv3(36,9)>,'array_datetime_*':array<datetimev2(0)>,'array_date_*':array<datev2>,'array_ipv4_*':array<ipv4>,'array_ipv6_*':array<ipv6>,PROPERTIES ("variant_max_subcolumns_count" = "1","variant_enable_typed_paths_to_sparse" = "true","variant_max_sparse_column_statistics_size" = "10000","variant_sparse_hash_shard_count" = "3")>	No	false	\N	NONE
 var.bigint_1	bigint	Yes	false	\N	NONE
 
@@ -97,13 +97,13 @@ var.bigint_1	bigint	Yes	false	\N	NONE
 {"bigint_1":5}
 
 -- !sql_compaction_before --
-id	bigint	No	true	\N
+id	bigint	No	true	\N	
 var	variant<'boolean_*':boolean,'tinyint_*':tinyint,'smallint_*':smallint,'int_*':int,'bigint_*':bigint,'largeint_*':largeint,'char_*':text,'string_*':text,'float_*':float,'double_*':double,'decimal32_*':decimalv3(8,2),'decimal64_*':decimalv3(16,9),'decimal128_*':decimalv3(36,9),'datetime_*':datetimev2(0),'date_*':datev2,'ipv4_*':ipv4,'ipv6_*':ipv6,'array_boolean_*':array<boolean>,'array_tinyint_*':array<tinyint>,'array_smallint_*':array<smallint>,'array_int_*':array<int>,'array_bigint_*':array<bigint>,'array_largeint_*':array<largeint>,'array_char_*':array<text>,'array_string_*':array<text>,'array_float_*':array<float>,'array_double_*':array<double>,'array_decimal32_*':array<decimalv3(8,2)>,'array_decimal64_*':array<decimalv3(16,9)>,'array_decimal128_*':array<decimalv3(36,9)>,'array_datetime_*':array<datetimev2(0)>,'array_date_*':array<datev2>,'array_ipv4_*':array<ipv4>,'array_ipv6_*':array<ipv6>,PROPERTIES ("variant_max_subcolumns_count" = "1","variant_enable_typed_paths_to_sparse" = "true","variant_max_sparse_column_statistics_size" = "10000","variant_sparse_hash_shard_count" = "3")>	No	false	\N	NONE
 var.bigint_1	bigint	Yes	false	\N	NONE
 var.largeint_1	largeint	Yes	false	\N	NONE
 
 -- !sql_compaction_after --
-id	bigint	No	true	\N
+id	bigint	No	true	\N	
 var	variant<'boolean_*':boolean,'tinyint_*':tinyint,'smallint_*':smallint,'int_*':int,'bigint_*':bigint,'largeint_*':largeint,'char_*':text,'string_*':text,'float_*':float,'double_*':double,'decimal32_*':decimalv3(8,2),'decimal64_*':decimalv3(16,9),'decimal128_*':decimalv3(36,9),'datetime_*':datetimev2(0),'date_*':datev2,'ipv4_*':ipv4,'ipv6_*':ipv6,'array_boolean_*':array<boolean>,'array_tinyint_*':array<tinyint>,'array_smallint_*':array<smallint>,'array_int_*':array<int>,'array_bigint_*':array<bigint>,'array_largeint_*':array<largeint>,'array_char_*':array<text>,'array_string_*':array<text>,'array_float_*':array<float>,'array_double_*':array<double>,'array_decimal32_*':array<decimalv3(8,2)>,'array_decimal64_*':array<decimalv3(16,9)>,'array_decimal128_*':array<decimalv3(36,9)>,'array_datetime_*':array<datetimev2(0)>,'array_date_*':array<datev2>,'array_ipv4_*':array<ipv4>,'array_ipv6_*':array<ipv6>,PROPERTIES ("variant_max_subcolumns_count" = "1","variant_enable_typed_paths_to_sparse" = "true","variant_max_sparse_column_statistics_size" = "10000","variant_sparse_hash_shard_count" = "3")>	No	false	\N	NONE
 var.largeint_1	largeint	Yes	false	\N	NONE
 
@@ -132,13 +132,13 @@ var.largeint_1	largeint	Yes	false	\N	NONE
 {"largeint_1":6}
 
 -- !sql_compaction_before --
-id	bigint	No	true	\N
+id	bigint	No	true	\N	
 var	variant<'boolean_*':boolean,'tinyint_*':tinyint,'smallint_*':smallint,'int_*':int,'bigint_*':bigint,'largeint_*':largeint,'char_*':text,'string_*':text,'float_*':float,'double_*':double,'decimal32_*':decimalv3(8,2),'decimal64_*':decimalv3(16,9),'decimal128_*':decimalv3(36,9),'datetime_*':datetimev2(0),'date_*':datev2,'ipv4_*':ipv4,'ipv6_*':ipv6,'array_boolean_*':array<boolean>,'array_tinyint_*':array<tinyint>,'array_smallint_*':array<smallint>,'array_int_*':array<int>,'array_bigint_*':array<bigint>,'array_largeint_*':array<largeint>,'array_char_*':array<text>,'array_string_*':array<text>,'array_float_*':array<float>,'array_double_*':array<double>,'array_decimal32_*':array<decimalv3(8,2)>,'array_decimal64_*':array<decimalv3(16,9)>,'array_decimal128_*':array<decimalv3(36,9)>,'array_datetime_*':array<datetimev2(0)>,'array_date_*':array<datev2>,'array_ipv4_*':array<ipv4>,'array_ipv6_*':array<ipv6>,PROPERTIES ("variant_max_subcolumns_count" = "1","variant_enable_typed_paths_to_sparse" = "true","variant_max_sparse_column_statistics_size" = "10000","variant_sparse_hash_shard_count" = "3")>	No	false	\N	NONE
 var.char_1	text	Yes	false	\N	NONE
 var.largeint_1	largeint	Yes	false	\N	NONE
 
 -- !sql_compaction_after --
-id	bigint	No	true	\N
+id	bigint	No	true	\N	
 var	variant<'boolean_*':boolean,'tinyint_*':tinyint,'smallint_*':smallint,'int_*':int,'bigint_*':bigint,'largeint_*':largeint,'char_*':text,'string_*':text,'float_*':float,'double_*':double,'decimal32_*':decimalv3(8,2),'decimal64_*':decimalv3(16,9),'decimal128_*':decimalv3(36,9),'datetime_*':datetimev2(0),'date_*':datev2,'ipv4_*':ipv4,'ipv6_*':ipv6,'array_boolean_*':array<boolean>,'array_tinyint_*':array<tinyint>,'array_smallint_*':array<smallint>,'array_int_*':array<int>,'array_bigint_*':array<bigint>,'array_largeint_*':array<largeint>,'array_char_*':array<text>,'array_string_*':array<text>,'array_float_*':array<float>,'array_double_*':array<double>,'array_decimal32_*':array<decimalv3(8,2)>,'array_decimal64_*':array<decimalv3(16,9)>,'array_decimal128_*':array<decimalv3(36,9)>,'array_datetime_*':array<datetimev2(0)>,'array_date_*':array<datev2>,'array_ipv4_*':array<ipv4>,'array_ipv6_*':array<ipv6>,PROPERTIES ("variant_max_subcolumns_count" = "1","variant_enable_typed_paths_to_sparse" = "true","variant_max_sparse_column_statistics_size" = "10000","variant_sparse_hash_shard_count" = "3")>	No	false	\N	NONE
 var.char_1	text	Yes	false	\N	NONE
 
@@ -174,13 +174,13 @@ var.char_1	text	Yes	false	\N	NONE
 {"char_1":"7"}
 
 -- !sql_compaction_before --
-id	bigint	No	true	\N
+id	bigint	No	true	\N	
 var	variant<'boolean_*':boolean,'tinyint_*':tinyint,'smallint_*':smallint,'int_*':int,'bigint_*':bigint,'largeint_*':largeint,'char_*':text,'string_*':text,'float_*':float,'double_*':double,'decimal32_*':decimalv3(8,2),'decimal64_*':decimalv3(16,9),'decimal128_*':decimalv3(36,9),'datetime_*':datetimev2(0),'date_*':datev2,'ipv4_*':ipv4,'ipv6_*':ipv6,'array_boolean_*':array<boolean>,'array_tinyint_*':array<tinyint>,'array_smallint_*':array<smallint>,'array_int_*':array<int>,'array_bigint_*':array<bigint>,'array_largeint_*':array<largeint>,'array_char_*':array<text>,'array_string_*':array<text>,'array_float_*':array<float>,'array_double_*':array<double>,'array_decimal32_*':array<decimalv3(8,2)>,'array_decimal64_*':array<decimalv3(16,9)>,'array_decimal128_*':array<decimalv3(36,9)>,'array_datetime_*':array<datetimev2(0)>,'array_date_*':array<datev2>,'array_ipv4_*':array<ipv4>,'array_ipv6_*':array<ipv6>,PROPERTIES ("variant_max_subcolumns_count" = "1","variant_enable_typed_paths_to_sparse" = "true","variant_max_sparse_column_statistics_size" = "10000","variant_sparse_hash_shard_count" = "3")>	No	false	\N	NONE
 var.char_1	text	Yes	false	\N	NONE
 var.string_1	text	Yes	false	\N	NONE
 
 -- !sql_compaction_after --
-id	bigint	No	true	\N
+id	bigint	No	true	\N	
 var	variant<'boolean_*':boolean,'tinyint_*':tinyint,'smallint_*':smallint,'int_*':int,'bigint_*':bigint,'largeint_*':largeint,'char_*':text,'string_*':text,'float_*':float,'double_*':double,'decimal32_*':decimalv3(8,2),'decimal64_*':decimalv3(16,9),'decimal128_*':decimalv3(36,9),'datetime_*':datetimev2(0),'date_*':datev2,'ipv4_*':ipv4,'ipv6_*':ipv6,'array_boolean_*':array<boolean>,'array_tinyint_*':array<tinyint>,'array_smallint_*':array<smallint>,'array_int_*':array<int>,'array_bigint_*':array<bigint>,'array_largeint_*':array<largeint>,'array_char_*':array<text>,'array_string_*':array<text>,'array_float_*':array<float>,'array_double_*':array<double>,'array_decimal32_*':array<decimalv3(8,2)>,'array_decimal64_*':array<decimalv3(16,9)>,'array_decimal128_*':array<decimalv3(36,9)>,'array_datetime_*':array<datetimev2(0)>,'array_date_*':array<datev2>,'array_ipv4_*':array<ipv4>,'array_ipv6_*':array<ipv6>,PROPERTIES ("variant_max_subcolumns_count" = "1","variant_enable_typed_paths_to_sparse" = "true","variant_max_sparse_column_statistics_size" = "10000","variant_sparse_hash_shard_count" = "3")>	No	false	\N	NONE
 var.string_1	text	Yes	false	\N	NONE
 
@@ -224,13 +224,13 @@ var.string_1	text	Yes	false	\N	NONE
 {"string_1":"8"}
 
 -- !sql_compaction_before --
-id	bigint	No	true	\N
+id	bigint	No	true	\N	
 var	variant<'boolean_*':boolean,'tinyint_*':tinyint,'smallint_*':smallint,'int_*':int,'bigint_*':bigint,'largeint_*':largeint,'char_*':text,'string_*':text,'float_*':float,'double_*':double,'decimal32_*':decimalv3(8,2),'decimal64_*':decimalv3(16,9),'decimal128_*':decimalv3(36,9),'datetime_*':datetimev2(0),'date_*':datev2,'ipv4_*':ipv4,'ipv6_*':ipv6,'array_boolean_*':array<boolean>,'array_tinyint_*':array<tinyint>,'array_smallint_*':array<smallint>,'array_int_*':array<int>,'array_bigint_*':array<bigint>,'array_largeint_*':array<largeint>,'array_char_*':array<text>,'array_string_*':array<text>,'array_float_*':array<float>,'array_double_*':array<double>,'array_decimal32_*':array<decimalv3(8,2)>,'array_decimal64_*':array<decimalv3(16,9)>,'array_decimal128_*':array<decimalv3(36,9)>,'array_datetime_*':array<datetimev2(0)>,'array_date_*':array<datev2>,'array_ipv4_*':array<ipv4>,'array_ipv6_*':array<ipv6>,PROPERTIES ("variant_max_subcolumns_count" = "1","variant_enable_typed_paths_to_sparse" = "true","variant_max_sparse_column_statistics_size" = "10000","variant_sparse_hash_shard_count" = "3")>	No	false	\N	NONE
 var.float_1	float	Yes	false	\N	NONE
 var.string_1	text	Yes	false	\N	NONE
 
 -- !sql_compaction_after --
-id	bigint	No	true	\N
+id	bigint	No	true	\N	
 var	variant<'boolean_*':boolean,'tinyint_*':tinyint,'smallint_*':smallint,'int_*':int,'bigint_*':bigint,'largeint_*':largeint,'char_*':text,'string_*':text,'float_*':float,'double_*':double,'decimal32_*':decimalv3(8,2),'decimal64_*':decimalv3(16,9),'decimal128_*':decimalv3(36,9),'datetime_*':datetimev2(0),'date_*':datev2,'ipv4_*':ipv4,'ipv6_*':ipv6,'array_boolean_*':array<boolean>,'array_tinyint_*':array<tinyint>,'array_smallint_*':array<smallint>,'array_int_*':array<int>,'array_bigint_*':array<bigint>,'array_largeint_*':array<largeint>,'array_char_*':array<text>,'array_string_*':array<text>,'array_float_*':array<float>,'array_double_*':array<double>,'array_decimal32_*':array<decimalv3(8,2)>,'array_decimal64_*':array<decimalv3(16,9)>,'array_decimal128_*':array<decimalv3(36,9)>,'array_datetime_*':array<datetimev2(0)>,'array_date_*':array<datev2>,'array_ipv4_*':array<ipv4>,'array_ipv6_*':array<ipv6>,PROPERTIES ("variant_max_subcolumns_count" = "1","variant_enable_typed_paths_to_sparse" = "true","variant_max_sparse_column_statistics_size" = "10000","variant_sparse_hash_shard_count" = "3")>	No	false	\N	NONE
 var.string_1	text	Yes	false	\N	NONE
 
@@ -282,13 +282,13 @@ var.string_1	text	Yes	false	\N	NONE
 {"float_1":8.12}
 
 -- !sql_compaction_before --
-id	bigint	No	true	\N
+id	bigint	No	true	\N	
 var	variant<'boolean_*':boolean,'tinyint_*':tinyint,'smallint_*':smallint,'int_*':int,'bigint_*':bigint,'largeint_*':largeint,'char_*':text,'string_*':text,'float_*':float,'double_*':double,'decimal32_*':decimalv3(8,2),'decimal64_*':decimalv3(16,9),'decimal128_*':decimalv3(36,9),'datetime_*':datetimev2(0),'date_*':datev2,'ipv4_*':ipv4,'ipv6_*':ipv6,'array_boolean_*':array<boolean>,'array_tinyint_*':array<tinyint>,'array_smallint_*':array<smallint>,'array_int_*':array<int>,'array_bigint_*':array<bigint>,'array_largeint_*':array<largeint>,'array_char_*':array<text>,'array_string_*':array<text>,'array_float_*':array<float>,'array_double_*':array<double>,'array_decimal32_*':array<decimalv3(8,2)>,'array_decimal64_*':array<decimalv3(16,9)>,'array_decimal128_*':array<decimalv3(36,9)>,'array_datetime_*':array<datetimev2(0)>,'array_date_*':array<datev2>,'array_ipv4_*':array<ipv4>,'array_ipv6_*':array<ipv6>,PROPERTIES ("variant_max_subcolumns_count" = "1","variant_enable_typed_paths_to_sparse" = "true","variant_max_sparse_column_statistics_size" = "10000","variant_sparse_hash_shard_count" = "3")>	No	false	\N	NONE
 var.double_1	double	Yes	false	\N	NONE
 var.string_1	text	Yes	false	\N	NONE
 
 -- !sql_compaction_after --
-id	bigint	No	true	\N
+id	bigint	No	true	\N	
 var	variant<'boolean_*':boolean,'tinyint_*':tinyint,'smallint_*':smallint,'int_*':int,'bigint_*':bigint,'largeint_*':largeint,'char_*':text,'string_*':text,'float_*':float,'double_*':double,'decimal32_*':decimalv3(8,2),'decimal64_*':decimalv3(16,9),'decimal128_*':decimalv3(36,9),'datetime_*':datetimev2(0),'date_*':datev2,'ipv4_*':ipv4,'ipv6_*':ipv6,'array_boolean_*':array<boolean>,'array_tinyint_*':array<tinyint>,'array_smallint_*':array<smallint>,'array_int_*':array<int>,'array_bigint_*':array<bigint>,'array_largeint_*':array<largeint>,'array_char_*':array<text>,'array_string_*':array<text>,'array_float_*':array<float>,'array_double_*':array<double>,'array_decimal32_*':array<decimalv3(8,2)>,'array_decimal64_*':array<decimalv3(16,9)>,'array_decimal128_*':array<decimalv3(36,9)>,'array_datetime_*':array<datetimev2(0)>,'array_date_*':array<datev2>,'array_ipv4_*':array<ipv4>,'array_ipv6_*':array<ipv6>,PROPERTIES ("variant_max_subcolumns_count" = "1","variant_enable_typed_paths_to_sparse" = "true","variant_max_sparse_column_statistics_size" = "10000","variant_sparse_hash_shard_count" = "3")>	No	false	\N	NONE
 var.double_1	double	Yes	false	\N	NONE
 
@@ -349,13 +349,13 @@ var.double_1	double	Yes	false	\N	NONE
 {"double_1":9.119999999999999}
 
 -- !sql_compaction_before --
-id	bigint	No	true	\N
+id	bigint	No	true	\N	
 var	variant<'boolean_*':boolean,'tinyint_*':tinyint,'smallint_*':smallint,'int_*':int,'bigint_*':bigint,'largeint_*':largeint,'char_*':text,'string_*':text,'float_*':float,'double_*':double,'decimal32_*':decimalv3(8,2),'decimal64_*':decimalv3(16,9),'decimal128_*':decimalv3(36,9),'datetime_*':datetimev2(0),'date_*':datev2,'ipv4_*':ipv4,'ipv6_*':ipv6,'array_boolean_*':array<boolean>,'array_tinyint_*':array<tinyint>,'array_smallint_*':array<smallint>,'array_int_*':array<int>,'array_bigint_*':array<bigint>,'array_largeint_*':array<largeint>,'array_char_*':array<text>,'array_string_*':array<text>,'array_float_*':array<float>,'array_double_*':array<double>,'array_decimal32_*':array<decimalv3(8,2)>,'array_decimal64_*':array<decimalv3(16,9)>,'array_decimal128_*':array<decimalv3(36,9)>,'array_datetime_*':array<datetimev2(0)>,'array_date_*':array<datev2>,'array_ipv4_*':array<ipv4>,'array_ipv6_*':array<ipv6>,PROPERTIES ("variant_max_subcolumns_count" = "1","variant_enable_typed_paths_to_sparse" = "true","variant_max_sparse_column_statistics_size" = "10000","variant_sparse_hash_shard_count" = "3")>	No	false	\N	NONE
 var.decimal32_1	decimal(8,2)	Yes	false	\N	NONE
 var.double_1	double	Yes	false	\N	NONE
 
 -- !sql_compaction_after --
-id	bigint	No	true	\N
+id	bigint	No	true	\N	
 var	variant<'boolean_*':boolean,'tinyint_*':tinyint,'smallint_*':smallint,'int_*':int,'bigint_*':bigint,'largeint_*':largeint,'char_*':text,'string_*':text,'float_*':float,'double_*':double,'decimal32_*':decimalv3(8,2),'decimal64_*':decimalv3(16,9),'decimal128_*':decimalv3(36,9),'datetime_*':datetimev2(0),'date_*':datev2,'ipv4_*':ipv4,'ipv6_*':ipv6,'array_boolean_*':array<boolean>,'array_tinyint_*':array<tinyint>,'array_smallint_*':array<smallint>,'array_int_*':array<int>,'array_bigint_*':array<bigint>,'array_largeint_*':array<largeint>,'array_char_*':array<text>,'array_string_*':array<text>,'array_float_*':array<float>,'array_double_*':array<double>,'array_decimal32_*':array<decimalv3(8,2)>,'array_decimal64_*':array<decimalv3(16,9)>,'array_decimal128_*':array<decimalv3(36,9)>,'array_datetime_*':array<datetimev2(0)>,'array_date_*':array<datev2>,'array_ipv4_*':array<ipv4>,'array_ipv6_*':array<ipv6>,PROPERTIES ("variant_max_subcolumns_count" = "1","variant_enable_typed_paths_to_sparse" = "true","variant_max_sparse_column_statistics_size" = "10000","variant_sparse_hash_shard_count" = "3")>	No	false	\N	NONE
 var.decimal32_1	decimal(8,2)	Yes	false	\N	NONE
 
@@ -426,13 +426,13 @@ var.decimal32_1	decimal(8,2)	Yes	false	\N	NONE
 {"decimal32_1":10.12}
 
 -- !sql_compaction_before --
-id	bigint	No	true	\N
+id	bigint	No	true	\N	
 var	variant<'boolean_*':boolean,'tinyint_*':tinyint,'smallint_*':smallint,'int_*':int,'bigint_*':bigint,'largeint_*':largeint,'char_*':text,'string_*':text,'float_*':float,'double_*':double,'decimal32_*':decimalv3(8,2),'decimal64_*':decimalv3(16,9),'decimal128_*':decimalv3(36,9),'datetime_*':datetimev2(0),'date_*':datev2,'ipv4_*':ipv4,'ipv6_*':ipv6,'array_boolean_*':array<boolean>,'array_tinyint_*':array<tinyint>,'array_smallint_*':array<smallint>,'array_int_*':array<int>,'array_bigint_*':array<bigint>,'array_largeint_*':array<largeint>,'array_char_*':array<text>,'array_string_*':array<text>,'array_float_*':array<float>,'array_double_*':array<double>,'array_decimal32_*':array<decimalv3(8,2)>,'array_decimal64_*':array<decimalv3(16,9)>,'array_decimal128_*':array<decimalv3(36,9)>,'array_datetime_*':array<datetimev2(0)>,'array_date_*':array<datev2>,'array_ipv4_*':array<ipv4>,'array_ipv6_*':array<ipv6>,PROPERTIES ("variant_max_subcolumns_count" = "1","variant_enable_typed_paths_to_sparse" = "true","variant_max_sparse_column_statistics_size" = "10000","variant_sparse_hash_shard_count" = "3")>	No	false	\N	NONE
 var.decimal32_1	decimal(8,2)	Yes	false	\N	NONE
 var.decimal64_1	decimal(16,9)	Yes	false	\N	NONE
 
 -- !sql_compaction_after --
-id	bigint	No	true	\N
+id	bigint	No	true	\N	
 var	variant<'boolean_*':boolean,'tinyint_*':tinyint,'smallint_*':smallint,'int_*':int,'bigint_*':bigint,'largeint_*':largeint,'char_*':text,'string_*':text,'float_*':float,'double_*':double,'decimal32_*':decimalv3(8,2),'decimal64_*':decimalv3(16,9),'decimal128_*':decimalv3(36,9),'datetime_*':datetimev2(0),'date_*':datev2,'ipv4_*':ipv4,'ipv6_*':ipv6,'array_boolean_*':array<boolean>,'array_tinyint_*':array<tinyint>,'array_smallint_*':array<smallint>,'array_int_*':array<int>,'array_bigint_*':array<bigint>,'array_largeint_*':array<largeint>,'array_char_*':array<text>,'array_string_*':array<text>,'array_float_*':array<float>,'array_double_*':array<double>,'array_decimal32_*':array<decimalv3(8,2)>,'array_decimal64_*':array<decimalv3(16,9)>,'array_decimal128_*':array<decimalv3(36,9)>,'array_datetime_*':array<datetimev2(0)>,'array_date_*':array<datev2>,'array_ipv4_*':array<ipv4>,'array_ipv6_*':array<ipv6>,PROPERTIES ("variant_max_subcolumns_count" = "1","variant_enable_typed_paths_to_sparse" = "true","variant_max_sparse_column_statistics_size" = "10000","variant_sparse_hash_shard_count" = "3")>	No	false	\N	NONE
 var.decimal64_1	decimal(16,9)	Yes	false	\N	NONE
 
@@ -514,13 +514,13 @@ var.decimal64_1	decimal(16,9)	Yes	false	\N	NONE
 {"decimal64_1":11.120000000}
 
 -- !sql_compaction_before --
-id	bigint	No	true	\N
+id	bigint	No	true	\N	
 var	variant<'boolean_*':boolean,'tinyint_*':tinyint,'smallint_*':smallint,'int_*':int,'bigint_*':bigint,'largeint_*':largeint,'char_*':text,'string_*':text,'float_*':float,'double_*':double,'decimal32_*':decimalv3(8,2),'decimal64_*':decimalv3(16,9),'decimal128_*':decimalv3(36,9),'datetime_*':datetimev2(0),'date_*':datev2,'ipv4_*':ipv4,'ipv6_*':ipv6,'array_boolean_*':array<boolean>,'array_tinyint_*':array<tinyint>,'array_smallint_*':array<smallint>,'array_int_*':array<int>,'array_bigint_*':array<bigint>,'array_largeint_*':array<largeint>,'array_char_*':array<text>,'array_string_*':array<text>,'array_float_*':array<float>,'array_double_*':array<double>,'array_decimal32_*':array<decimalv3(8,2)>,'array_decimal64_*':array<decimalv3(16,9)>,'array_decimal128_*':array<decimalv3(36,9)>,'array_datetime_*':array<datetimev2(0)>,'array_date_*':array<datev2>,'array_ipv4_*':array<ipv4>,'array_ipv6_*':array<ipv6>,PROPERTIES ("variant_max_subcolumns_count" = "1","variant_enable_typed_paths_to_sparse" = "true","variant_max_sparse_column_statistics_size" = "10000","variant_sparse_hash_shard_count" = "3")>	No	false	\N	NONE
 var.decimal128_1	decimal(36,9)	Yes	false	\N	NONE
 var.decimal64_1	decimal(16,9)	Yes	false	\N	NONE
 
 -- !sql_compaction_after --
-id	bigint	No	true	\N
+id	bigint	No	true	\N	
 var	variant<'boolean_*':boolean,'tinyint_*':tinyint,'smallint_*':smallint,'int_*':int,'bigint_*':bigint,'largeint_*':largeint,'char_*':text,'string_*':text,'float_*':float,'double_*':double,'decimal32_*':decimalv3(8,2),'decimal64_*':decimalv3(16,9),'decimal128_*':decimalv3(36,9),'datetime_*':datetimev2(0),'date_*':datev2,'ipv4_*':ipv4,'ipv6_*':ipv6,'array_boolean_*':array<boolean>,'array_tinyint_*':array<tinyint>,'array_smallint_*':array<smallint>,'array_int_*':array<int>,'array_bigint_*':array<bigint>,'array_largeint_*':array<largeint>,'array_char_*':array<text>,'array_string_*':array<text>,'array_float_*':array<float>,'array_double_*':array<double>,'array_decimal32_*':array<decimalv3(8,2)>,'array_decimal64_*':array<decimalv3(16,9)>,'array_decimal128_*':array<decimalv3(36,9)>,'array_datetime_*':array<datetimev2(0)>,'array_date_*':array<datev2>,'array_ipv4_*':array<ipv4>,'array_ipv6_*':array<ipv6>,PROPERTIES ("variant_max_subcolumns_count" = "1","variant_enable_typed_paths_to_sparse" = "true","variant_max_sparse_column_statistics_size" = "10000","variant_sparse_hash_shard_count" = "3")>	No	false	\N	NONE
 var.decimal128_1	decimal(36,9)	Yes	false	\N	NONE
 
@@ -614,13 +614,13 @@ var.decimal128_1	decimal(36,9)	Yes	false	\N	NONE
 {"decimal128_1":12.120000000}
 
 -- !sql_compaction_before --
-id	bigint	No	true	\N
+id	bigint	No	true	\N	
 var	variant<'boolean_*':boolean,'tinyint_*':tinyint,'smallint_*':smallint,'int_*':int,'bigint_*':bigint,'largeint_*':largeint,'char_*':text,'string_*':text,'float_*':float,'double_*':double,'decimal32_*':decimalv3(8,2),'decimal64_*':decimalv3(16,9),'decimal128_*':decimalv3(36,9),'datetime_*':datetimev2(0),'date_*':datev2,'ipv4_*':ipv4,'ipv6_*':ipv6,'array_boolean_*':array<boolean>,'array_tinyint_*':array<tinyint>,'array_smallint_*':array<smallint>,'array_int_*':array<int>,'array_bigint_*':array<bigint>,'array_largeint_*':array<largeint>,'array_char_*':array<text>,'array_string_*':array<text>,'array_float_*':array<float>,'array_double_*':array<double>,'array_decimal32_*':array<decimalv3(8,2)>,'array_decimal64_*':array<decimalv3(16,9)>,'array_decimal128_*':array<decimalv3(36,9)>,'array_datetime_*':array<datetimev2(0)>,'array_date_*':array<datev2>,'array_ipv4_*':array<ipv4>,'array_ipv6_*':array<ipv6>,PROPERTIES ("variant_max_subcolumns_count" = "1","variant_enable_typed_paths_to_sparse" = "true","variant_max_sparse_column_statistics_size" = "10000","variant_sparse_hash_shard_count" = "3")>	No	false	\N	NONE
 var.datetime_1	datetime	Yes	false	\N	NONE
 var.decimal128_1	decimal(36,9)	Yes	false	\N	NONE
 
 -- !sql_compaction_after --
-id	bigint	No	true	\N
+id	bigint	No	true	\N	
 var	variant<'boolean_*':boolean,'tinyint_*':tinyint,'smallint_*':smallint,'int_*':int,'bigint_*':bigint,'largeint_*':largeint,'char_*':text,'string_*':text,'float_*':float,'double_*':double,'decimal32_*':decimalv3(8,2),'decimal64_*':decimalv3(16,9),'decimal128_*':decimalv3(36,9),'datetime_*':datetimev2(0),'date_*':datev2,'ipv4_*':ipv4,'ipv6_*':ipv6,'array_boolean_*':array<boolean>,'array_tinyint_*':array<tinyint>,'array_smallint_*':array<smallint>,'array_int_*':array<int>,'array_bigint_*':array<bigint>,'array_largeint_*':array<largeint>,'array_char_*':array<text>,'array_string_*':array<text>,'array_float_*':array<float>,'array_double_*':array<double>,'array_decimal32_*':array<decimalv3(8,2)>,'array_decimal64_*':array<decimalv3(16,9)>,'array_decimal128_*':array<decimalv3(36,9)>,'array_datetime_*':array<datetimev2(0)>,'array_date_*':array<datev2>,'array_ipv4_*':array<ipv4>,'array_ipv6_*':array<ipv6>,PROPERTIES ("variant_max_subcolumns_count" = "1","variant_enable_typed_paths_to_sparse" = "true","variant_max_sparse_column_statistics_size" = "10000","variant_sparse_hash_shard_count" = "3")>	No	false	\N	NONE
 var.datetime_1	datetime	Yes	false	\N	NONE
 
@@ -727,13 +727,13 @@ var.datetime_1	datetime	Yes	false	\N	NONE
 {"datetime_1":"2021-01-01 00:00:08.000000"}
 
 -- !sql_compaction_before --
-id	bigint	No	true	\N
+id	bigint	No	true	\N	
 var	variant<'boolean_*':boolean,'tinyint_*':tinyint,'smallint_*':smallint,'int_*':int,'bigint_*':bigint,'largeint_*':largeint,'char_*':text,'string_*':text,'float_*':float,'double_*':double,'decimal32_*':decimalv3(8,2),'decimal64_*':decimalv3(16,9),'decimal128_*':decimalv3(36,9),'datetime_*':datetimev2(0),'date_*':datev2,'ipv4_*':ipv4,'ipv6_*':ipv6,'array_boolean_*':array<boolean>,'array_tinyint_*':array<tinyint>,'array_smallint_*':array<smallint>,'array_int_*':array<int>,'array_bigint_*':array<bigint>,'array_largeint_*':array<largeint>,'array_char_*':array<text>,'array_string_*':array<text>,'array_float_*':array<float>,'array_double_*':array<double>,'array_decimal32_*':array<decimalv3(8,2)>,'array_decimal64_*':array<decimalv3(16,9)>,'array_decimal128_*':array<decimalv3(36,9)>,'array_datetime_*':array<datetimev2(0)>,'array_date_*':array<datev2>,'array_ipv4_*':array<ipv4>,'array_ipv6_*':array<ipv6>,PROPERTIES ("variant_max_subcolumns_count" = "1","variant_enable_typed_paths_to_sparse" = "true","variant_max_sparse_column_statistics_size" = "10000","variant_sparse_hash_shard_count" = "3")>	No	false	\N	NONE
 var.date_1	date	Yes	false	\N	NONE
 var.datetime_1	datetime	Yes	false	\N	NONE
 
 -- !sql_compaction_after --
-id	bigint	No	true	\N
+id	bigint	No	true	\N	
 var	variant<'boolean_*':boolean,'tinyint_*':tinyint,'smallint_*':smallint,'int_*':int,'bigint_*':bigint,'largeint_*':largeint,'char_*':text,'string_*':text,'float_*':float,'double_*':double,'decimal32_*':decimalv3(8,2),'decimal64_*':decimalv3(16,9),'decimal128_*':decimalv3(36,9),'datetime_*':datetimev2(0),'date_*':datev2,'ipv4_*':ipv4,'ipv6_*':ipv6,'array_boolean_*':array<boolean>,'array_tinyint_*':array<tinyint>,'array_smallint_*':array<smallint>,'array_int_*':array<int>,'array_bigint_*':array<bigint>,'array_largeint_*':array<largeint>,'array_char_*':array<text>,'array_string_*':array<text>,'array_float_*':array<float>,'array_double_*':array<double>,'array_decimal32_*':array<decimalv3(8,2)>,'array_decimal64_*':array<decimalv3(16,9)>,'array_decimal128_*':array<decimalv3(36,9)>,'array_datetime_*':array<datetimev2(0)>,'array_date_*':array<datev2>,'array_ipv4_*':array<ipv4>,'array_ipv6_*':array<ipv6>,PROPERTIES ("variant_max_subcolumns_count" = "1","variant_enable_typed_paths_to_sparse" = "true","variant_max_sparse_column_statistics_size" = "10000","variant_sparse_hash_shard_count" = "3")>	No	false	\N	NONE
 var.date_1	date	Yes	false	\N	NONE
 
@@ -854,13 +854,13 @@ var.date_1	date	Yes	false	\N	NONE
 {"date_1":"2021-01-10"}
 
 -- !sql_compaction_before --
-id	bigint	No	true	\N
+id	bigint	No	true	\N	
 var	variant<'boolean_*':boolean,'tinyint_*':tinyint,'smallint_*':smallint,'int_*':int,'bigint_*':bigint,'largeint_*':largeint,'char_*':text,'string_*':text,'float_*':float,'double_*':double,'decimal32_*':decimalv3(8,2),'decimal64_*':decimalv3(16,9),'decimal128_*':decimalv3(36,9),'datetime_*':datetimev2(0),'date_*':datev2,'ipv4_*':ipv4,'ipv6_*':ipv6,'array_boolean_*':array<boolean>,'array_tinyint_*':array<tinyint>,'array_smallint_*':array<smallint>,'array_int_*':array<int>,'array_bigint_*':array<bigint>,'array_largeint_*':array<largeint>,'array_char_*':array<text>,'array_string_*':array<text>,'array_float_*':array<float>,'array_double_*':array<double>,'array_decimal32_*':array<decimalv3(8,2)>,'array_decimal64_*':array<decimalv3(16,9)>,'array_decimal128_*':array<decimalv3(36,9)>,'array_datetime_*':array<datetimev2(0)>,'array_date_*':array<datev2>,'array_ipv4_*':array<ipv4>,'array_ipv6_*':array<ipv6>,PROPERTIES ("variant_max_subcolumns_count" = "1","variant_enable_typed_paths_to_sparse" = "true","variant_max_sparse_column_statistics_size" = "10000","variant_sparse_hash_shard_count" = "3")>	No	false	\N	NONE
 var.date_1	date	Yes	false	\N	NONE
 var.ipv4_1	ipv4	Yes	false	\N	NONE
 
 -- !sql_compaction_after --
-id	bigint	No	true	\N
+id	bigint	No	true	\N	
 var	variant<'boolean_*':boolean,'tinyint_*':tinyint,'smallint_*':smallint,'int_*':int,'bigint_*':bigint,'largeint_*':largeint,'char_*':text,'string_*':text,'float_*':float,'double_*':double,'decimal32_*':decimalv3(8,2),'decimal64_*':decimalv3(16,9),'decimal128_*':decimalv3(36,9),'datetime_*':datetimev2(0),'date_*':datev2,'ipv4_*':ipv4,'ipv6_*':ipv6,'array_boolean_*':array<boolean>,'array_tinyint_*':array<tinyint>,'array_smallint_*':array<smallint>,'array_int_*':array<int>,'array_bigint_*':array<bigint>,'array_largeint_*':array<largeint>,'array_char_*':array<text>,'array_string_*':array<text>,'array_float_*':array<float>,'array_double_*':array<double>,'array_decimal32_*':array<decimalv3(8,2)>,'array_decimal64_*':array<decimalv3(16,9)>,'array_decimal128_*':array<decimalv3(36,9)>,'array_datetime_*':array<datetimev2(0)>,'array_date_*':array<datev2>,'array_ipv4_*':array<ipv4>,'array_ipv6_*':array<ipv6>,PROPERTIES ("variant_max_subcolumns_count" = "1","variant_enable_typed_paths_to_sparse" = "true","variant_max_sparse_column_statistics_size" = "10000","variant_sparse_hash_shard_count" = "3")>	No	false	\N	NONE
 var.ipv4_1	ipv4	Yes	false	\N	NONE
 
@@ -996,13 +996,13 @@ var.ipv4_1	ipv4	Yes	false	\N	NONE
 {"ipv4_1":"192.168.1.11"}
 
 -- !sql_compaction_before --
-id	bigint	No	true	\N
+id	bigint	No	true	\N	
 var	variant<'boolean_*':boolean,'tinyint_*':tinyint,'smallint_*':smallint,'int_*':int,'bigint_*':bigint,'largeint_*':largeint,'char_*':text,'string_*':text,'float_*':float,'double_*':double,'decimal32_*':decimalv3(8,2),'decimal64_*':decimalv3(16,9),'decimal128_*':decimalv3(36,9),'datetime_*':datetimev2(0),'date_*':datev2,'ipv4_*':ipv4,'ipv6_*':ipv6,'array_boolean_*':array<boolean>,'array_tinyint_*':array<tinyint>,'array_smallint_*':array<smallint>,'array_int_*':array<int>,'array_bigint_*':array<bigint>,'array_largeint_*':array<largeint>,'array_char_*':array<text>,'array_string_*':array<text>,'array_float_*':array<float>,'array_double_*':array<double>,'array_decimal32_*':array<decimalv3(8,2)>,'array_decimal64_*':array<decimalv3(16,9)>,'array_decimal128_*':array<decimalv3(36,9)>,'array_datetime_*':array<datetimev2(0)>,'array_date_*':array<datev2>,'array_ipv4_*':array<ipv4>,'array_ipv6_*':array<ipv6>,PROPERTIES ("variant_max_subcolumns_count" = "1","variant_enable_typed_paths_to_sparse" = "true","variant_max_sparse_column_statistics_size" = "10000","variant_sparse_hash_shard_count" = "3")>	No	false	\N	NONE
 var.ipv4_1	ipv4	Yes	false	\N	NONE
 var.ipv6_1	ipv6	Yes	false	\N	NONE
 
 -- !sql_compaction_after --
-id	bigint	No	true	\N
+id	bigint	No	true	\N	
 var	variant<'boolean_*':boolean,'tinyint_*':tinyint,'smallint_*':smallint,'int_*':int,'bigint_*':bigint,'largeint_*':largeint,'char_*':text,'string_*':text,'float_*':float,'double_*':double,'decimal32_*':decimalv3(8,2),'decimal64_*':decimalv3(16,9),'decimal128_*':decimalv3(36,9),'datetime_*':datetimev2(0),'date_*':datev2,'ipv4_*':ipv4,'ipv6_*':ipv6,'array_boolean_*':array<boolean>,'array_tinyint_*':array<tinyint>,'array_smallint_*':array<smallint>,'array_int_*':array<int>,'array_bigint_*':array<bigint>,'array_largeint_*':array<largeint>,'array_char_*':array<text>,'array_string_*':array<text>,'array_float_*':array<float>,'array_double_*':array<double>,'array_decimal32_*':array<decimalv3(8,2)>,'array_decimal64_*':array<decimalv3(16,9)>,'array_decimal128_*':array<decimalv3(36,9)>,'array_datetime_*':array<datetimev2(0)>,'array_date_*':array<datev2>,'array_ipv4_*':array<ipv4>,'array_ipv6_*':array<ipv6>,PROPERTIES ("variant_max_subcolumns_count" = "1","variant_enable_typed_paths_to_sparse" = "true","variant_max_sparse_column_statistics_size" = "10000","variant_sparse_hash_shard_count" = "3")>	No	false	\N	NONE
 var.ipv6_1	ipv6	Yes	false	\N	NONE
 
@@ -1154,13 +1154,13 @@ var.ipv6_1	ipv6	Yes	false	\N	NONE
 {"ipv6_1":"2001:db8:85a3::8a2e:370:7340"}
 
 -- !sql_compaction_before --
-id	bigint	No	true	\N
+id	bigint	No	true	\N	
 var	variant<'boolean_*':boolean,'tinyint_*':tinyint,'smallint_*':smallint,'int_*':int,'bigint_*':bigint,'largeint_*':largeint,'char_*':text,'string_*':text,'float_*':float,'double_*':double,'decimal32_*':decimalv3(8,2),'decimal64_*':decimalv3(16,9),'decimal128_*':decimalv3(36,9),'datetime_*':datetimev2(0),'date_*':datev2,'ipv4_*':ipv4,'ipv6_*':ipv6,'array_boolean_*':array<boolean>,'array_tinyint_*':array<tinyint>,'array_smallint_*':array<smallint>,'array_int_*':array<int>,'array_bigint_*':array<bigint>,'array_largeint_*':array<largeint>,'array_char_*':array<text>,'array_string_*':array<text>,'array_float_*':array<float>,'array_double_*':array<double>,'array_decimal32_*':array<decimalv3(8,2)>,'array_decimal64_*':array<decimalv3(16,9)>,'array_decimal128_*':array<decimalv3(36,9)>,'array_datetime_*':array<datetimev2(0)>,'array_date_*':array<datev2>,'array_ipv4_*':array<ipv4>,'array_ipv6_*':array<ipv6>,PROPERTIES ("variant_max_subcolumns_count" = "1","variant_enable_typed_paths_to_sparse" = "true","variant_max_sparse_column_statistics_size" = "10000","variant_sparse_hash_shard_count" = "3")>	No	false	\N	NONE
 var.array_boolean_1	array<boolean>	Yes	false	\N	NONE
 var.ipv6_1	ipv6	Yes	false	\N	NONE
 
 -- !sql_compaction_after --
-id	bigint	No	true	\N
+id	bigint	No	true	\N	
 var	variant<'boolean_*':boolean,'tinyint_*':tinyint,'smallint_*':smallint,'int_*':int,'bigint_*':bigint,'largeint_*':largeint,'char_*':text,'string_*':text,'float_*':float,'double_*':double,'decimal32_*':decimalv3(8,2),'decimal64_*':decimalv3(16,9),'decimal128_*':decimalv3(36,9),'datetime_*':datetimev2(0),'date_*':datev2,'ipv4_*':ipv4,'ipv6_*':ipv6,'array_boolean_*':array<boolean>,'array_tinyint_*':array<tinyint>,'array_smallint_*':array<smallint>,'array_int_*':array<int>,'array_bigint_*':array<bigint>,'array_largeint_*':array<largeint>,'array_char_*':array<text>,'array_string_*':array<text>,'array_float_*':array<float>,'array_double_*':array<double>,'array_decimal32_*':array<decimalv3(8,2)>,'array_decimal64_*':array<decimalv3(16,9)>,'array_decimal128_*':array<decimalv3(36,9)>,'array_datetime_*':array<datetimev2(0)>,'array_date_*':array<datev2>,'array_ipv4_*':array<ipv4>,'array_ipv6_*':array<ipv6>,PROPERTIES ("variant_max_subcolumns_count" = "1","variant_enable_typed_paths_to_sparse" = "true","variant_max_sparse_column_statistics_size" = "10000","variant_sparse_hash_shard_count" = "3")>	No	false	\N	NONE
 var.ipv6_1	ipv6	Yes	false	\N	NONE
 
@@ -1328,13 +1328,13 @@ var.ipv6_1	ipv6	Yes	false	\N	NONE
 {"array_boolean_1":[false]}
 
 -- !sql_compaction_before --
-id	bigint	No	true	\N
+id	bigint	No	true	\N	
 var	variant<'boolean_*':boolean,'tinyint_*':tinyint,'smallint_*':smallint,'int_*':int,'bigint_*':bigint,'largeint_*':largeint,'char_*':text,'string_*':text,'float_*':float,'double_*':double,'decimal32_*':decimalv3(8,2),'decimal64_*':decimalv3(16,9),'decimal128_*':decimalv3(36,9),'datetime_*':datetimev2(0),'date_*':datev2,'ipv4_*':ipv4,'ipv6_*':ipv6,'array_boolean_*':array<boolean>,'array_tinyint_*':array<tinyint>,'array_smallint_*':array<smallint>,'array_int_*':array<int>,'array_bigint_*':array<bigint>,'array_largeint_*':array<largeint>,'array_char_*':array<text>,'array_string_*':array<text>,'array_float_*':array<float>,'array_double_*':array<double>,'array_decimal32_*':array<decimalv3(8,2)>,'array_decimal64_*':array<decimalv3(16,9)>,'array_decimal128_*':array<decimalv3(36,9)>,'array_datetime_*':array<datetimev2(0)>,'array_date_*':array<datev2>,'array_ipv4_*':array<ipv4>,'array_ipv6_*':array<ipv6>,PROPERTIES ("variant_max_subcolumns_count" = "1","variant_enable_typed_paths_to_sparse" = "true","variant_max_sparse_column_statistics_size" = "10000","variant_sparse_hash_shard_count" = "3")>	No	false	\N	NONE
 var.array_tinyint_1	array<tinyint>	Yes	false	\N	NONE
 var.ipv6_1	ipv6	Yes	false	\N	NONE
 
 -- !sql_compaction_after --
-id	bigint	No	true	\N
+id	bigint	No	true	\N	
 var	variant<'boolean_*':boolean,'tinyint_*':tinyint,'smallint_*':smallint,'int_*':int,'bigint_*':bigint,'largeint_*':largeint,'char_*':text,'string_*':text,'float_*':float,'double_*':double,'decimal32_*':decimalv3(8,2),'decimal64_*':decimalv3(16,9),'decimal128_*':decimalv3(36,9),'datetime_*':datetimev2(0),'date_*':datev2,'ipv4_*':ipv4,'ipv6_*':ipv6,'array_boolean_*':array<boolean>,'array_tinyint_*':array<tinyint>,'array_smallint_*':array<smallint>,'array_int_*':array<int>,'array_bigint_*':array<bigint>,'array_largeint_*':array<largeint>,'array_char_*':array<text>,'array_string_*':array<text>,'array_float_*':array<float>,'array_double_*':array<double>,'array_decimal32_*':array<decimalv3(8,2)>,'array_decimal64_*':array<decimalv3(16,9)>,'array_decimal128_*':array<decimalv3(36,9)>,'array_datetime_*':array<datetimev2(0)>,'array_date_*':array<datev2>,'array_ipv4_*':array<ipv4>,'array_ipv6_*':array<ipv6>,PROPERTIES ("variant_max_subcolumns_count" = "1","variant_enable_typed_paths_to_sparse" = "true","variant_max_sparse_column_statistics_size" = "10000","variant_sparse_hash_shard_count" = "3")>	No	false	\N	NONE
 var.array_tinyint_1	array<tinyint>	Yes	false	\N	NONE
 
@@ -1520,13 +1520,13 @@ var.array_tinyint_1	array<tinyint>	Yes	false	\N	NONE
 {"array_tinyint_1":[18]}
 
 -- !sql_compaction_before --
-id	bigint	No	true	\N
+id	bigint	No	true	\N	
 var	variant<'boolean_*':boolean,'tinyint_*':tinyint,'smallint_*':smallint,'int_*':int,'bigint_*':bigint,'largeint_*':largeint,'char_*':text,'string_*':text,'float_*':float,'double_*':double,'decimal32_*':decimalv3(8,2),'decimal64_*':decimalv3(16,9),'decimal128_*':decimalv3(36,9),'datetime_*':datetimev2(0),'date_*':datev2,'ipv4_*':ipv4,'ipv6_*':ipv6,'array_boolean_*':array<boolean>,'array_tinyint_*':array<tinyint>,'array_smallint_*':array<smallint>,'array_int_*':array<int>,'array_bigint_*':array<bigint>,'array_largeint_*':array<largeint>,'array_char_*':array<text>,'array_string_*':array<text>,'array_float_*':array<float>,'array_double_*':array<double>,'array_decimal32_*':array<decimalv3(8,2)>,'array_decimal64_*':array<decimalv3(16,9)>,'array_decimal128_*':array<decimalv3(36,9)>,'array_datetime_*':array<datetimev2(0)>,'array_date_*':array<datev2>,'array_ipv4_*':array<ipv4>,'array_ipv6_*':array<ipv6>,PROPERTIES ("variant_max_subcolumns_count" = "1","variant_enable_typed_paths_to_sparse" = "true","variant_max_sparse_column_statistics_size" = "10000","variant_sparse_hash_shard_count" = "3")>	No	false	\N	NONE
 var.array_smallint_1	array<smallint>	Yes	false	\N	NONE
 var.array_tinyint_1	array<tinyint>	Yes	false	\N	NONE
 
 -- !sql_compaction_after --
-id	bigint	No	true	\N
+id	bigint	No	true	\N	
 var	variant<'boolean_*':boolean,'tinyint_*':tinyint,'smallint_*':smallint,'int_*':int,'bigint_*':bigint,'largeint_*':largeint,'char_*':text,'string_*':text,'float_*':float,'double_*':double,'decimal32_*':decimalv3(8,2),'decimal64_*':decimalv3(16,9),'decimal128_*':decimalv3(36,9),'datetime_*':datetimev2(0),'date_*':datev2,'ipv4_*':ipv4,'ipv6_*':ipv6,'array_boolean_*':array<boolean>,'array_tinyint_*':array<tinyint>,'array_smallint_*':array<smallint>,'array_int_*':array<int>,'array_bigint_*':array<bigint>,'array_largeint_*':array<largeint>,'array_char_*':array<text>,'array_string_*':array<text>,'array_float_*':array<float>,'array_double_*':array<double>,'array_decimal32_*':array<decimalv3(8,2)>,'array_decimal64_*':array<decimalv3(16,9)>,'array_decimal128_*':array<decimalv3(36,9)>,'array_datetime_*':array<datetimev2(0)>,'array_date_*':array<datev2>,'array_ipv4_*':array<ipv4>,'array_ipv6_*':array<ipv6>,PROPERTIES ("variant_max_subcolumns_count" = "1","variant_enable_typed_paths_to_sparse" = "true","variant_max_sparse_column_statistics_size" = "10000","variant_sparse_hash_shard_count" = "3")>	No	false	\N	NONE
 var.array_smallint_1	array<smallint>	Yes	false	\N	NONE
 
@@ -1731,13 +1731,13 @@ var.array_smallint_1	array<smallint>	Yes	false	\N	NONE
 {"array_smallint_1":[19]}
 
 -- !sql_compaction_before --
-id	bigint	No	true	\N
+id	bigint	No	true	\N	
 var	variant<'boolean_*':boolean,'tinyint_*':tinyint,'smallint_*':smallint,'int_*':int,'bigint_*':bigint,'largeint_*':largeint,'char_*':text,'string_*':text,'float_*':float,'double_*':double,'decimal32_*':decimalv3(8,2),'decimal64_*':decimalv3(16,9),'decimal128_*':decimalv3(36,9),'datetime_*':datetimev2(0),'date_*':datev2,'ipv4_*':ipv4,'ipv6_*':ipv6,'array_boolean_*':array<boolean>,'array_tinyint_*':array<tinyint>,'array_smallint_*':array<smallint>,'array_int_*':array<int>,'array_bigint_*':array<bigint>,'array_largeint_*':array<largeint>,'array_char_*':array<text>,'array_string_*':array<text>,'array_float_*':array<float>,'array_double_*':array<double>,'array_decimal32_*':array<decimalv3(8,2)>,'array_decimal64_*':array<decimalv3(16,9)>,'array_decimal128_*':array<decimalv3(36,9)>,'array_datetime_*':array<datetimev2(0)>,'array_date_*':array<datev2>,'array_ipv4_*':array<ipv4>,'array_ipv6_*':array<ipv6>,PROPERTIES ("variant_max_subcolumns_count" = "1","variant_enable_typed_paths_to_sparse" = "true","variant_max_sparse_column_statistics_size" = "10000","variant_sparse_hash_shard_count" = "3")>	No	false	\N	NONE
 var.array_int_1	array<int>	Yes	false	\N	NONE
 var.array_smallint_1	array<smallint>	Yes	false	\N	NONE
 
 -- !sql_compaction_after --
-id	bigint	No	true	\N
+id	bigint	No	true	\N	
 var	variant<'boolean_*':boolean,'tinyint_*':tinyint,'smallint_*':smallint,'int_*':int,'bigint_*':bigint,'largeint_*':largeint,'char_*':text,'string_*':text,'float_*':float,'double_*':double,'decimal32_*':decimalv3(8,2),'decimal64_*':decimalv3(16,9),'decimal128_*':decimalv3(36,9),'datetime_*':datetimev2(0),'date_*':datev2,'ipv4_*':ipv4,'ipv6_*':ipv6,'array_boolean_*':array<boolean>,'array_tinyint_*':array<tinyint>,'array_smallint_*':array<smallint>,'array_int_*':array<int>,'array_bigint_*':array<bigint>,'array_largeint_*':array<largeint>,'array_char_*':array<text>,'array_string_*':array<text>,'array_float_*':array<float>,'array_double_*':array<double>,'array_decimal32_*':array<decimalv3(8,2)>,'array_decimal64_*':array<decimalv3(16,9)>,'array_decimal128_*':array<decimalv3(36,9)>,'array_datetime_*':array<datetimev2(0)>,'array_date_*':array<datev2>,'array_ipv4_*':array<ipv4>,'array_ipv6_*':array<ipv6>,PROPERTIES ("variant_max_subcolumns_count" = "1","variant_enable_typed_paths_to_sparse" = "true","variant_max_sparse_column_statistics_size" = "10000","variant_sparse_hash_shard_count" = "3")>	No	false	\N	NONE
 var.array_int_1	array<int>	Yes	false	\N	NONE
 
@@ -1962,13 +1962,13 @@ var.array_int_1	array<int>	Yes	false	\N	NONE
 {"array_int_1":[20]}
 
 -- !sql_compaction_before --
-id	bigint	No	true	\N
+id	bigint	No	true	\N	
 var	variant<'boolean_*':boolean,'tinyint_*':tinyint,'smallint_*':smallint,'int_*':int,'bigint_*':bigint,'largeint_*':largeint,'char_*':text,'string_*':text,'float_*':float,'double_*':double,'decimal32_*':decimalv3(8,2),'decimal64_*':decimalv3(16,9),'decimal128_*':decimalv3(36,9),'datetime_*':datetimev2(0),'date_*':datev2,'ipv4_*':ipv4,'ipv6_*':ipv6,'array_boolean_*':array<boolean>,'array_tinyint_*':array<tinyint>,'array_smallint_*':array<smallint>,'array_int_*':array<int>,'array_bigint_*':array<bigint>,'array_largeint_*':array<largeint>,'array_char_*':array<text>,'array_string_*':array<text>,'array_float_*':array<float>,'array_double_*':array<double>,'array_decimal32_*':array<decimalv3(8,2)>,'array_decimal64_*':array<decimalv3(16,9)>,'array_decimal128_*':array<decimalv3(36,9)>,'array_datetime_*':array<datetimev2(0)>,'array_date_*':array<datev2>,'array_ipv4_*':array<ipv4>,'array_ipv6_*':array<ipv6>,PROPERTIES ("variant_max_subcolumns_count" = "1","variant_enable_typed_paths_to_sparse" = "true","variant_max_sparse_column_statistics_size" = "10000","variant_sparse_hash_shard_count" = "3")>	No	false	\N	NONE
 var.array_bigint_1	array<bigint>	Yes	false	\N	NONE
 var.array_int_1	array<int>	Yes	false	\N	NONE
 
 -- !sql_compaction_after --
-id	bigint	No	true	\N
+id	bigint	No	true	\N	
 var	variant<'boolean_*':boolean,'tinyint_*':tinyint,'smallint_*':smallint,'int_*':int,'bigint_*':bigint,'largeint_*':largeint,'char_*':text,'string_*':text,'float_*':float,'double_*':double,'decimal32_*':decimalv3(8,2),'decimal64_*':decimalv3(16,9),'decimal128_*':decimalv3(36,9),'datetime_*':datetimev2(0),'date_*':datev2,'ipv4_*':ipv4,'ipv6_*':ipv6,'array_boolean_*':array<boolean>,'array_tinyint_*':array<tinyint>,'array_smallint_*':array<smallint>,'array_int_*':array<int>,'array_bigint_*':array<bigint>,'array_largeint_*':array<largeint>,'array_char_*':array<text>,'array_string_*':array<text>,'array_float_*':array<float>,'array_double_*':array<double>,'array_decimal32_*':array<decimalv3(8,2)>,'array_decimal64_*':array<decimalv3(16,9)>,'array_decimal128_*':array<decimalv3(36,9)>,'array_datetime_*':array<datetimev2(0)>,'array_date_*':array<datev2>,'array_ipv4_*':array<ipv4>,'array_ipv6_*':array<ipv6>,PROPERTIES ("variant_max_subcolumns_count" = "1","variant_enable_typed_paths_to_sparse" = "true","variant_max_sparse_column_statistics_size" = "10000","variant_sparse_hash_shard_count" = "3")>	No	false	\N	NONE
 var.array_bigint_1	array<bigint>	Yes	false	\N	NONE
 
@@ -2214,13 +2214,13 @@ var.array_bigint_1	array<bigint>	Yes	false	\N	NONE
 {"array_bigint_1":[21]}
 
 -- !sql_compaction_before --
-id	bigint	No	true	\N
+id	bigint	No	true	\N	
 var	variant<'boolean_*':boolean,'tinyint_*':tinyint,'smallint_*':smallint,'int_*':int,'bigint_*':bigint,'largeint_*':largeint,'char_*':text,'string_*':text,'float_*':float,'double_*':double,'decimal32_*':decimalv3(8,2),'decimal64_*':decimalv3(16,9),'decimal128_*':decimalv3(36,9),'datetime_*':datetimev2(0),'date_*':datev2,'ipv4_*':ipv4,'ipv6_*':ipv6,'array_boolean_*':array<boolean>,'array_tinyint_*':array<tinyint>,'array_smallint_*':array<smallint>,'array_int_*':array<int>,'array_bigint_*':array<bigint>,'array_largeint_*':array<largeint>,'array_char_*':array<text>,'array_string_*':array<text>,'array_float_*':array<float>,'array_double_*':array<double>,'array_decimal32_*':array<decimalv3(8,2)>,'array_decimal64_*':array<decimalv3(16,9)>,'array_decimal128_*':array<decimalv3(36,9)>,'array_datetime_*':array<datetimev2(0)>,'array_date_*':array<datev2>,'array_ipv4_*':array<ipv4>,'array_ipv6_*':array<ipv6>,PROPERTIES ("variant_max_subcolumns_count" = "1","variant_enable_typed_paths_to_sparse" = "true","variant_max_sparse_column_statistics_size" = "10000","variant_sparse_hash_shard_count" = "3")>	No	false	\N	NONE
 var.array_bigint_1	array<bigint>	Yes	false	\N	NONE
 var.array_largeint_1	array<largeint>	Yes	false	\N	NONE
 
 -- !sql_compaction_after --
-id	bigint	No	true	\N
+id	bigint	No	true	\N	
 var	variant<'boolean_*':boolean,'tinyint_*':tinyint,'smallint_*':smallint,'int_*':int,'bigint_*':bigint,'largeint_*':largeint,'char_*':text,'string_*':text,'float_*':float,'double_*':double,'decimal32_*':decimalv3(8,2),'decimal64_*':decimalv3(16,9),'decimal128_*':decimalv3(36,9),'datetime_*':datetimev2(0),'date_*':datev2,'ipv4_*':ipv4,'ipv6_*':ipv6,'array_boolean_*':array<boolean>,'array_tinyint_*':array<tinyint>,'array_smallint_*':array<smallint>,'array_int_*':array<int>,'array_bigint_*':array<bigint>,'array_largeint_*':array<largeint>,'array_char_*':array<text>,'array_string_*':array<text>,'array_float_*':array<float>,'array_double_*':array<double>,'array_decimal32_*':array<decimalv3(8,2)>,'array_decimal64_*':array<decimalv3(16,9)>,'array_decimal128_*':array<decimalv3(36,9)>,'array_datetime_*':array<datetimev2(0)>,'array_date_*':array<datev2>,'array_ipv4_*':array<ipv4>,'array_ipv6_*':array<ipv6>,PROPERTIES ("variant_max_subcolumns_count" = "1","variant_enable_typed_paths_to_sparse" = "true","variant_max_sparse_column_statistics_size" = "10000","variant_sparse_hash_shard_count" = "3")>	No	false	\N	NONE
 var.array_largeint_1	array<largeint>	Yes	false	\N	NONE
 
@@ -2488,13 +2488,13 @@ var.array_largeint_1	array<largeint>	Yes	false	\N	NONE
 {"array_largeint_1":[22]}
 
 -- !sql_compaction_before --
-id	bigint	No	true	\N
+id	bigint	No	true	\N	
 var	variant<'boolean_*':boolean,'tinyint_*':tinyint,'smallint_*':smallint,'int_*':int,'bigint_*':bigint,'largeint_*':largeint,'char_*':text,'string_*':text,'float_*':float,'double_*':double,'decimal32_*':decimalv3(8,2),'decimal64_*':decimalv3(16,9),'decimal128_*':decimalv3(36,9),'datetime_*':datetimev2(0),'date_*':datev2,'ipv4_*':ipv4,'ipv6_*':ipv6,'array_boolean_*':array<boolean>,'array_tinyint_*':array<tinyint>,'array_smallint_*':array<smallint>,'array_int_*':array<int>,'array_bigint_*':array<bigint>,'array_largeint_*':array<largeint>,'array_char_*':array<text>,'array_string_*':array<text>,'array_float_*':array<float>,'array_double_*':array<double>,'array_decimal32_*':array<decimalv3(8,2)>,'array_decimal64_*':array<decimalv3(16,9)>,'array_decimal128_*':array<decimalv3(36,9)>,'array_datetime_*':array<datetimev2(0)>,'array_date_*':array<datev2>,'array_ipv4_*':array<ipv4>,'array_ipv6_*':array<ipv6>,PROPERTIES ("variant_max_subcolumns_count" = "1","variant_enable_typed_paths_to_sparse" = "true","variant_max_sparse_column_statistics_size" = "10000","variant_sparse_hash_shard_count" = "3")>	No	false	\N	NONE
 var.array_char_1	array<text>	Yes	false	\N	NONE
 var.array_largeint_1	array<largeint>	Yes	false	\N	NONE
 
 -- !sql_compaction_after --
-id	bigint	No	true	\N
+id	bigint	No	true	\N	
 var	variant<'boolean_*':boolean,'tinyint_*':tinyint,'smallint_*':smallint,'int_*':int,'bigint_*':bigint,'largeint_*':largeint,'char_*':text,'string_*':text,'float_*':float,'double_*':double,'decimal32_*':decimalv3(8,2),'decimal64_*':decimalv3(16,9),'decimal128_*':decimalv3(36,9),'datetime_*':datetimev2(0),'date_*':datev2,'ipv4_*':ipv4,'ipv6_*':ipv6,'array_boolean_*':array<boolean>,'array_tinyint_*':array<tinyint>,'array_smallint_*':array<smallint>,'array_int_*':array<int>,'array_bigint_*':array<bigint>,'array_largeint_*':array<largeint>,'array_char_*':array<text>,'array_string_*':array<text>,'array_float_*':array<float>,'array_double_*':array<double>,'array_decimal32_*':array<decimalv3(8,2)>,'array_decimal64_*':array<decimalv3(16,9)>,'array_decimal128_*':array<decimalv3(36,9)>,'array_datetime_*':array<datetimev2(0)>,'array_date_*':array<datev2>,'array_ipv4_*':array<ipv4>,'array_ipv6_*':array<ipv6>,PROPERTIES ("variant_max_subcolumns_count" = "1","variant_enable_typed_paths_to_sparse" = "true","variant_max_sparse_column_statistics_size" = "10000","variant_sparse_hash_shard_count" = "3")>	No	false	\N	NONE
 var.array_char_1	array<text>	Yes	false	\N	NONE
 
@@ -2785,13 +2785,13 @@ var.array_char_1	array<text>	Yes	false	\N	NONE
 {"array_char_1":["23"]}
 
 -- !sql_compaction_before --
-id	bigint	No	true	\N
+id	bigint	No	true	\N	
 var	variant<'boolean_*':boolean,'tinyint_*':tinyint,'smallint_*':smallint,'int_*':int,'bigint_*':bigint,'largeint_*':largeint,'char_*':text,'string_*':text,'float_*':float,'double_*':double,'decimal32_*':decimalv3(8,2),'decimal64_*':decimalv3(16,9),'decimal128_*':decimalv3(36,9),'datetime_*':datetimev2(0),'date_*':datev2,'ipv4_*':ipv4,'ipv6_*':ipv6,'array_boolean_*':array<boolean>,'array_tinyint_*':array<tinyint>,'array_smallint_*':array<smallint>,'array_int_*':array<int>,'array_bigint_*':array<bigint>,'array_largeint_*':array<largeint>,'array_char_*':array<text>,'array_string_*':array<text>,'array_float_*':array<float>,'array_double_*':array<double>,'array_decimal32_*':array<decimalv3(8,2)>,'array_decimal64_*':array<decimalv3(16,9)>,'array_decimal128_*':array<decimalv3(36,9)>,'array_datetime_*':array<datetimev2(0)>,'array_date_*':array<datev2>,'array_ipv4_*':array<ipv4>,'array_ipv6_*':array<ipv6>,PROPERTIES ("variant_max_subcolumns_count" = "1","variant_enable_typed_paths_to_sparse" = "true","variant_max_sparse_column_statistics_size" = "10000","variant_sparse_hash_shard_count" = "3")>	No	false	\N	NONE
 var.array_char_1	array<text>	Yes	false	\N	NONE
 var.array_string_1	array<text>	Yes	false	\N	NONE
 
 -- !sql_compaction_after --
-id	bigint	No	true	\N
+id	bigint	No	true	\N	
 var	variant<'boolean_*':boolean,'tinyint_*':tinyint,'smallint_*':smallint,'int_*':int,'bigint_*':bigint,'largeint_*':largeint,'char_*':text,'string_*':text,'float_*':float,'double_*':double,'decimal32_*':decimalv3(8,2),'decimal64_*':decimalv3(16,9),'decimal128_*':decimalv3(36,9),'datetime_*':datetimev2(0),'date_*':datev2,'ipv4_*':ipv4,'ipv6_*':ipv6,'array_boolean_*':array<boolean>,'array_tinyint_*':array<tinyint>,'array_smallint_*':array<smallint>,'array_int_*':array<int>,'array_bigint_*':array<bigint>,'array_largeint_*':array<largeint>,'array_char_*':array<text>,'array_string_*':array<text>,'array_float_*':array<float>,'array_double_*':array<double>,'array_decimal32_*':array<decimalv3(8,2)>,'array_decimal64_*':array<decimalv3(16,9)>,'array_decimal128_*':array<decimalv3(36,9)>,'array_datetime_*':array<datetimev2(0)>,'array_date_*':array<datev2>,'array_ipv4_*':array<ipv4>,'array_ipv6_*':array<ipv6>,PROPERTIES ("variant_max_subcolumns_count" = "1","variant_enable_typed_paths_to_sparse" = "true","variant_max_sparse_column_statistics_size" = "10000","variant_sparse_hash_shard_count" = "3")>	No	false	\N	NONE
 var.array_string_1	array<text>	Yes	false	\N	NONE
 
@@ -3106,13 +3106,13 @@ var.array_string_1	array<text>	Yes	false	\N	NONE
 {"array_string_1":["24"]}
 
 -- !sql_compaction_before --
-id	bigint	No	true	\N
+id	bigint	No	true	\N	
 var	variant<'boolean_*':boolean,'tinyint_*':tinyint,'smallint_*':smallint,'int_*':int,'bigint_*':bigint,'largeint_*':largeint,'char_*':text,'string_*':text,'float_*':float,'double_*':double,'decimal32_*':decimalv3(8,2),'decimal64_*':decimalv3(16,9),'decimal128_*':decimalv3(36,9),'datetime_*':datetimev2(0),'date_*':datev2,'ipv4_*':ipv4,'ipv6_*':ipv6,'array_boolean_*':array<boolean>,'array_tinyint_*':array<tinyint>,'array_smallint_*':array<smallint>,'array_int_*':array<int>,'array_bigint_*':array<bigint>,'array_largeint_*':array<largeint>,'array_char_*':array<text>,'array_string_*':array<text>,'array_float_*':array<float>,'array_double_*':array<double>,'array_decimal32_*':array<decimalv3(8,2)>,'array_decimal64_*':array<decimalv3(16,9)>,'array_decimal128_*':array<decimalv3(36,9)>,'array_datetime_*':array<datetimev2(0)>,'array_date_*':array<datev2>,'array_ipv4_*':array<ipv4>,'array_ipv6_*':array<ipv6>,PROPERTIES ("variant_max_subcolumns_count" = "1","variant_enable_typed_paths_to_sparse" = "true","variant_max_sparse_column_statistics_size" = "10000","variant_sparse_hash_shard_count" = "3")>	No	false	\N	NONE
 var.array_float_1	array<float>	Yes	false	\N	NONE
 var.array_string_1	array<text>	Yes	false	\N	NONE
 
 -- !sql_compaction_after --
-id	bigint	No	true	\N
+id	bigint	No	true	\N	
 var	variant<'boolean_*':boolean,'tinyint_*':tinyint,'smallint_*':smallint,'int_*':int,'bigint_*':bigint,'largeint_*':largeint,'char_*':text,'string_*':text,'float_*':float,'double_*':double,'decimal32_*':decimalv3(8,2),'decimal64_*':decimalv3(16,9),'decimal128_*':decimalv3(36,9),'datetime_*':datetimev2(0),'date_*':datev2,'ipv4_*':ipv4,'ipv6_*':ipv6,'array_boolean_*':array<boolean>,'array_tinyint_*':array<tinyint>,'array_smallint_*':array<smallint>,'array_int_*':array<int>,'array_bigint_*':array<bigint>,'array_largeint_*':array<largeint>,'array_char_*':array<text>,'array_string_*':array<text>,'array_float_*':array<float>,'array_double_*':array<double>,'array_decimal32_*':array<decimalv3(8,2)>,'array_decimal64_*':array<decimalv3(16,9)>,'array_decimal128_*':array<decimalv3(36,9)>,'array_datetime_*':array<datetimev2(0)>,'array_date_*':array<datev2>,'array_ipv4_*':array<ipv4>,'array_ipv6_*':array<ipv6>,PROPERTIES ("variant_max_subcolumns_count" = "1","variant_enable_typed_paths_to_sparse" = "true","variant_max_sparse_column_statistics_size" = "10000","variant_sparse_hash_shard_count" = "3")>	No	false	\N	NONE
 var.array_float_1	array<float>	Yes	false	\N	NONE
 
@@ -3452,13 +3452,13 @@ var.array_float_1	array<float>	Yes	false	\N	NONE
 {"array_float_1":[25.12]}
 
 -- !sql_compaction_before --
-id	bigint	No	true	\N
+id	bigint	No	true	\N	
 var	variant<'boolean_*':boolean,'tinyint_*':tinyint,'smallint_*':smallint,'int_*':int,'bigint_*':bigint,'largeint_*':largeint,'char_*':text,'string_*':text,'float_*':float,'double_*':double,'decimal32_*':decimalv3(8,2),'decimal64_*':decimalv3(16,9),'decimal128_*':decimalv3(36,9),'datetime_*':datetimev2(0),'date_*':datev2,'ipv4_*':ipv4,'ipv6_*':ipv6,'array_boolean_*':array<boolean>,'array_tinyint_*':array<tinyint>,'array_smallint_*':array<smallint>,'array_int_*':array<int>,'array_bigint_*':array<bigint>,'array_largeint_*':array<largeint>,'array_char_*':array<text>,'array_string_*':array<text>,'array_float_*':array<float>,'array_double_*':array<double>,'array_decimal32_*':array<decimalv3(8,2)>,'array_decimal64_*':array<decimalv3(16,9)>,'array_decimal128_*':array<decimalv3(36,9)>,'array_datetime_*':array<datetimev2(0)>,'array_date_*':array<datev2>,'array_ipv4_*':array<ipv4>,'array_ipv6_*':array<ipv6>,PROPERTIES ("variant_max_subcolumns_count" = "1","variant_enable_typed_paths_to_sparse" = "true","variant_max_sparse_column_statistics_size" = "10000","variant_sparse_hash_shard_count" = "3")>	No	false	\N	NONE
 var.array_double_1	array<double>	Yes	false	\N	NONE
 var.array_float_1	array<float>	Yes	false	\N	NONE
 
 -- !sql_compaction_after --
-id	bigint	No	true	\N
+id	bigint	No	true	\N	
 var	variant<'boolean_*':boolean,'tinyint_*':tinyint,'smallint_*':smallint,'int_*':int,'bigint_*':bigint,'largeint_*':largeint,'char_*':text,'string_*':text,'float_*':float,'double_*':double,'decimal32_*':decimalv3(8,2),'decimal64_*':decimalv3(16,9),'decimal128_*':decimalv3(36,9),'datetime_*':datetimev2(0),'date_*':datev2,'ipv4_*':ipv4,'ipv6_*':ipv6,'array_boolean_*':array<boolean>,'array_tinyint_*':array<tinyint>,'array_smallint_*':array<smallint>,'array_int_*':array<int>,'array_bigint_*':array<bigint>,'array_largeint_*':array<largeint>,'array_char_*':array<text>,'array_string_*':array<text>,'array_float_*':array<float>,'array_double_*':array<double>,'array_decimal32_*':array<decimalv3(8,2)>,'array_decimal64_*':array<decimalv3(16,9)>,'array_decimal128_*':array<decimalv3(36,9)>,'array_datetime_*':array<datetimev2(0)>,'array_date_*':array<datev2>,'array_ipv4_*':array<ipv4>,'array_ipv6_*':array<ipv6>,PROPERTIES ("variant_max_subcolumns_count" = "1","variant_enable_typed_paths_to_sparse" = "true","variant_max_sparse_column_statistics_size" = "10000","variant_sparse_hash_shard_count" = "3")>	No	false	\N	NONE
 var.array_double_1	array<double>	Yes	false	\N	NONE
 
@@ -3824,13 +3824,13 @@ var.array_double_1	array<double>	Yes	false	\N	NONE
 {"array_double_1":[26.12]}
 
 -- !sql_compaction_before --
-id	bigint	No	true	\N
+id	bigint	No	true	\N	
 var	variant<'boolean_*':boolean,'tinyint_*':tinyint,'smallint_*':smallint,'int_*':int,'bigint_*':bigint,'largeint_*':largeint,'char_*':text,'string_*':text,'float_*':float,'double_*':double,'decimal32_*':decimalv3(8,2),'decimal64_*':decimalv3(16,9),'decimal128_*':decimalv3(36,9),'datetime_*':datetimev2(0),'date_*':datev2,'ipv4_*':ipv4,'ipv6_*':ipv6,'array_boolean_*':array<boolean>,'array_tinyint_*':array<tinyint>,'array_smallint_*':array<smallint>,'array_int_*':array<int>,'array_bigint_*':array<bigint>,'array_largeint_*':array<largeint>,'array_char_*':array<text>,'array_string_*':array<text>,'array_float_*':array<float>,'array_double_*':array<double>,'array_decimal32_*':array<decimalv3(8,2)>,'array_decimal64_*':array<decimalv3(16,9)>,'array_decimal128_*':array<decimalv3(36,9)>,'array_datetime_*':array<datetimev2(0)>,'array_date_*':array<datev2>,'array_ipv4_*':array<ipv4>,'array_ipv6_*':array<ipv6>,PROPERTIES ("variant_max_subcolumns_count" = "1","variant_enable_typed_paths_to_sparse" = "true","variant_max_sparse_column_statistics_size" = "10000","variant_sparse_hash_shard_count" = "3")>	No	false	\N	NONE
 var.array_decimal32_1	array<decimal(8,2)>	Yes	false	\N	NONE
 var.array_double_1	array<double>	Yes	false	\N	NONE
 
 -- !sql_compaction_after --
-id	bigint	No	true	\N
+id	bigint	No	true	\N	
 var	variant<'boolean_*':boolean,'tinyint_*':tinyint,'smallint_*':smallint,'int_*':int,'bigint_*':bigint,'largeint_*':largeint,'char_*':text,'string_*':text,'float_*':float,'double_*':double,'decimal32_*':decimalv3(8,2),'decimal64_*':decimalv3(16,9),'decimal128_*':decimalv3(36,9),'datetime_*':datetimev2(0),'date_*':datev2,'ipv4_*':ipv4,'ipv6_*':ipv6,'array_boolean_*':array<boolean>,'array_tinyint_*':array<tinyint>,'array_smallint_*':array<smallint>,'array_int_*':array<int>,'array_bigint_*':array<bigint>,'array_largeint_*':array<largeint>,'array_char_*':array<text>,'array_string_*':array<text>,'array_float_*':array<float>,'array_double_*':array<double>,'array_decimal32_*':array<decimalv3(8,2)>,'array_decimal64_*':array<decimalv3(16,9)>,'array_decimal128_*':array<decimalv3(36,9)>,'array_datetime_*':array<datetimev2(0)>,'array_date_*':array<datev2>,'array_ipv4_*':array<ipv4>,'array_ipv6_*':array<ipv6>,PROPERTIES ("variant_max_subcolumns_count" = "1","variant_enable_typed_paths_to_sparse" = "true","variant_max_sparse_column_statistics_size" = "10000","variant_sparse_hash_shard_count" = "3")>	No	false	\N	NONE
 var.array_decimal32_1	array<decimal(8,2)>	Yes	false	\N	NONE
 
@@ -4223,13 +4223,13 @@ var.array_decimal32_1	array<decimal(8,2)>	Yes	false	\N	NONE
 {"array_decimal32_1":[27.12]}
 
 -- !sql_compaction_before --
-id	bigint	No	true	\N
+id	bigint	No	true	\N	
 var	variant<'boolean_*':boolean,'tinyint_*':tinyint,'smallint_*':smallint,'int_*':int,'bigint_*':bigint,'largeint_*':largeint,'char_*':text,'string_*':text,'float_*':float,'double_*':double,'decimal32_*':decimalv3(8,2),'decimal64_*':decimalv3(16,9),'decimal128_*':decimalv3(36,9),'datetime_*':datetimev2(0),'date_*':datev2,'ipv4_*':ipv4,'ipv6_*':ipv6,'array_boolean_*':array<boolean>,'array_tinyint_*':array<tinyint>,'array_smallint_*':array<smallint>,'array_int_*':array<int>,'array_bigint_*':array<bigint>,'array_largeint_*':array<largeint>,'array_char_*':array<text>,'array_string_*':array<text>,'array_float_*':array<float>,'array_double_*':array<double>,'array_decimal32_*':array<decimalv3(8,2)>,'array_decimal64_*':array<decimalv3(16,9)>,'array_decimal128_*':array<decimalv3(36,9)>,'array_datetime_*':array<datetimev2(0)>,'array_date_*':array<datev2>,'array_ipv4_*':array<ipv4>,'array_ipv6_*':array<ipv6>,PROPERTIES ("variant_max_subcolumns_count" = "1","variant_enable_typed_paths_to_sparse" = "true","variant_max_sparse_column_statistics_size" = "10000","variant_sparse_hash_shard_count" = "3")>	No	false	\N	NONE
 var.array_decimal32_1	array<decimal(8,2)>	Yes	false	\N	NONE
 var.array_decimal64_1	array<decimal(16,9)>	Yes	false	\N	NONE
 
 -- !sql_compaction_after --
-id	bigint	No	true	\N
+id	bigint	No	true	\N	
 var	variant<'boolean_*':boolean,'tinyint_*':tinyint,'smallint_*':smallint,'int_*':int,'bigint_*':bigint,'largeint_*':largeint,'char_*':text,'string_*':text,'float_*':float,'double_*':double,'decimal32_*':decimalv3(8,2),'decimal64_*':decimalv3(16,9),'decimal128_*':decimalv3(36,9),'datetime_*':datetimev2(0),'date_*':datev2,'ipv4_*':ipv4,'ipv6_*':ipv6,'array_boolean_*':array<boolean>,'array_tinyint_*':array<tinyint>,'array_smallint_*':array<smallint>,'array_int_*':array<int>,'array_bigint_*':array<bigint>,'array_largeint_*':array<largeint>,'array_char_*':array<text>,'array_string_*':array<text>,'array_float_*':array<float>,'array_double_*':array<double>,'array_decimal32_*':array<decimalv3(8,2)>,'array_decimal64_*':array<decimalv3(16,9)>,'array_decimal128_*':array<decimalv3(36,9)>,'array_datetime_*':array<datetimev2(0)>,'array_date_*':array<datev2>,'array_ipv4_*':array<ipv4>,'array_ipv6_*':array<ipv6>,PROPERTIES ("variant_max_subcolumns_count" = "1","variant_enable_typed_paths_to_sparse" = "true","variant_max_sparse_column_statistics_size" = "10000","variant_sparse_hash_shard_count" = "3")>	No	false	\N	NONE
 var.array_decimal64_1	array<decimal(16,9)>	Yes	false	\N	NONE
 
@@ -4650,13 +4650,13 @@ var.array_decimal64_1	array<decimal(16,9)>	Yes	false	\N	NONE
 {"array_decimal64_1":[28.120000000]}
 
 -- !sql_compaction_before --
-id	bigint	No	true	\N
+id	bigint	No	true	\N	
 var	variant<'boolean_*':boolean,'tinyint_*':tinyint,'smallint_*':smallint,'int_*':int,'bigint_*':bigint,'largeint_*':largeint,'char_*':text,'string_*':text,'float_*':float,'double_*':double,'decimal32_*':decimalv3(8,2),'decimal64_*':decimalv3(16,9),'decimal128_*':decimalv3(36,9),'datetime_*':datetimev2(0),'date_*':datev2,'ipv4_*':ipv4,'ipv6_*':ipv6,'array_boolean_*':array<boolean>,'array_tinyint_*':array<tinyint>,'array_smallint_*':array<smallint>,'array_int_*':array<int>,'array_bigint_*':array<bigint>,'array_largeint_*':array<largeint>,'array_char_*':array<text>,'array_string_*':array<text>,'array_float_*':array<float>,'array_double_*':array<double>,'array_decimal32_*':array<decimalv3(8,2)>,'array_decimal64_*':array<decimalv3(16,9)>,'array_decimal128_*':array<decimalv3(36,9)>,'array_datetime_*':array<datetimev2(0)>,'array_date_*':array<datev2>,'array_ipv4_*':array<ipv4>,'array_ipv6_*':array<ipv6>,PROPERTIES ("variant_max_subcolumns_count" = "1","variant_enable_typed_paths_to_sparse" = "true","variant_max_sparse_column_statistics_size" = "10000","variant_sparse_hash_shard_count" = "3")>	No	false	\N	NONE
 var.array_decimal128_1	array<decimal(36,9)>	Yes	false	\N	NONE
 var.array_decimal64_1	array<decimal(16,9)>	Yes	false	\N	NONE
 
 -- !sql_compaction_after --
-id	bigint	No	true	\N
+id	bigint	No	true	\N	
 var	variant<'boolean_*':boolean,'tinyint_*':tinyint,'smallint_*':smallint,'int_*':int,'bigint_*':bigint,'largeint_*':largeint,'char_*':text,'string_*':text,'float_*':float,'double_*':double,'decimal32_*':decimalv3(8,2),'decimal64_*':decimalv3(16,9),'decimal128_*':decimalv3(36,9),'datetime_*':datetimev2(0),'date_*':datev2,'ipv4_*':ipv4,'ipv6_*':ipv6,'array_boolean_*':array<boolean>,'array_tinyint_*':array<tinyint>,'array_smallint_*':array<smallint>,'array_int_*':array<int>,'array_bigint_*':array<bigint>,'array_largeint_*':array<largeint>,'array_char_*':array<text>,'array_string_*':array<text>,'array_float_*':array<float>,'array_double_*':array<double>,'array_decimal32_*':array<decimalv3(8,2)>,'array_decimal64_*':array<decimalv3(16,9)>,'array_decimal128_*':array<decimalv3(36,9)>,'array_datetime_*':array<datetimev2(0)>,'array_date_*':array<datev2>,'array_ipv4_*':array<ipv4>,'array_ipv6_*':array<ipv6>,PROPERTIES ("variant_max_subcolumns_count" = "1","variant_enable_typed_paths_to_sparse" = "true","variant_max_sparse_column_statistics_size" = "10000","variant_sparse_hash_shard_count" = "3")>	No	false	\N	NONE
 var.array_decimal128_1	array<decimal(36,9)>	Yes	false	\N	NONE
 
@@ -5106,13 +5106,13 @@ var.array_decimal128_1	array<decimal(36,9)>	Yes	false	\N	NONE
 {"array_decimal128_1":[29.120000000]}
 
 -- !sql_compaction_before --
-id	bigint	No	true	\N
+id	bigint	No	true	\N	
 var	variant<'boolean_*':boolean,'tinyint_*':tinyint,'smallint_*':smallint,'int_*':int,'bigint_*':bigint,'largeint_*':largeint,'char_*':text,'string_*':text,'float_*':float,'double_*':double,'decimal32_*':decimalv3(8,2),'decimal64_*':decimalv3(16,9),'decimal128_*':decimalv3(36,9),'datetime_*':datetimev2(0),'date_*':datev2,'ipv4_*':ipv4,'ipv6_*':ipv6,'array_boolean_*':array<boolean>,'array_tinyint_*':array<tinyint>,'array_smallint_*':array<smallint>,'array_int_*':array<int>,'array_bigint_*':array<bigint>,'array_largeint_*':array<largeint>,'array_char_*':array<text>,'array_string_*':array<text>,'array_float_*':array<float>,'array_double_*':array<double>,'array_decimal32_*':array<decimalv3(8,2)>,'array_decimal64_*':array<decimalv3(16,9)>,'array_decimal128_*':array<decimalv3(36,9)>,'array_datetime_*':array<datetimev2(0)>,'array_date_*':array<datev2>,'array_ipv4_*':array<ipv4>,'array_ipv6_*':array<ipv6>,PROPERTIES ("variant_max_subcolumns_count" = "1","variant_enable_typed_paths_to_sparse" = "true","variant_max_sparse_column_statistics_size" = "10000","variant_sparse_hash_shard_count" = "3")>	No	false	\N	NONE
 var.array_datetime_1	array<datetime>	Yes	false	\N	NONE
 var.array_decimal128_1	array<decimal(36,9)>	Yes	false	\N	NONE
 
 -- !sql_compaction_after --
-id	bigint	No	true	\N
+id	bigint	No	true	\N	
 var	variant<'boolean_*':boolean,'tinyint_*':tinyint,'smallint_*':smallint,'int_*':int,'bigint_*':bigint,'largeint_*':largeint,'char_*':text,'string_*':text,'float_*':float,'double_*':double,'decimal32_*':decimalv3(8,2),'decimal64_*':decimalv3(16,9),'decimal128_*':decimalv3(36,9),'datetime_*':datetimev2(0),'date_*':datev2,'ipv4_*':ipv4,'ipv6_*':ipv6,'array_boolean_*':array<boolean>,'array_tinyint_*':array<tinyint>,'array_smallint_*':array<smallint>,'array_int_*':array<int>,'array_bigint_*':array<bigint>,'array_largeint_*':array<largeint>,'array_char_*':array<text>,'array_string_*':array<text>,'array_float_*':array<float>,'array_double_*':array<double>,'array_decimal32_*':array<decimalv3(8,2)>,'array_decimal64_*':array<decimalv3(16,9)>,'array_decimal128_*':array<decimalv3(36,9)>,'array_datetime_*':array<datetimev2(0)>,'array_date_*':array<datev2>,'array_ipv4_*':array<ipv4>,'array_ipv6_*':array<ipv6>,PROPERTIES ("variant_max_subcolumns_count" = "1","variant_enable_typed_paths_to_sparse" = "true","variant_max_sparse_column_statistics_size" = "10000","variant_sparse_hash_shard_count" = "3")>	No	false	\N	NONE
 var.array_datetime_1	array<datetime>	Yes	false	\N	NONE
 
@@ -5593,13 +5593,13 @@ var.array_datetime_1	array<datetime>	Yes	false	\N	NONE
 {"array_datetime_1":["2021-01-01 00:00:10.000000"]}
 
 -- !sql_compaction_before --
-id	bigint	No	true	\N
+id	bigint	No	true	\N	
 var	variant<'boolean_*':boolean,'tinyint_*':tinyint,'smallint_*':smallint,'int_*':int,'bigint_*':bigint,'largeint_*':largeint,'char_*':text,'string_*':text,'float_*':float,'double_*':double,'decimal32_*':decimalv3(8,2),'decimal64_*':decimalv3(16,9),'decimal128_*':decimalv3(36,9),'datetime_*':datetimev2(0),'date_*':datev2,'ipv4_*':ipv4,'ipv6_*':ipv6,'array_boolean_*':array<boolean>,'array_tinyint_*':array<tinyint>,'array_smallint_*':array<smallint>,'array_int_*':array<int>,'array_bigint_*':array<bigint>,'array_largeint_*':array<largeint>,'array_char_*':array<text>,'array_string_*':array<text>,'array_float_*':array<float>,'array_double_*':array<double>,'array_decimal32_*':array<decimalv3(8,2)>,'array_decimal64_*':array<decimalv3(16,9)>,'array_decimal128_*':array<decimalv3(36,9)>,'array_datetime_*':array<datetimev2(0)>,'array_date_*':array<datev2>,'array_ipv4_*':array<ipv4>,'array_ipv6_*':array<ipv6>,PROPERTIES ("variant_max_subcolumns_count" = "1","variant_enable_typed_paths_to_sparse" = "true","variant_max_sparse_column_statistics_size" = "10000","variant_sparse_hash_shard_count" = "3")>	No	false	\N	NONE
 var.array_date_1	array<date>	Yes	false	\N	NONE
 var.array_datetime_1	array<datetime>	Yes	false	\N	NONE
 
 -- !sql_compaction_after --
-id	bigint	No	true	\N
+id	bigint	No	true	\N	
 var	variant<'boolean_*':boolean,'tinyint_*':tinyint,'smallint_*':smallint,'int_*':int,'bigint_*':bigint,'largeint_*':largeint,'char_*':text,'string_*':text,'float_*':float,'double_*':double,'decimal32_*':decimalv3(8,2),'decimal64_*':decimalv3(16,9),'decimal128_*':decimalv3(36,9),'datetime_*':datetimev2(0),'date_*':datev2,'ipv4_*':ipv4,'ipv6_*':ipv6,'array_boolean_*':array<boolean>,'array_tinyint_*':array<tinyint>,'array_smallint_*':array<smallint>,'array_int_*':array<int>,'array_bigint_*':array<bigint>,'array_largeint_*':array<largeint>,'array_char_*':array<text>,'array_string_*':array<text>,'array_float_*':array<float>,'array_double_*':array<double>,'array_decimal32_*':array<decimalv3(8,2)>,'array_decimal64_*':array<decimalv3(16,9)>,'array_decimal128_*':array<decimalv3(36,9)>,'array_datetime_*':array<datetimev2(0)>,'array_date_*':array<datev2>,'array_ipv4_*':array<ipv4>,'array_ipv6_*':array<ipv6>,PROPERTIES ("variant_max_subcolumns_count" = "1","variant_enable_typed_paths_to_sparse" = "true","variant_max_sparse_column_statistics_size" = "10000","variant_sparse_hash_shard_count" = "3")>	No	false	\N	NONE
 var.array_date_1	array<date>	Yes	false	\N	NONE
 
@@ -6112,13 +6112,13 @@ var.array_date_1	array<date>	Yes	false	\N	NONE
 {"array_date_1":["2021-01-08"]}
 
 -- !sql_compaction_before --
-id	bigint	No	true	\N
+id	bigint	No	true	\N	
 var	variant<'boolean_*':boolean,'tinyint_*':tinyint,'smallint_*':smallint,'int_*':int,'bigint_*':bigint,'largeint_*':largeint,'char_*':text,'string_*':text,'float_*':float,'double_*':double,'decimal32_*':decimalv3(8,2),'decimal64_*':decimalv3(16,9),'decimal128_*':decimalv3(36,9),'datetime_*':datetimev2(0),'date_*':datev2,'ipv4_*':ipv4,'ipv6_*':ipv6,'array_boolean_*':array<boolean>,'array_tinyint_*':array<tinyint>,'array_smallint_*':array<smallint>,'array_int_*':array<int>,'array_bigint_*':array<bigint>,'array_largeint_*':array<largeint>,'array_char_*':array<text>,'array_string_*':array<text>,'array_float_*':array<float>,'array_double_*':array<double>,'array_decimal32_*':array<decimalv3(8,2)>,'array_decimal64_*':array<decimalv3(16,9)>,'array_decimal128_*':array<decimalv3(36,9)>,'array_datetime_*':array<datetimev2(0)>,'array_date_*':array<datev2>,'array_ipv4_*':array<ipv4>,'array_ipv6_*':array<ipv6>,PROPERTIES ("variant_max_subcolumns_count" = "1","variant_enable_typed_paths_to_sparse" = "true","variant_max_sparse_column_statistics_size" = "10000","variant_sparse_hash_shard_count" = "3")>	No	false	\N	NONE
 var.array_date_1	array<date>	Yes	false	\N	NONE
 var.array_ipv4_1	array<ipv4>	Yes	false	\N	NONE
 
 -- !sql_compaction_after --
-id	bigint	No	true	\N
+id	bigint	No	true	\N	
 var	variant<'boolean_*':boolean,'tinyint_*':tinyint,'smallint_*':smallint,'int_*':int,'bigint_*':bigint,'largeint_*':largeint,'char_*':text,'string_*':text,'float_*':float,'double_*':double,'decimal32_*':decimalv3(8,2),'decimal64_*':decimalv3(16,9),'decimal128_*':decimalv3(36,9),'datetime_*':datetimev2(0),'date_*':datev2,'ipv4_*':ipv4,'ipv6_*':ipv6,'array_boolean_*':array<boolean>,'array_tinyint_*':array<tinyint>,'array_smallint_*':array<smallint>,'array_int_*':array<int>,'array_bigint_*':array<bigint>,'array_largeint_*':array<largeint>,'array_char_*':array<text>,'array_string_*':array<text>,'array_float_*':array<float>,'array_double_*':array<double>,'array_decimal32_*':array<decimalv3(8,2)>,'array_decimal64_*':array<decimalv3(16,9)>,'array_decimal128_*':array<decimalv3(36,9)>,'array_datetime_*':array<datetimev2(0)>,'array_date_*':array<datev2>,'array_ipv4_*':array<ipv4>,'array_ipv6_*':array<ipv6>,PROPERTIES ("variant_max_subcolumns_count" = "1","variant_enable_typed_paths_to_sparse" = "true","variant_max_sparse_column_statistics_size" = "10000","variant_sparse_hash_shard_count" = "3")>	No	false	\N	NONE
 var.array_ipv4_1	array<ipv4>	Yes	false	\N	NONE
 
@@ -6664,13 +6664,13 @@ var.array_ipv4_1	array<ipv4>	Yes	false	\N	NONE
 {"array_ipv4_1":["192.168.1.9"]}
 
 -- !sql_compaction_before --
-id	bigint	No	true	\N
+id	bigint	No	true	\N	
 var	variant<'boolean_*':boolean,'tinyint_*':tinyint,'smallint_*':smallint,'int_*':int,'bigint_*':bigint,'largeint_*':largeint,'char_*':text,'string_*':text,'float_*':float,'double_*':double,'decimal32_*':decimalv3(8,2),'decimal64_*':decimalv3(16,9),'decimal128_*':decimalv3(36,9),'datetime_*':datetimev2(0),'date_*':datev2,'ipv4_*':ipv4,'ipv6_*':ipv6,'array_boolean_*':array<boolean>,'array_tinyint_*':array<tinyint>,'array_smallint_*':array<smallint>,'array_int_*':array<int>,'array_bigint_*':array<bigint>,'array_largeint_*':array<largeint>,'array_char_*':array<text>,'array_string_*':array<text>,'array_float_*':array<float>,'array_double_*':array<double>,'array_decimal32_*':array<decimalv3(8,2)>,'array_decimal64_*':array<decimalv3(16,9)>,'array_decimal128_*':array<decimalv3(36,9)>,'array_datetime_*':array<datetimev2(0)>,'array_date_*':array<datev2>,'array_ipv4_*':array<ipv4>,'array_ipv6_*':array<ipv6>,PROPERTIES ("variant_max_subcolumns_count" = "1","variant_enable_typed_paths_to_sparse" = "true","variant_max_sparse_column_statistics_size" = "10000","variant_sparse_hash_shard_count" = "3")>	No	false	\N	NONE
 var.array_ipv4_1	array<ipv4>	Yes	false	\N	NONE
 var.array_ipv6_1	array<ipv6>	Yes	false	\N	NONE
 
 -- !sql_compaction_after --
-id	bigint	No	true	\N
+id	bigint	No	true	\N	
 var	variant<'boolean_*':boolean,'tinyint_*':tinyint,'smallint_*':smallint,'int_*':int,'bigint_*':bigint,'largeint_*':largeint,'char_*':text,'string_*':text,'float_*':float,'double_*':double,'decimal32_*':decimalv3(8,2),'decimal64_*':decimalv3(16,9),'decimal128_*':decimalv3(36,9),'datetime_*':datetimev2(0),'date_*':datev2,'ipv4_*':ipv4,'ipv6_*':ipv6,'array_boolean_*':array<boolean>,'array_tinyint_*':array<tinyint>,'array_smallint_*':array<smallint>,'array_int_*':array<int>,'array_bigint_*':array<bigint>,'array_largeint_*':array<largeint>,'array_char_*':array<text>,'array_string_*':array<text>,'array_float_*':array<float>,'array_double_*':array<double>,'array_decimal32_*':array<decimalv3(8,2)>,'array_decimal64_*':array<decimalv3(16,9)>,'array_decimal128_*':array<decimalv3(36,9)>,'array_datetime_*':array<datetimev2(0)>,'array_date_*':array<datev2>,'array_ipv4_*':array<ipv4>,'array_ipv6_*':array<ipv6>,PROPERTIES ("variant_max_subcolumns_count" = "1","variant_enable_typed_paths_to_sparse" = "true","variant_max_sparse_column_statistics_size" = "10000","variant_sparse_hash_shard_count" = "3")>	No	false	\N	NONE
 var.array_ipv6_1	array<ipv6>	Yes	false	\N	NONE
 
@@ -7250,13 +7250,13 @@ var.array_ipv6_1	array<ipv6>	Yes	false	\N	NONE
 {"array_ipv6_1":["2001:db8:85a3::8a2e:370:7340"]}
 
 -- !sql_compaction_before --
-id	bigint	No	true	\N
+id	bigint	No	true	\N	
 var	variant<'boolean_*':boolean,'tinyint_*':tinyint,'smallint_*':smallint,'int_*':int,'bigint_*':bigint,'largeint_*':largeint,'char_*':text,'string_*':text,'float_*':float,'double_*':double,'decimal32_*':decimalv3(8,2),'decimal64_*':decimalv3(16,9),'decimal128_*':decimalv3(36,9),'datetime_*':datetimev2(0),'date_*':datev2,'ipv4_*':ipv4,'ipv6_*':ipv6,'array_boolean_*':array<boolean>,'array_tinyint_*':array<tinyint>,'array_smallint_*':array<smallint>,'array_int_*':array<int>,'array_bigint_*':array<bigint>,'array_largeint_*':array<largeint>,'array_char_*':array<text>,'array_string_*':array<text>,'array_float_*':array<float>,'array_double_*':array<double>,'array_decimal32_*':array<decimalv3(8,2)>,'array_decimal64_*':array<decimalv3(16,9)>,'array_decimal128_*':array<decimalv3(36,9)>,'array_datetime_*':array<datetimev2(0)>,'array_date_*':array<datev2>,'array_ipv4_*':array<ipv4>,'array_ipv6_*':array<ipv6>,PROPERTIES ("variant_max_subcolumns_count" = "1","variant_enable_typed_paths_to_sparse" = "true","variant_max_sparse_column_statistics_size" = "10000","variant_sparse_hash_shard_count" = "3")>	No	false	\N	NONE
 var.array_ipv6_1	array<ipv6>	Yes	false	\N	NONE
 var.other_1	text	Yes	false	\N	NONE
 
 -- !sql_compaction_after --
-id	bigint	No	true	\N
+id	bigint	No	true	\N	
 var	variant<'boolean_*':boolean,'tinyint_*':tinyint,'smallint_*':smallint,'int_*':int,'bigint_*':bigint,'largeint_*':largeint,'char_*':text,'string_*':text,'float_*':float,'double_*':double,'decimal32_*':decimalv3(8,2),'decimal64_*':decimalv3(16,9),'decimal128_*':decimalv3(36,9),'datetime_*':datetimev2(0),'date_*':datev2,'ipv4_*':ipv4,'ipv6_*':ipv6,'array_boolean_*':array<boolean>,'array_tinyint_*':array<tinyint>,'array_smallint_*':array<smallint>,'array_int_*':array<int>,'array_bigint_*':array<bigint>,'array_largeint_*':array<largeint>,'array_char_*':array<text>,'array_string_*':array<text>,'array_float_*':array<float>,'array_double_*':array<double>,'array_decimal32_*':array<decimalv3(8,2)>,'array_decimal64_*':array<decimalv3(16,9)>,'array_decimal128_*':array<decimalv3(36,9)>,'array_datetime_*':array<datetimev2(0)>,'array_date_*':array<datev2>,'array_ipv4_*':array<ipv4>,'array_ipv6_*':array<ipv6>,PROPERTIES ("variant_max_subcolumns_count" = "1","variant_enable_typed_paths_to_sparse" = "true","variant_max_sparse_column_statistics_size" = "10000","variant_sparse_hash_shard_count" = "3")>	No	false	\N	NONE
 var.other_1	text	Yes	false	\N	NONE
 
@@ -7869,3 +7869,4 @@ var.other_1	text	Yes	false	\N	NONE
 {"other_1":"33"}
 {"other_1":"34"}
 {"other_1":"35"}
+
