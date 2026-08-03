@@ -16,9 +16,9 @@
 // under the License.
 
 suite("double_write_schema_change_with_variant", "nonConcurrent") {
-    setFeConfigTemporary([enable_variant_v2: false]) {
-    assertFalse(getFeConfig("enable_variant_v2").toBoolean())
-    def variantV2Function = ""
+    setFeConfigTemporary([enable_variant_v2: true]) {
+    assertTrue(getFeConfig("enable_variant_v2").toBoolean())
+    def variantV2Function = "parse_to_variant"
     def set_be_config = { key, value ->
         String backend_id;
         def backendId_to_backendIP = [:]
@@ -70,7 +70,7 @@ suite("double_write_schema_change_with_variant", "nonConcurrent") {
         )
         DUPLICATE KEY(`k`)
         DISTRIBUTED BY HASH(k) BUCKETS 2
-        properties("replication_num" = "1", "disable_auto_compaction" = "false", "deprecated_variant_enable_flatten_nested" = "true");
+        properties("replication_num" = "1", "disable_auto_compaction" = "false", "deprecated_variant_enable_flatten_nested" = "false");
     """
 
     set_be_config.call("memory_limitation_per_thread_for_schema_change_bytes", "6294967296")

@@ -24,6 +24,7 @@ suite("test_all_prdefine_type_to_sparse", "p0,nonConcurrent") {
     sql """ set default_variant_enable_doc_mode = false """
 
     def tableName = "test_all_prdefine_type_to_sparse"
+    sql "set enable_decimal256 = true"
     sql "DROP TABLE IF EXISTS ${tableName}"
     sql """
         CREATE TABLE ${tableName} (
@@ -42,6 +43,7 @@ suite("test_all_prdefine_type_to_sparse", "p0,nonConcurrent") {
                 'decimal32_*':decimalv3(8,2),
                 'decimal64_*':decimalv3(16,9),
                 'decimal128_*':decimalv3(36,9),
+                'decimal256_*':decimalv3(70,60),
                 'datetime_*':datetime,
                 'date_*':date,
                 'ipv4_*':ipv4,
@@ -59,6 +61,7 @@ suite("test_all_prdefine_type_to_sparse", "p0,nonConcurrent") {
                 'array_decimal32_*':array<decimalv3(8,2)>,
                 'array_decimal64_*':array<decimalv3(16,9)>,
                 'array_decimal128_*':array<decimalv3(36,9)>,
+                'array_decimal256_*':array<decimalv3(70,60)>,
                 'array_datetime_*':array<datetime>,
                 'array_date_*':array<date>,
                 'array_ipv4_*':array<ipv4>,
@@ -90,6 +93,7 @@ suite("test_all_prdefine_type_to_sparse", "p0,nonConcurrent") {
               "decimal32_1": 1.12,
               "decimal64_1": 1.12,
               "decimal128_1": 1.12,
+              "decimal256_1": 1.12,
               "datetime_1": "2021-01-01 00:00:00",
               "date_1": "2021-01-01",
               "ipv4_1": "192.168.1.1",
@@ -107,6 +111,7 @@ suite("test_all_prdefine_type_to_sparse", "p0,nonConcurrent") {
               "array_decimal32_1": [1.12],
               "array_decimal64_1": [1.12],
               "array_decimal128_1": [1.12],
+              "array_decimal256_1": [1.12],
               "array_datetime_1": ["2021-01-01 00:00:00"],
               "array_date_1": ["2021-01-01"],
               "array_ipv4_1": ["192.168.1.1"],
@@ -190,6 +195,12 @@ suite("test_all_prdefine_type_to_sparse", "p0,nonConcurrent") {
     sql """ insert into ${tableName}  values (75, ${variantV2Function}('{"decimal128_1": 1.12}')),(76, ${variantV2Function}('{"decimal128_1": 2.12}')),(77, ${variantV2Function}('{"decimal128_1": 3.12}')),(78, ${variantV2Function}('{"decimal128_1": 4.12}')),(79, ${variantV2Function}('{"decimal128_1": 5.12}')),
     (80, ${variantV2Function}('{"decimal128_1": 6.12}')),(81, ${variantV2Function}('{"decimal128_1": 7.12}')),(82, ${variantV2Function}('{"decimal128_1": 8.12}')),(83, ${variantV2Function}('{"decimal128_1": 9.12}')),(84, ${variantV2Function}('{"decimal128_1": 10.12}')),(85, ${variantV2Function}('{"decimal128_1": 11.12}')),
     (86, ${variantV2Function}('{"decimal128_1": 12.12}')); """
+
+    check_table();
+
+    sql """ insert into ${tableName}  values (87, ${variantV2Function}('{"decimal256_1": 1.12}')),(88, ${variantV2Function}('{"decimal256_1": 2.12}')),(89, ${variantV2Function}('{"decimal256_1": 3.12}')),(90, ${variantV2Function}('{"decimal256_1": 4.12}')),(91, ${variantV2Function}('{"decimal256_1": 5.12}')),
+    (92, ${variantV2Function}('{"decimal256_1": 6.12}')),(93, ${variantV2Function}('{"decimal256_1": 7.12}')),(94, ${variantV2Function}('{"decimal256_1": 8.12}')),(95, ${variantV2Function}('{"decimal256_1": 9.12}')),(96, ${variantV2Function}('{"decimal256_1": 10.12}')),(97, ${variantV2Function}('{"decimal256_1": 11.12}')),
+    (98, ${variantV2Function}('{"decimal256_1": 12.12}')),(99, ${variantV2Function}('{"decimal256_1": 13.12}')); """
 
     check_table();
 
@@ -316,6 +327,15 @@ suite("test_all_prdefine_type_to_sparse", "p0,nonConcurrent") {
     (443, ${variantV2Function}('{"array_decimal128_1": [17.12]}')),(444, ${variantV2Function}('{"array_decimal128_1": [18.12]}')),(445, ${variantV2Function}('{"array_decimal128_1": [19.12]}')),(446, ${variantV2Function}('{"array_decimal128_1": [20.12]}')),(447, ${variantV2Function}('{"array_decimal128_1": [21.12]}')),(448, ${variantV2Function}('{"array_decimal128_1": [22.12]}')),
     (449, ${variantV2Function}('{"array_decimal128_1": [23.12]}')),(450, ${variantV2Function}('{"array_decimal128_1": [24.12]}')),(451, ${variantV2Function}('{"array_decimal128_1": [25.12]}')),(452, ${variantV2Function}('{"array_decimal128_1": [26.12]}')),(453, ${variantV2Function}('{"array_decimal128_1": [27.12]}')),(454, ${variantV2Function}('{"array_decimal128_1": [28.12]}')),
     (455, ${variantV2Function}('{"array_decimal128_1": [29.12]}')); """
+
+    check_table();
+
+    sql """ insert into ${tableName}  values (456, ${variantV2Function}('{"array_decimal256_1": [1.12]}')),(457, ${variantV2Function}('{"array_decimal256_1": [2.12]}')),(458, ${variantV2Function}('{"array_decimal256_1": [3.12]}')),(459, ${variantV2Function}('{"array_decimal256_1": [4.12]}')),
+    (460, ${variantV2Function}('{"array_decimal256_1": [5.12]}')),(461, ${variantV2Function}('{"array_decimal256_1": [6.12]}')),(462, ${variantV2Function}('{"array_decimal256_1": [7.12]}')),(463, ${variantV2Function}('{"array_decimal256_1": [8.12]}')),(464, ${variantV2Function}('{"array_decimal256_1": [9.12]}')),(465, ${variantV2Function}('{"array_decimal256_1": [10.12]}')),
+    (466, ${variantV2Function}('{"array_decimal256_1": [11.12]}')),(467, ${variantV2Function}('{"array_decimal256_1": [12.12]}')),(468, ${variantV2Function}('{"array_decimal256_1": [13.12]}')),(469, ${variantV2Function}('{"array_decimal256_1": [14.12]}')),(470, ${variantV2Function}('{"array_decimal256_1": [15.12]}')),(471, ${variantV2Function}('{"array_decimal256_1": [16.12]}')),
+    (472, ${variantV2Function}('{"array_decimal256_1": [17.12]}')),(473, ${variantV2Function}('{"array_decimal256_1": [18.12]}')),(474, ${variantV2Function}('{"array_decimal256_1": [19.12]}')),(475, ${variantV2Function}('{"array_decimal256_1": [20.12]}')),(476, ${variantV2Function}('{"array_decimal256_1": [21.12]}')),(477, ${variantV2Function}('{"array_decimal256_1": [22.12]}')),
+    (478, ${variantV2Function}('{"array_decimal256_1": [23.12]}')),(479, ${variantV2Function}('{"array_decimal256_1": [24.12]}')),(480, ${variantV2Function}('{"array_decimal256_1": [25.12]}')),(481, ${variantV2Function}('{"array_decimal256_1": [26.12]}')),(482, ${variantV2Function}('{"array_decimal256_1": [27.12]}')),(483, ${variantV2Function}('{"array_decimal256_1": [28.12]}')),
+    (484, ${variantV2Function}('{"array_decimal256_1": [29.12]}')),(485, ${variantV2Function}('{"array_decimal256_1": [30.12]}')); """
 
     check_table();
 
