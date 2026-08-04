@@ -426,6 +426,8 @@ TEST_F(TabletSchemaTest, test_remove_index_keeps_heterogeneous_survivors_findabl
 
     // The NGRAM_BF survivor must not be reported as an inverted index on its column.
     EXPECT_TRUE(schema.inverted_indexs(9002, "").empty());
+}
+
 TEST_F(TabletSchemaTest, test_runtime_variant_type_for_load_aggregation) {
     TabletColumn persisted_column;
     persisted_column.set_type(FieldType::OLAP_FIELD_TYPE_VARIANT);
