@@ -824,23 +824,24 @@ void ColumnVariantV2::insert_range_from( // NOLINT(readability-function-size)
     const size_t value_begin = source_offsets[static_cast<ssize_t>(start) - 1];
     const size_t value_end = source_offsets[start + length - 1];
     const bool destination_has_no_metadata = static_cast<const IColumn::Ptr&>(_metadatas)->empty();
-    const bool adopt_metadata = empty() && destination_has_no_metadata;
+    const bool copy_metadata_dictionary = empty() && destination_has_no_metadata;
     const bool already_shared = static_cast<const IColumn::Ptr&>(_metadatas).get() ==
                                 static_cast<const IColumn::Ptr&>(source._metadatas).get();
     DorisVector<uint32_t> remap;
-    if (!adopt_metadata && !already_shared) {
+    if (!copy_metadata_dictionary && !already_shared) {
         remap.assign(source_metadatas.size(), UNMAPPED_METADATA_ID);
     }
     auto& values = assert_cast<ColumnString&>(*_values);
     auto& metadata_ids = assert_cast<MetaIdsColumn&>(*_meta_ids);
     reserve_rows(values, metadata_ids, value_end - value_begin, length);
-    if (adopt_metadata) {
-        _metadatas = source._metadatas;
+    if (copy_metadata_dictionary) {
+        static_cast<IColumn::Ptr&>(_metadatas) =
+                source._metadatas->clone_resized(source_metadatas.size());
     }
     const bool shared_metadata = static_cast<const IColumn::Ptr&>(_metadatas).get() ==
                                  static_cast<const IColumn::Ptr&>(source._metadatas).get();
     values.insert_range_from(source_values, start, length);
-    if (shared_metadata) {
+    if (copy_metadata_dictionary || shared_metadata) {
         metadata_ids.insert_range_from(*source._meta_ids, start, length);
     } else {
         auto& destination_ids = metadata_ids.get_data();
@@ -905,23 +906,24 @@ void ColumnVariantV2::insert_indices_from( // NOLINT(readability-function-size)
     const auto& source_values = assert_cast<const ColumnString&>(*source._values);
 
     const bool destination_has_no_metadata = static_cast<const IColumn::Ptr&>(_metadatas)->empty();
-    const bool adopt_metadata = empty() && destination_has_no_metadata;
+    const bool copy_metadata_dictionary = empty() && destination_has_no_metadata;
     const bool already_shared = static_cast<const IColumn::Ptr&>(_metadatas).get() ==
                                 static_cast<const IColumn::Ptr&>(source._metadatas).get();
     DorisVector<uint32_t> remap;
-    if (!adopt_metadata && !already_shared) {
+    if (!copy_metadata_dictionary && !already_shared) {
         remap.assign(source_metadatas.size(), UNMAPPED_METADATA_ID);
     }
     auto& values = assert_cast<ColumnString&>(*_values);
     auto& metadata_ids = assert_cast<MetaIdsColumn&>(*_meta_ids);
     metadata_ids.get_data().reserve(metadata_ids.size() + rows);
-    if (adopt_metadata) {
-        _metadatas = source._metadatas;
+    if (copy_metadata_dictionary) {
+        static_cast<IColumn::Ptr&>(_metadatas) =
+                source._metadatas->clone_resized(source_metadatas.size());
     }
     const bool shared_metadata = static_cast<const IColumn::Ptr&>(_metadatas).get() ==
                                  static_cast<const IColumn::Ptr&>(source._metadatas).get();
     values.insert_indices_from(source_values, indices_begin, indices_end);
-    if (shared_metadata) {
+    if (copy_metadata_dictionary || shared_metadata) {
         metadata_ids.insert_indices_from(*source._meta_ids, indices_begin, indices_end);
     } else {
         auto& destination_ids = metadata_ids.get_data();

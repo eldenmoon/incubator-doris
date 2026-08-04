@@ -63,6 +63,8 @@
 #include "exec/common/sip_hash.h"
 #include "exprs/function/parse/variant_jsonb_parse.h"
 #include "exprs/function/parse/variant_string_parse.h"
+#include "runtime/memory/mem_tracker.h"
+#include "runtime/thread_context.h"
 #include "util/jsonb_writer.h"
 #include "util/variant/variant_test_utils.h"
 
@@ -735,6 +737,42 @@ void expect_et_cross_check_distinct(std::string_view group, const ETCrossCheckRe
     EXPECT_NE(left_observation.arena_serialized, right_observation.arena_serialized);
 }
 
+template <typename CopyRows>
+void expect_copied_metadata_owned_by_destination(CopyRows&& copy_rows) {
+    const auto source_tracker = std::make_shared<MemTracker>("variant-v2-copy-source");
+    const auto destination_tracker = std::make_shared<MemTracker>("variant-v2-copy-destination");
+    ColumnVariantV2::MutablePtr source;
+    ColumnVariantV2::MutablePtr destination;
+
+    {
+        SCOPED_CONSUME_MEM_TRACKER(source_tracker);
+        source = ColumnVariantV2::create();
+        insert_encoded_field(*source, encode_json(R"({"alpha":1,"beta":"two"})"));
+        thread_context()->thread_mem_tracker_mgr->flush_untracked_mem();
+        EXPECT_GT(source_tracker->consumption(), 0);
+    }
+    {
+        SCOPED_CONSUME_MEM_TRACKER(destination_tracker);
+        destination = ColumnVariantV2::create();
+        copy_rows(*destination, *source);
+        thread_context()->thread_mem_tracker_mgr->flush_untracked_mem();
+        EXPECT_GT(destination_tracker->consumption(), 0);
+        EXPECT_NE(subcolumn_address(*destination, 0), subcolumn_address(*source, 0));
+    }
+    {
+        SCOPED_CONSUME_MEM_TRACKER(source_tracker);
+        source.reset();
+        thread_context()->thread_mem_tracker_mgr->flush_untracked_mem();
+    }
+    {
+        SCOPED_CONSUME_MEM_TRACKER(destination_tracker);
+        destination.reset();
+        thread_context()->thread_mem_tracker_mgr->flush_untracked_mem();
+    }
+    EXPECT_EQ(source_tracker->consumption(), 0);
+    EXPECT_EQ(destination_tracker->consumption(), 0);
+}
+
 } // namespace
 
 TEST(ColumnVariantV2Test, EmptySkeleton) {
@@ -977,7 +1015,7 @@ TEST(ColumnVariantV2Test, ReadViewBorrowsValidatedEncodedState) {
     EXPECT_EQ(original_children, final_children);
 }
 
-TEST(ColumnVariantV2Test, CopyInterfacesUseSharedMetadataFastPath) {
+TEST(ColumnVariantV2Test, CopyInterfacesKeepIndependentMetadataOwnership) {
     auto source = ColumnVariantV2::create();
     insert_encoded_field(*source, encode_json(R"({"a":1})"));
     insert_encoded_field(*source, encode_json(R"({"b":2})"));
@@ -985,7 +1023,7 @@ TEST(ColumnVariantV2Test, CopyInterfacesUseSharedMetadataFastPath) {
 
     auto destination = ColumnVariantV2::create();
     destination->insert_range_from(*source, 0, source->size());
-    EXPECT_EQ(subcolumn_address(*destination, 0), subcolumn_address(*source, 0));
+    EXPECT_NE(subcolumn_address(*destination, 0), subcolumn_address(*source, 0));
     const size_t dictionaries = metadata_count(*destination);
 
     destination->insert_from(*source, 1);
@@ -1036,6 +1074,21 @@ TEST(ColumnVariantV2Test, CopyInterfacesUseSharedMetadataFastPath) {
     EXPECT_EQ(metadata_count(*destination), 0);
     EXPECT_EQ(source->size(), 3);
     EXPECT_EQ(metadata_count(*source), dictionaries);
+}
+
+TEST(ColumnVariantV2Test, RangeCopyBalancesIndependentMemTrackers) {
+    expect_copied_metadata_owned_by_destination(
+            [](ColumnVariantV2& destination, const ColumnVariantV2& source) {
+                destination.insert_range_from(source, 0, source.size());
+            });
+}
+
+TEST(ColumnVariantV2Test, IndexedCopyBalancesIndependentMemTrackers) {
+    expect_copied_metadata_owned_by_destination([](ColumnVariantV2& destination,
+                                                   const ColumnVariantV2& source) {
+        const std::array<uint32_t, 1> indices {0};
+        destination.insert_indices_from(source, indices.data(), indices.data() + indices.size());
+    });
 }
 
 TEST(ColumnVariantV2Test, RemapsDistinctAndDuplicateMetadataBlobs) {
