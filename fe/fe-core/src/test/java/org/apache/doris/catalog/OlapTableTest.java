@@ -17,6 +17,7 @@
 
 package org.apache.doris.catalog;
 
+import org.apache.doris.analysis.InvertedIndexProperties;
 import org.apache.doris.catalog.TableIf.TableType;
 import org.apache.doris.catalog.info.IndexType;
 import org.apache.doris.cloud.common.util.CloudPropertyAnalyzer;
@@ -51,6 +52,28 @@ import java.util.concurrent.locks.ReadWriteLock;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 
 public class OlapTableTest {
+
+    @Test
+    public void testGetInvertedIndexPrefersTokenizedAnalyzer() {
+        Column variantColumn = new Column("v", Type.VARIANT);
+        Map<String, String> exactProperties = Maps.newHashMap();
+        exactProperties.put(InvertedIndexProperties.INVERTED_INDEX_PARSER_KEY,
+                InvertedIndexProperties.INVERTED_INDEX_PARSER_NONE);
+        Map<String, String> englishProperties = Maps.newHashMap();
+        englishProperties.put(InvertedIndexProperties.INVERTED_INDEX_PARSER_KEY,
+                InvertedIndexProperties.INVERTED_INDEX_PARSER_ENGLISH);
+
+        Index exact = new Index(1L, "v_exact", Lists.newArrayList("v"),
+                IndexType.INVERTED, exactProperties, "");
+        Index english = new Index(2L, "v_english", Lists.newArrayList("v"),
+                IndexType.INVERTED, englishProperties, "");
+        OlapTable table = new OlapTable();
+        table.setIndexes(Lists.newArrayList(exact, english));
+
+        Assert.assertSame(english, table.getInvertedIndex(variantColumn, Lists.newArrayList(), null));
+        Assert.assertSame(exact, table.getInvertedIndex(variantColumn, Lists.newArrayList(), "none"));
+        Assert.assertSame(english, table.getInvertedIndex(variantColumn, Lists.newArrayList(), "english"));
+    }
 
     @Test
     public void testGetTableStatusStatsUsesSinglePassSemantics() {

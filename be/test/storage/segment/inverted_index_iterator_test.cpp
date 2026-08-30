@@ -27,8 +27,10 @@
 #include "core/data_type/data_type_array.h"
 #include "core/data_type/data_type_nullable.h"
 #include "core/data_type/data_type_string.h"
+#include "core/data_type/data_type_variant_v2.h"
 #include "storage/index/inverted/inverted_index_parser.h"
 #include "storage/index/inverted/inverted_index_reader.h"
+#include "storage/index/inverted/variant_root_index.h"
 #include "storage/tablet/tablet_schema.h"
 
 namespace doris::segment_v2 {
@@ -100,6 +102,20 @@ protected:
                 properties[INVERTED_INDEX_ANALYZER_NAME_KEY] = analyzer_key;
             }
         }
+        auto reader = MockInvertedIndexReader::create(properties, index_id);
+        reader->set_type(type);
+        return reader;
+    }
+
+    std::shared_ptr<MockInvertedIndexReader> create_mock_root_reader(const std::string& parser,
+                                                                     InvertedIndexReaderType type,
+                                                                     int64_t index_id) {
+        std::map<std::string, std::string> properties = {
+                {INVERTED_INDEX_PARSER_KEY, parser},
+                {std::string(variant_root_index::VARIANT_INDEX_MODE_KEY),
+                 std::string(variant_root_index::VARIANT_INDEX_MODE_ROOT)},
+                {std::string(variant_root_index::VARIANT_ROOT_FORMAT_VERSION_KEY),
+                 std::string(variant_root_index::VARIANT_ROOT_FORMAT_VERSION_V1)}};
         auto reader = MockInvertedIndexReader::create(properties, index_id);
         reader->set_type(type);
         return reader;
@@ -314,6 +330,43 @@ TEST_F(InvertedIndexIteratorTest, SelectBestReader_ArrayUsesLeafStringType) {
                                               "chinese");
     ASSERT_TRUE(result.has_value()) << result.error();
     EXPECT_EQ(result.value(), fulltext_reader);
+}
+
+TEST_F(InvertedIndexIteratorTest, VariantRootSelectsExactForEqualityAndTokenForMatch) {
+    InvertedIndexIterator iterator;
+    auto exact_reader = create_mock_root_reader(INVERTED_INDEX_PARSER_NONE,
+                                                InvertedIndexReaderType::STRING_TYPE, 100);
+    auto token_reader = create_mock_root_reader(INVERTED_INDEX_PARSER_ENGLISH,
+                                                InvertedIndexReaderType::FULLTEXT, 50);
+    iterator.add_reader(InvertedIndexReaderType::FULLTEXT, token_reader);
+    iterator.add_reader(InvertedIndexReaderType::STRING_TYPE, exact_reader);
+
+    auto variant_type = std::make_shared<DataTypeVariantV2>(2, false);
+    auto equality =
+            iterator.select_best_reader(variant_type, InvertedIndexQueryType::EQUAL_QUERY, "");
+    ASSERT_TRUE(equality.has_value()) << equality.error();
+    EXPECT_EQ(equality.value(), exact_reader);
+
+    auto match =
+            iterator.select_best_reader(variant_type, InvertedIndexQueryType::MATCH_ANY_QUERY, "");
+    ASSERT_TRUE(match.has_value()) << match.error();
+    EXPECT_EQ(match.value(), token_reader);
+}
+
+TEST_F(InvertedIndexIteratorTest, VariantRootMatchUsesExplicitAnalyzerIdentity) {
+    InvertedIndexIterator iterator;
+    auto english = create_mock_root_reader(INVERTED_INDEX_PARSER_ENGLISH,
+                                           InvertedIndexReaderType::FULLTEXT, 20);
+    auto chinese = create_mock_root_reader(INVERTED_INDEX_PARSER_CHINESE,
+                                           InvertedIndexReaderType::FULLTEXT, 10);
+    iterator.add_reader(InvertedIndexReaderType::FULLTEXT, english);
+    iterator.add_reader(InvertedIndexReaderType::FULLTEXT, chinese);
+
+    auto variant_type = std::make_shared<DataTypeVariantV2>(2, false);
+    auto match = iterator.select_best_reader(variant_type, InvertedIndexQueryType::MATCH_ANY_QUERY,
+                                             INVERTED_INDEX_PARSER_ENGLISH);
+    ASSERT_TRUE(match.has_value()) << match.error();
+    EXPECT_EQ(match.value(), english);
 }
 
 TEST_F(InvertedIndexIteratorTest, SelectAnyReaderIsDeterministicByIndexId) {

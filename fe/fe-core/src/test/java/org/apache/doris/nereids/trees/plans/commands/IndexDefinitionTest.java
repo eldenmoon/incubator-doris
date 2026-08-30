@@ -17,11 +17,14 @@
 
 package org.apache.doris.nereids.trees.plans.commands;
 
+import org.apache.doris.analysis.InvertedIndexUtil;
 import org.apache.doris.catalog.AggregateType;
 import org.apache.doris.catalog.Column;
+import org.apache.doris.catalog.Index;
 import org.apache.doris.catalog.KeysType;
 import org.apache.doris.catalog.Type;
 import org.apache.doris.catalog.info.IndexType;
+import org.apache.doris.common.Config;
 import org.apache.doris.nereids.exceptions.AnalysisException;
 import org.apache.doris.nereids.trees.plans.commands.info.ColumnDefinition;
 import org.apache.doris.nereids.trees.plans.commands.info.IndexDefinition;
@@ -149,6 +152,73 @@ public class IndexDefinitionTest {
 
         def.checkColumn(new Column("col1", Type.VARIANT, true), KeysType.DUP_KEYS, false,
                 TInvertedIndexFileStorageFormat.SNII);
+    }
+
+    @Test
+    void testSniiVariantRootIndexValidation() throws AnalysisException {
+        boolean originalEnableVariantV2 = Config.enable_variant_v2;
+        try {
+            Config.enable_variant_v2 = true;
+            IndexDefinition root = new IndexDefinition("variant_root_index", false,
+                    Lists.newArrayList("col1"), "INVERTED",
+                    new HashMap<>(Map.of("variant_index_mode", "root", "parser", "none")),
+                    "comment");
+            root.checkColumn(new ColumnDefinition("col1", VariantType.INSTANCE, false,
+                            AggregateType.NONE, true, null, "comment"), KeysType.DUP_KEYS, false,
+                    TInvertedIndexFileStorageFormat.SNII);
+            Assertions.assertEquals("1", root.getProperties().get("variant_root_format_version"));
+            Assertions.assertEquals("false", root.getProperties().get("support_phrase"));
+            Index catalogRoot = new Index(1, "variant_root_index", Lists.newArrayList("col1"),
+                    IndexType.INVERTED,
+                    new HashMap<>(Map.of("variant_index_mode", "root", "parser", "none")),
+                    "comment");
+            Assertions.assertEquals("false", catalogRoot.getProperties().get("support_phrase"));
+
+            IndexDefinition tokenRoot = new IndexDefinition("variant_root_token_index", false,
+                    Lists.newArrayList("col1"), "INVERTED",
+                    new HashMap<>(Map.of("variant_index_mode", "root", "parser", "english")),
+                    "comment");
+            tokenRoot.checkColumn(new ColumnDefinition("col1", VariantType.INSTANCE, false,
+                            AggregateType.NONE, true, null, "comment"), KeysType.DUP_KEYS, false,
+                    TInvertedIndexFileStorageFormat.SNII);
+            Assertions.assertTrue(InvertedIndexUtil.canHaveMultipleInvertedIndexes(
+                    VariantType.INSTANCE, Lists.newArrayList(root, tokenRoot)));
+
+            IndexDefinition duplicateExactRoot = new IndexDefinition(
+                    "variant_root_duplicate_exact_index", false, Lists.newArrayList("col1"),
+                    "INVERTED", new HashMap<>(Map.of("variant_index_mode", "root", "parser", "none")),
+                    "comment");
+            duplicateExactRoot.checkColumn(new ColumnDefinition("col1", VariantType.INSTANCE, false,
+                            AggregateType.NONE, true, null, "comment"), KeysType.DUP_KEYS, false,
+                    TInvertedIndexFileStorageFormat.SNII);
+            Assertions.assertFalse(InvertedIndexUtil.canHaveMultipleInvertedIndexes(
+                    VariantType.INSTANCE, Lists.newArrayList(root, duplicateExactRoot)));
+
+            IndexDefinition stringRoot = new IndexDefinition("string_root_index", false,
+                    Lists.newArrayList("col1"), "INVERTED",
+                    new HashMap<>(Map.of("variant_index_mode", "root")), "comment");
+            Assertions.assertThrows(AnalysisException.class, () -> stringRoot.checkColumn(
+                    new ColumnDefinition("col1", StringType.INSTANCE, false, AggregateType.NONE,
+                            true, null, "comment"), KeysType.DUP_KEYS, false,
+                    TInvertedIndexFileStorageFormat.SNII));
+
+            IndexDefinition phraseRoot = new IndexDefinition("phrase_root_index", false,
+                    Lists.newArrayList("col1"), "INVERTED",
+                    new HashMap<>(Map.of("variant_index_mode", "root", "support_phrase", "true")),
+                    "comment");
+            Assertions.assertThrows(AnalysisException.class, () -> phraseRoot.checkColumn(
+                    new ColumnDefinition("col1", VariantType.INSTANCE, false, AggregateType.NONE,
+                            true, null, "comment"), KeysType.DUP_KEYS, false,
+                    TInvertedIndexFileStorageFormat.SNII));
+
+            Config.enable_variant_v2 = false;
+            Assertions.assertThrows(AnalysisException.class, () -> root.checkColumn(
+                    new ColumnDefinition("col1", VariantType.INSTANCE, false, AggregateType.NONE,
+                            true, null, "comment"), KeysType.DUP_KEYS, false,
+                    TInvertedIndexFileStorageFormat.SNII));
+        } finally {
+            Config.enable_variant_v2 = originalEnableVariantV2;
+        }
     }
 
     // SNII stores an ANN index as a blob logical index, the same mechanism the

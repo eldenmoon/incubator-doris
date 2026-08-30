@@ -2602,6 +2602,12 @@ public class SchemaChangeHandler extends AlterHandler {
                             }
                             throw new DdlException("index " + dropIndexOp.getIndexName() + " does not exist");
                         }
+                        if (found.getProperties() != null
+                                && InvertedIndexUtil.VARIANT_INDEX_MODE_ROOT.equals(
+                                found.getProperties().get(InvertedIndexUtil.VARIANT_INDEX_MODE_KEY))) {
+                            throw new DdlException(
+                                    "DROP INDEX is not supported for a VARIANT root index");
+                        }
                         if (found.getIndexType() != IndexType.INVERTED) {
                             throw new DdlException(
                                     "Only inverted index supports DROP INDEX ON PARTITION");
@@ -3399,6 +3405,12 @@ public class SchemaChangeHandler extends AlterHandler {
                 return true;
             }
             throw new DdlException("index " + indexName + " does not exist");
+        }
+
+        if (found.getProperties() != null
+                && InvertedIndexUtil.VARIANT_INDEX_MODE_ROOT.equals(
+                found.getProperties().get(InvertedIndexUtil.VARIANT_INDEX_MODE_KEY))) {
+            throw new DdlException("DROP INDEX is not supported for a VARIANT root index");
         }
 
         if (!InvertedIndexUtil.getInvertedIndexFieldPattern(found.getProperties()).isEmpty()) {

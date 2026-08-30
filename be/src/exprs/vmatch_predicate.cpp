@@ -47,6 +47,7 @@
 #include "runtime/runtime_state.h"
 #include "storage/index/inverted/analyzer/analyzer.h"
 #include "storage/index/inverted/inverted_index_reader.h"
+#include "util/hash_util.hpp"
 
 namespace doris {
 class RowDescriptor;
@@ -56,6 +57,48 @@ class RuntimeState;
 namespace doris {
 
 using namespace doris::segment_v2;
+
+namespace {
+
+uint64_t hash_string(std::string_view value, uint64_t seed) {
+    const size_t size = value.size();
+    seed = HashUtil::hash64(&size, sizeof(size), seed);
+    return HashUtil::hash64(value.data(), value.size(), seed);
+}
+
+uint64_t analyzer_semantics_digest(std::string_view analyzer_key,
+                                   const InvertedIndexAnalyzerConfig& config,
+                                   const inverted_index::AnalyzerProviderPtr& analyzer_provider) {
+    uint64_t digest = HashUtil::FNV_SEED;
+    digest = hash_string(analyzer_key, digest);
+    digest = hash_string(config.analyzer_name, digest);
+    const auto parser_type =
+            static_cast<std::underlying_type_t<InvertedIndexParserType>>(config.parser_type);
+    digest = HashUtil::hash64(&parser_type, sizeof(parser_type), digest);
+    digest = hash_string(config.parser_mode, digest);
+    digest = hash_string(config.lower_case, digest);
+    digest = hash_string(config.stop_words, digest);
+    const size_t char_filter_size = config.char_filter_map.size();
+    digest = HashUtil::hash64(&char_filter_size, sizeof(char_filter_size), digest);
+    for (const auto& [key, value] : config.char_filter_map) {
+        digest = hash_string(key, digest);
+        digest = hash_string(value, digest);
+    }
+
+    if (analyzer_provider == nullptr) {
+        return digest;
+    }
+    digest = hash_string(analyzer_provider->base_analyzer_fingerprint(), digest);
+    const auto* common_grams_identity = analyzer_provider->common_grams_identity();
+    if (common_grams_identity != nullptr) {
+        digest = hash_string(common_grams_identity->common_grams_dictionary_identity, digest);
+        digest = hash_string(common_grams_identity->base_analyzer_fingerprint, digest);
+        digest = hash_string(common_grams_identity->common_grams_fingerprint, digest);
+    }
+    return digest;
+}
+
+} // namespace
 
 VMatchPredicate::VMatchPredicate(const TExprNode& node) : VExpr(node) {
     const auto resolved = AnalyzerConfigParser::parse(node.match_predicate.analyzer_name,
@@ -85,6 +128,9 @@ VMatchPredicate::VMatchPredicate(const TExprNode& node) : VExpr(node) {
                 inverted_index::InvertedIndexAnalyzer::create_analyzer_provider(&config);
         _analyzer = _analyzer_provider->get_analyzer(inverted_index::AnalysisPurpose::kPlainQuery);
     }
+
+    _analyzer_semantics_digest =
+            analyzer_semantics_digest(_analyzer_ctx->analyzer_key, config, _analyzer_provider);
 
     _analyzer_ctx->char_filter_map = std::move(config.char_filter_map);
     _analyzer_ctx->analyzer = _analyzer;
@@ -157,6 +203,14 @@ Status VMatchPredicate::evaluate_inverted_index(VExprContext* context, uint32_t 
 
 const std::string& VMatchPredicate::get_analyzer_key() const {
     return _analyzer_ctx->analyzer_key;
+}
+
+uint64_t VMatchPredicate::get_digest(uint64_t seed) const {
+    seed = VExpr::get_digest(seed);
+    if (seed == 0) {
+        return 0;
+    }
+    return HashUtil::hash64(&_analyzer_semantics_digest, sizeof(_analyzer_semantics_digest), seed);
 }
 
 Status VMatchPredicate::execute_column_impl(VExprContext* context, const Block* block,

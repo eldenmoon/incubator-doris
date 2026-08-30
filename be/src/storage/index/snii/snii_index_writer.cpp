@@ -216,7 +216,8 @@ void SniiIndexColumnWriter::set_direct_load(bool is_direct_load) {
 
 Status SniiIndexColumnWriter::_add_value_tokens(const Slice& value, uint32_t docid,
                                                 uint32_t position_base, uint32_t* max_position,
-                                                uint32_t* semantic_length) {
+                                                uint32_t* semantic_length,
+                                                std::string_view term_prefix) {
     DCHECK(max_position != nullptr);
     DCHECK(semantic_length != nullptr);
     *max_position = position_base;
@@ -237,7 +238,15 @@ Status SniiIndexColumnWriter::_add_value_tokens(const Slice& value, uint32_t doc
     auto consume_token = [&](std::string_view term, int32_t token_position, bool retain_positions) {
         const uint32_t position =
                 _has_positions ? position_base + cast_set<uint32_t>(token_position) : 0;
-        _term_buffer->add_token(term, docid, position, retain_positions);
+        if (term_prefix.empty()) {
+            _term_buffer->add_token(term, docid, position, retain_positions);
+        } else {
+            _prefixed_term_scratch.clear();
+            _prefixed_term_scratch.reserve(term_prefix.size() + term.size());
+            _prefixed_term_scratch.append(term_prefix);
+            _prefixed_term_scratch.append(term);
+            _term_buffer->add_token(_prefixed_term_scratch, docid, position, retain_positions);
+        }
         *max_position = std::max(*max_position, position);
     };
 
@@ -317,6 +326,28 @@ Status SniiIndexColumnWriter::_add_value_tokens(const Slice& value, uint32_t doc
                     "SNII analyze value failed: {}", e.what()));
         }
     }
+    return Status::OK();
+}
+
+Status SniiIndexColumnWriter::add_document(std::span<const std::string> exact_terms,
+                                           std::span<const PrefixedAnalyzedValue> analyzed_values) {
+    if (!_failure_status.ok()) {
+        return _failure_status;
+    }
+    if (_has_positions || _uses_common_grams) {
+        return Status::Error<ErrorCode::INVERTED_INDEX_NOT_SUPPORTED>(
+                "Pre-analyzed SNII documents require a docs-only plain index");
+    }
+    for (const std::string& term : exact_terms) {
+        _term_buffer->add_token(term, _rid, 0, false);
+    }
+    for (const PrefixedAnalyzedValue& value : analyzed_values) {
+        uint32_t max_position = 0;
+        uint32_t semantic_length = 0;
+        RETURN_IF_ERROR(_add_value_tokens(value.value, _rid, 0, &max_position, &semantic_length,
+                                          value.term_prefix));
+    }
+    ++_rid;
     return Status::OK();
 }
 

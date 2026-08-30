@@ -82,7 +82,10 @@ public class Index implements Writable {
                     String supportPhraseKey = InvertedIndexProperties
                             .INVERTED_INDEX_SUPPORT_PHRASE_KEY;
                     if (!this.properties.containsKey(supportPhraseKey)) {
-                        this.properties.put(supportPhraseKey, "true");
+                        this.properties.put(supportPhraseKey,
+                                InvertedIndexProperties.VARIANT_INDEX_MODE_ROOT.equals(
+                                        this.properties.get(InvertedIndexProperties.VARIANT_INDEX_MODE_KEY))
+                                        ? "false" : "true");
                     }
                 }
                 if (this.properties.containsKey(InvertedIndexProperties.INVERTED_INDEX_PARSER_KEY)
@@ -322,10 +325,6 @@ public class Index implements Writable {
      */
     public boolean isAnalyzedInvertedIndex() {
         return indexType == IndexType.INVERTED
-                && properties != null
-                && (properties.containsKey(InvertedIndexProperties.INVERTED_INDEX_PARSER_KEY)
-                || properties.containsKey(InvertedIndexProperties.INVERTED_INDEX_PARSER_KEY_ALIAS)
-                || properties.containsKey(InvertedIndexProperties.INVERTED_INDEX_ANALYZER_NAME_KEY)
-                || properties.containsKey(InvertedIndexProperties.INVERTED_INDEX_NORMALIZER_NAME_KEY));
+                && InvertedIndexProperties.isAnalyzed(properties);
     }
 }

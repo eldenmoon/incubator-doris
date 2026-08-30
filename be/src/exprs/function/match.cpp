@@ -104,7 +104,8 @@ Status FunctionMatchBase::evaluate_inverted_index(
         // the index has no null rows.
         null_bitmap = std::make_shared<roaring::Roaring>();
     }
-    segment_v2::InvertedIndexResultBitmap result(param.roaring, null_bitmap);
+    segment_v2::InvertedIndexResultBitmap result(param.roaring, null_bitmap,
+                                                 iter->is_variant_root_index());
     bitmap_result = result;
     bitmap_result.mask_out_null();
 

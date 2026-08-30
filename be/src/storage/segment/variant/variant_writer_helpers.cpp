@@ -87,6 +87,7 @@ Status make_variant_shredder_options(const TabletSchema& tablet_schema,
             .doc_materialization_min_rows = cast_set<size_t>(
                     std::max<int64_t>(0, parent_column.variant_doc_materialization_min_rows())),
             .check_duplicate_json_path = config::variant_enable_duplicate_json_path_check,
+            .root_index_writers = {},
     };
     *options = std::move(result);
     return Status::OK();

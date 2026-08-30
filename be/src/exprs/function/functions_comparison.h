@@ -715,6 +715,9 @@ public:
         } else {
             return Status::InvalidArgument("invalid comparison op type {}", Name::name);
         }
+        if (name_view == NameNotEquals::name && iter->is_variant_root_index()) {
+            return Status::OK();
+        }
 
         if (segment_v2::is_range_query(query_type) &&
             iter->get_reader(segment_v2::InvertedIndexReaderType::STRING_TYPE)) {
@@ -741,7 +744,8 @@ public:
             RETURN_IF_ERROR(iter->read_null_bitmap(&null_bitmap_cache_handle));
             null_bitmap = null_bitmap_cache_handle.get_bitmap();
         }
-        segment_v2::InvertedIndexResultBitmap result(param.roaring, null_bitmap);
+        segment_v2::InvertedIndexResultBitmap result(param.roaring, null_bitmap,
+                                                     iter->is_variant_root_index());
         bitmap_result = result;
         bitmap_result.mask_out_null();
 

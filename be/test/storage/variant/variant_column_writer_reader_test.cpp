@@ -1081,6 +1081,7 @@ TEST(VariantShredderTest, ChunkedBinaryTransposeMatchesSingleChunkForOrdinaryAnd
                 .sparse_bucket_count = 2,
                 .doc_bucket_count = 2,
                 .doc_materialization_min_rows = sparse_masks.size() + 1,
+                .root_index_writers = {},
         };
         segment_v2::VariantShredder single_chunk(options);
         ASSERT_TRUE(single_chunk.append(values->read_view(), 0, values->size()).ok());
@@ -3083,6 +3084,7 @@ TEST_F(VariantColumnWriterReaderTest, v2_shredder_uses_only_rows_in_requested_ra
             .max_subcolumns_count = 1,
             .sparse_bucket_count = 1,
             .check_duplicate_json_path = config::variant_enable_duplicate_json_path_check,
+            .root_index_writers = {},
     });
     ASSERT_TRUE(shredder.append(combined->read_view(), 1, 1).ok());
     segment_v2::VariantShreddedColumns shredded;
@@ -3160,6 +3162,7 @@ TEST_F(VariantColumnWriterReaderTest, v2_shredder_drops_typed_cast_null_from_spa
             .typed_paths_to_sparse = true,
             .sparse_bucket_count = 1,
             .check_duplicate_json_path = config::variant_enable_duplicate_json_path_check,
+            .root_index_writers = {},
     });
     ASSERT_TRUE(shredder.append(source->read_view(), 0, source->size()).ok());
     segment_v2::VariantShreddedColumns shredded;

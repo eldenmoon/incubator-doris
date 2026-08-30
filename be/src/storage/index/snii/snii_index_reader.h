@@ -127,6 +127,11 @@ private:
                   std::shared_ptr<roaring::Roaring>& bit_map,
                   InvertedIndexQueryCacheHandle* null_bitmap_cache_handle,
                   const InvertedIndexAnalyzerCtx* analyzer_ctx);
+    Status _query_variant_root(const IndexQueryContextPtr& context, const std::string& column_name,
+                               const Field& query_value, InvertedIndexQueryType query_type,
+                               std::shared_ptr<roaring::Roaring>& bit_map,
+                               InvertedIndexQueryCacheHandle* null_bitmap_cache_handle,
+                               const InvertedIndexAnalyzerCtx* analyzer_ctx);
     Status _parse_query_terms(
             const IndexQueryContextPtr& context, std::string search_str,
             InvertedIndexQueryType query_type, const InvertedIndexAnalyzerCtx* analyzer_ctx,

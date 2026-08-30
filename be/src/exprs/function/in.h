@@ -154,6 +154,11 @@ public:
             //NOT support in list when parser is FULLTEXT for expr inverted index evaluate.
             return Status::OK();
         }
+        if constexpr (negative) {
+            if (iter->is_variant_root_index()) {
+                return Status::OK();
+            }
+        }
         if (iter->has_null()) {
             segment_v2::InvertedIndexQueryCacheHandle null_bitmap_cache_handle;
             RETURN_IF_ERROR(iter->read_null_bitmap(&null_bitmap_cache_handle));
@@ -182,7 +187,8 @@ public:
             RETURN_IF_ERROR(iter->read_from_index(segment_v2::IndexParam {&param}));
             *roaring |= *param.roaring;
         }
-        segment_v2::InvertedIndexResultBitmap result(roaring, null_bitmap);
+        segment_v2::InvertedIndexResultBitmap result(roaring, null_bitmap,
+                                                     iter->is_variant_root_index());
         bitmap_result = result;
         bitmap_result.mask_out_null();
         if constexpr (negative) {

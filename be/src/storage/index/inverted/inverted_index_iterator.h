@@ -55,12 +55,13 @@ public:
     Status read_null_bitmap(InvertedIndexQueryCacheHandle* cache_handle) override;
 
     [[nodiscard]] Result<bool> has_null() override;
+    bool is_variant_root_index() const override;
 
     IndexReaderPtr get_reader(IndexReaderType reader_type) const override;
 
     [[nodiscard]] Result<InvertedIndexReaderPtr> select_best_reader(
             const DataTypePtr& column_type, InvertedIndexQueryType query_type,
-            const std::string& analyzer_key);
+            const std::string& analyzer_key) const;
 
     [[nodiscard]] Result<InvertedIndexReaderPtr> select_any_reader();
 

@@ -54,6 +54,8 @@
 #include "exprs/function_context.h"
 #include "runtime/runtime_state.h"
 #include "storage/index/indexed_column_writer.h"
+#include "storage/index/inverted/inverted_index_parser.h"
+#include "storage/index/inverted/variant_root_index.h"
 #include "storage/iterator/olap_data_convertor.h"
 #include "storage/olap_common.h"
 #include "storage/olap_define.h"
@@ -64,6 +66,7 @@
 #include "storage/segment/variant/nested_group_routing_plan.h"
 #include "storage/segment/variant/v2/variant_column_writer.h"
 #include "storage/segment/variant/v2/variant_path_builder.h"
+#include "storage/segment/variant/v2/variant_root_index_writer.h"
 #include "storage/segment/variant/v2/variant_shredder.h"
 #include "storage/segment/variant/variant_writer_helpers.h"
 #include "storage/tablet/tablet_schema.h"
@@ -1324,7 +1327,36 @@ bool VariantV1ColumnWriter::_can_use_nested_group_streaming_compaction() const {
 }
 
 Status VariantV1ColumnWriter::init() {
-    const bool can_use_streaming = _can_use_nested_group_streaming_compaction();
+    std::unordered_set<std::string> root_analyzer_keys;
+    for (const TabletIndex* index : _opts.inverted_indexes) {
+        if (!variant_root_index::is_root_index(*index)) {
+            continue;
+        }
+        const std::string analyzer_key = build_analyzer_key_from_properties(index->properties());
+        if (!root_analyzer_keys.emplace(analyzer_key).second) {
+            return Status::InvalidArgument(
+                    "VARIANT column {} has duplicate root index analyzer identity {}",
+                    _tablet_column->name(), analyzer_key);
+        }
+        if (_opts.rowset_ctx->snii_indexes_to_do_compaction.contains(
+                    {_tablet_column->unique_id(), index->index_id()})) {
+            continue;
+        }
+        if (_opts.index_file_writer == nullptr ||
+            _opts.index_file_writer->get_storage_format() != InvertedIndexStorageFormatPB::SNII) {
+            return Status::Error<ErrorCode::INVERTED_INDEX_NOT_SUPPORTED>(
+                    "VARIANT root index requires SNII storage format");
+        }
+        auto writer = std::make_unique<VariantRootIndexWriter>(
+                _opts.index_file_writer, index, _opts.is_direct_load,
+                config::variant_enable_duplicate_json_path_check);
+        RETURN_IF_ERROR(writer->init());
+        _root_index_writer_ptrs.push_back(writer.get());
+        _root_index_writers.push_back(std::move(writer));
+    }
+
+    const bool can_use_streaming =
+            _root_index_writers.empty() && _can_use_nested_group_streaming_compaction();
 
     if (can_use_streaming) {
         _streaming_compaction_writer = std::make_unique<VariantStreamingCompactionWriter>(
@@ -1345,8 +1377,11 @@ Status VariantV1ColumnWriter::_process_root_column(ColumnVariant* ptr,
                                                    OlapBlockDataConvertor* converter,
                                                    size_t num_rows, int& column_id) {
     // root column
+    ColumnWriterOptions root_options = _opts;
+    root_options.inverted_indexes.clear();
+    root_options.need_inverted_index = false;
     _root_writer = std::make_unique<ScalarColumnWriter>(
-            _opts, std::make_shared<TabletColumn>(*_tablet_column), _opts.file_writer);
+            root_options, std::make_shared<TabletColumn>(*_tablet_column), _opts.file_writer);
     RETURN_IF_ERROR(_root_writer->init());
 
     // make sure the root type
@@ -1540,6 +1575,16 @@ Status VariantV1ColumnWriter::finalize() {
     ptr->set_max_subcolumns_count(_tablet_column->variant_max_subcolumns_count());
 
     ptr->finalize(ColumnVariant::FinalizeMode::WRITE_MODE);
+    const size_t num_rows = _column->size();
+    if (!_root_index_writers.empty()) {
+        const std::span<const uint8_t> outer_nulls =
+                _tablet_column->is_nullable()
+                        ? std::span<const uint8_t> {_null_column->get_data().data(),
+                                                    _null_column->size()}
+                        : std::span<const uint8_t> {};
+        RETURN_IF_ERROR(append_variant_root_indexes(_root_index_writer_ptrs, *ptr, 0, num_rows,
+                                                    outer_nulls));
+    }
 
     // convert each subcolumns to storage format and add data to sub columns writers buffer
     auto olap_data_convertor = std::make_unique<OlapBlockDataConvertor>();
@@ -1576,7 +1621,6 @@ Status VariantV1ColumnWriter::finalize() {
     ptr->check_consistency();
 #endif
 
-    size_t num_rows = _column->size();
     int column_id = 0;
 
     // convert root column data from engine format to storage layer format
@@ -1672,10 +1716,14 @@ uint64_t VariantV1ColumnWriter::estimate_buffer_size() {
     if (_streaming_compaction_writer != nullptr) {
         return _streaming_compaction_writer->estimate_buffer_size();
     }
-    if (!is_finalized()) {
-        return _column->byte_size();
+    uint64_t root_index_size = 0;
+    for (const auto& writer : _root_index_writers) {
+        root_index_size += writer->size();
     }
-    uint64_t size = 0;
+    if (!is_finalized()) {
+        return _column->byte_size() + root_index_size;
+    }
+    uint64_t size = root_index_size;
     size += _root_writer->estimate_buffer_size();
     for (auto& column_writer : _subcolumn_writers) {
         size += column_writer->estimate_buffer_size();
@@ -1748,6 +1796,7 @@ Status VariantV1ColumnWriter::write_inverted_index() {
         return _streaming_compaction_writer->write_inverted_index();
     }
     _assert_ready_for_index_writes();
+    RETURN_IF_ERROR(finish_variant_root_indexes(_root_index_writer_ptrs));
     for (size_t i = 0; i < _subcolumn_writers.size(); ++i) {
         if (_subcolumn_opts[i].need_inverted_index) {
             RETURN_IF_ERROR(_subcolumn_writers[i]->write_inverted_index());
@@ -1797,6 +1846,7 @@ VariantColumnWriterImpl::~VariantColumnWriterImpl() = default;
 Status VariantColumnWriterImpl::init() {
     DORIS_CHECK(!_initialized);
     _initialized = true;
+    DORIS_CHECK(_opts.rowset_ctx != nullptr);
     if (can_use_nested_group_streaming_compaction(_opts, *_tablet_column)) {
         return _initialize_v1_writer();
     }

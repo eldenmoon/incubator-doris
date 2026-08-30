@@ -18,6 +18,7 @@
 package org.apache.doris.nereids.trees.plans.commands.info;
 
 import org.apache.doris.analysis.AnnIndexPropertiesChecker;
+import org.apache.doris.analysis.InvertedIndexProperties;
 import org.apache.doris.analysis.InvertedIndexUtil;
 import org.apache.doris.catalog.Column;
 import org.apache.doris.catalog.Env;
@@ -106,6 +107,13 @@ public class IndexDefinition {
 
         if (properties != null) {
             this.properties.putAll(properties);
+        }
+        if (InvertedIndexUtil.VARIANT_INDEX_MODE_ROOT.equals(
+                this.properties.get(InvertedIndexUtil.VARIANT_INDEX_MODE_KEY))) {
+            this.properties.putIfAbsent(InvertedIndexUtil.VARIANT_ROOT_FORMAT_VERSION_KEY,
+                    InvertedIndexUtil.VARIANT_ROOT_FORMAT_VERSION_V1);
+            this.properties.putIfAbsent(InvertedIndexUtil.INVERTED_INDEX_SUPPORT_PHRASE_KEY,
+                    "false");
         }
 
         if (indexType == IndexType.NGRAM_BF) {
@@ -259,6 +267,8 @@ public class IndexDefinition {
             }
 
             if (indexType == IndexType.INVERTED) {
+                validateVariantRootIndex(colType.isVariantType(), keysType,
+                        enableUniqueKeyMergeOnWrite, invertedIndexFileStorageFormat);
                 try {
                     InvertedIndexUtil.checkInvertedIndexParser(indexColName,
                             colType.toCatalogDataType().getPrimitiveType(), properties,
@@ -380,6 +390,8 @@ public class IndexDefinition {
             }
 
             if (indexType == IndexType.INVERTED) {
+                validateVariantRootIndex(colType.isVariantType(), keysType,
+                        enableUniqueKeyMergeOnWrite, invertedIndexFileStorageFormat);
                 try {
                     InvertedIndexUtil.checkInvertedIndexParser(indexColName, colType, properties,
                             invertedIndexFileStorageFormat);
@@ -534,6 +546,48 @@ public class IndexDefinition {
         return properties;
     }
 
+    public boolean isVariantRootIndex() {
+        return indexType == IndexType.INVERTED
+                && InvertedIndexUtil.VARIANT_INDEX_MODE_ROOT.equals(
+                        properties.get(InvertedIndexUtil.VARIANT_INDEX_MODE_KEY));
+    }
+
+    private void validateVariantRootIndex(boolean isVariant, KeysType keysType,
+            boolean enableUniqueKeyMergeOnWrite,
+            TInvertedIndexFileStorageFormat invertedIndexFileStorageFormat) {
+        String mode = properties.get(InvertedIndexUtil.VARIANT_INDEX_MODE_KEY);
+        String formatVersion = properties.get(InvertedIndexUtil.VARIANT_ROOT_FORMAT_VERSION_KEY);
+        if (mode == null) {
+            if (formatVersion != null) {
+                throw new AnalysisException("variant_root_format_version requires variant_index_mode=root");
+            }
+            return;
+        }
+        if (!InvertedIndexUtil.VARIANT_INDEX_MODE_ROOT.equals(mode)) {
+            throw new AnalysisException("variant_index_mode must be root");
+        }
+        if (!isVariant) {
+            throw new AnalysisException("variant_index_mode=root can only be used on VARIANT columns");
+        }
+        if (!Config.enable_variant_v2) {
+            throw new AnalysisException("VARIANT root index requires enable_variant_v2=true");
+        }
+        if (invertedIndexFileStorageFormat != TInvertedIndexFileStorageFormat.SNII) {
+            throw new AnalysisException("VARIANT root index requires inverted_index_storage_format=SNII");
+        }
+        if (!InvertedIndexUtil.VARIANT_ROOT_FORMAT_VERSION_V1.equals(formatVersion)) {
+            throw new AnalysisException("unsupported variant_root_format_version: " + formatVersion);
+        }
+        if ("true".equals(properties.get(InvertedIndexUtil.INVERTED_INDEX_SUPPORT_PHRASE_KEY))) {
+            throw new AnalysisException("VARIANT root index does not support support_phrase=true");
+        }
+        if (keysType != KeysType.DUP_KEYS
+                && !(keysType == KeysType.UNIQUE_KEYS && enableUniqueKeyMergeOnWrite)) {
+            throw new AnalysisException(
+                    "VARIANT root index supports only DUP_KEYS or UNIQUE_KEYS merge-on-write tables");
+        }
+    }
+
     private void validateBloomFilterProperties() {
         if (properties.isEmpty()) {
             return;
@@ -585,11 +639,7 @@ public class IndexDefinition {
      */
     public boolean isAnalyzedInvertedIndex() {
         return indexType == IndexType.INVERTED
-                && properties != null
-                && (properties.containsKey(InvertedIndexUtil.INVERTED_INDEX_PARSER_KEY)
-                || properties.containsKey(InvertedIndexUtil.INVERTED_INDEX_PARSER_KEY_ALIAS)
-                || properties.containsKey(InvertedIndexUtil.INVERTED_INDEX_ANALYZER_NAME_KEY)
-                || properties.containsKey(InvertedIndexUtil.INVERTED_INDEX_NORMALIZER_NAME_KEY));
+                && InvertedIndexProperties.isAnalyzed(properties);
     }
 
     public String getAnalyzerIdentity() {

@@ -63,6 +63,13 @@ public:
                     "Inverted index evaluate skipped, no inverted index reader can not support "
                     "comparison predicate");
         }
+        if constexpr (PT == PredicateType::NE) {
+            if (iterator->is_variant_root_index()) {
+                return Status::Error<ErrorCode::INVERTED_INDEX_EVALUATE_SKIPPED>(
+                        "VARIANT root index leaves path NULL and missing rows to scalar "
+                        "evaluation");
+            }
+        }
 
         if (iterator->get_reader(segment_v2::InvertedIndexReaderType::STRING_TYPE) == nullptr &&
             iterator->get_reader(segment_v2::InvertedIndexReaderType::BKD) == nullptr) {

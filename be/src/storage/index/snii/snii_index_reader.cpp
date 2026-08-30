@@ -45,6 +45,7 @@
 #include "storage/index/inverted/inverted_index_cache.h"
 #include "storage/index/inverted/inverted_index_iterator.h"
 #include "storage/index/inverted/token_filter/common_grams_filter.h"
+#include "storage/index/inverted/variant_root_index.h"
 #include "storage/index/snii/format/null_bitmap.h"
 #include "storage/index/snii/query/boolean_query.h"
 #include "storage/index/snii/query/count_query.h"
@@ -603,6 +604,10 @@ Status SniiIndexReader::_query(const IndexQueryContextPtr& context, const std::s
         context->stats->inverted_index_query_timer = query_ns_before + exclusive_query_ns;
     });
     SCOPED_RAW_TIMER(&context->stats->inverted_index_query_timer);
+    if (variant_root_index::is_root_mode_properties(_index_meta.properties())) {
+        return _query_variant_root(context, column_name, query_value, query_type, bit_map,
+                                   null_bitmap_cache_handle, analyzer_ctx);
+    }
     const std::string search_str = query_value.get<PrimitiveType::TYPE_STRING>();
     const auto finish_query =
             [&](const ::doris::snii::reader::LogicalIndexReader* reader) -> Status {
@@ -854,6 +859,116 @@ Status SniiIndexReader::_query(const IndexQueryContextPtr& context, const std::s
     }
     bit_map = result_bitmap;
     return finish_query(logical_reader);
+}
+
+Status SniiIndexReader::_query_variant_root(const IndexQueryContextPtr& context,
+                                            const std::string& column_name,
+                                            const Field& query_value,
+                                            InvertedIndexQueryType query_type,
+                                            std::shared_ptr<roaring::Roaring>& bit_map,
+                                            InvertedIndexQueryCacheHandle* null_bitmap_cache_handle,
+                                            const InvertedIndexAnalyzerCtx* analyzer_ctx) {
+    if (query_type != InvertedIndexQueryType::EQUAL_QUERY &&
+        query_type != InvertedIndexQueryType::MATCH_ANY_QUERY &&
+        query_type != InvertedIndexQueryType::MATCH_ALL_QUERY) {
+        return Status::Error<ErrorCode::INVERTED_INDEX_EVALUATE_SKIPPED>(
+                "VARIANT root index supports only equality, IN, MATCH_ANY, and MATCH_ALL");
+    }
+    const auto bound_path = _index_meta.properties().find(
+            std::string(variant_root_index::VARIANT_ROOT_QUERY_PATH_KEY));
+    const std::string_view path = bound_path != _index_meta.properties().end()
+                                          ? std::string_view(bound_path->second)
+                                          : std::string_view(column_name);
+    if (path.empty()) {
+        return Status::Error<ErrorCode::INVERTED_INDEX_EVALUATE_SKIPPED>(
+                "VARIANT root index query has no relative path binding");
+    }
+    const auto bound_family = _index_meta.properties().find(
+            std::string(variant_root_index::VARIANT_ROOT_QUERY_VALUE_FAMILY_KEY));
+    const std::string_view query_family =
+            variant_root_index::query_value_family(query_value.get_type());
+    if (bound_family == _index_meta.properties().end() || query_family.empty() ||
+        bound_family->second != query_family) {
+        return Status::Error<ErrorCode::INVERTED_INDEX_EVALUATE_SKIPPED>(
+                "VARIANT root index path type is incompatible with the query value type");
+    }
+
+    snii_doris::DorisSniiFileReader::ScopedIOContext io_context_scope(context->io_ctx);
+    InvertedIndexCacheHandle searcher_cache_handle;
+    std::unique_ptr<::doris::snii::reader::LogicalIndexReader> uncached_reader;
+    const ::doris::snii::reader::LogicalIndexReader* logical_reader = nullptr;
+    RETURN_IF_ERROR(_get_logical_reader(context, &searcher_cache_handle, &uncached_reader,
+                                        &logical_reader));
+
+    const auto& stats = logical_reader->stats();
+    std::vector<uint32_t> null_docids;
+    const Status null_status = logical_reader->read_null_docids(&null_docids);
+    if (!null_status.ok() || stats.doc_count != _rows_of_segment ||
+        stats.indexed_doc_count + stats.null_count != stats.doc_count ||
+        null_docids.size() != stats.null_count) {
+        return Status::Error<ErrorCode::INVERTED_INDEX_EVALUATE_SKIPPED>(
+                "VARIANT root index row domain is incomplete for this segment");
+    }
+
+    std::vector<std::string> terms;
+    InvertedIndexQueryInfo query_info;
+    const bool should_analyze =
+            inverted_index::InvertedIndexAnalyzer::should_analyzer(_index_meta.properties());
+    if (query_type == InvertedIndexQueryType::EQUAL_QUERY) {
+        if (should_analyze) {
+            return Status::Error<ErrorCode::INVERTED_INDEX_EVALUATE_SKIPPED>(
+                    "VARIANT token root index cannot evaluate equality");
+        }
+        if (query_value.is_null()) {
+            return Status::Error<ErrorCode::INVERTED_INDEX_EVALUATE_SKIPPED>(
+                    "VARIANT exact root index does not evaluate NULL or missing paths");
+        }
+        if (is_string_type(query_value.get_type()) &&
+            query_value.as_string_view().size() >
+                    cast_set<size_t>(std::stoul(get_parser_ignore_above_value_from_properties(
+                            _index_meta.properties())))) {
+            return Status::Error<ErrorCode::INVERTED_INDEX_EVALUATE_SKIPPED>(
+                    "VARIANT root equality value exceeds ignore_above");
+        } else {
+            RETURN_IF_ERROR(
+                    variant_root_index::encode_query_value_terms(path, query_value, &terms));
+            if (terms.empty()) {
+                return Status::Error<ErrorCode::INVERTED_INDEX_EVALUATE_SKIPPED>(
+                        "VARIANT root equality type is unsupported");
+            }
+        }
+    } else {
+        if (!should_analyze) {
+            return Status::Error<ErrorCode::INVERTED_INDEX_EVALUATE_SKIPPED>(
+                    "VARIANT exact root index cannot evaluate MATCH");
+        }
+        if (!is_string_type(query_value.get_type())) {
+            return Status::Error<ErrorCode::INVERTED_INDEX_EVALUATE_SKIPPED>(
+                    "VARIANT root MATCH value is not a string");
+        }
+        RETURN_IF_ERROR(_parse_query_terms(context, std::string(query_value.as_string_view()),
+                                           query_type, analyzer_ctx, &query_info));
+        for (const TermInfo& term : query_info.term_infos) {
+            DORIS_CHECK(term.is_single_term());
+            terms.push_back(variant_root_index::encode_token_term(path, term.get_single_term()));
+        }
+        if (terms.empty()) {
+            bit_map = std::make_shared<roaring::Roaring>();
+            return Status::OK();
+        }
+    }
+
+    // Root terms are already physical keys in a private namespace. Passing them through the
+    // ordinary plain-term router would reject the binary format-version prefix as an internal
+    // namespace marker.
+    SniiQueryExecutionResult result;
+    RETURN_IF_ERROR(execute_snii_query(*logical_reader, query_type, query_info, "", terms, 0, false,
+                                       &result, nullptr));
+    bit_map = std::move(result.bitmap);
+    if (null_bitmap_cache_handle != nullptr) {
+        RETURN_IF_ERROR(_read_null_bitmap(context, null_bitmap_cache_handle, logical_reader));
+    }
+    return Status::OK();
 }
 
 Status SniiIndexReader::_compute_query_bitmap(

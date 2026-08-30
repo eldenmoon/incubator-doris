@@ -18,12 +18,14 @@
 #include "storage/index/inverted/inverted_index_iterator.h"
 
 #include <memory>
+#include <ranges>
 
 #include "common/cast_set.h"
 #include "common/logging.h"
 #include "storage/index/inverted/inverted_index_cache.h"
 #include "storage/index/inverted/inverted_index_parser.h"
 #include "storage/index/inverted/inverted_index_reader.h"
+#include "storage/index/inverted/variant_root_index.h"
 #include "storage/utils.h"
 
 namespace doris::segment_v2 {
@@ -132,6 +134,12 @@ Result<bool> InvertedIndexIterator::has_null() {
     return reader->has_null();
 }
 
+bool InvertedIndexIterator::is_variant_root_index() const {
+    return std::ranges::any_of(_readers, [](const InvertedIndexReaderPtr& reader) {
+        return variant_root_index::is_root_mode_properties(reader->get_index_properties());
+    });
+}
+
 Status InvertedIndexIterator::try_read_from_inverted_index(const InvertedIndexReaderPtr& reader,
                                                            const std::string& column_name,
                                                            const Field& query_value,
@@ -150,7 +158,7 @@ Status InvertedIndexIterator::try_read_from_inverted_index(const InvertedIndexRe
 
 Result<InvertedIndexReaderPtr> InvertedIndexIterator::select_best_reader(
         const DataTypePtr& column_type, InvertedIndexQueryType query_type,
-        const std::string& analyzer_key) {
+        const std::string& analyzer_key) const {
     const std::string normalized_key = ensure_normalized_key(analyzer_key);
     // The column type only disambiguates between several indexes on the same field; with a
     // single candidate the selection is already determined. Callers that have no runtime type
@@ -162,7 +170,8 @@ Result<InvertedIndexReaderPtr> InvertedIndexIterator::select_best_reader(
                     "column_type is required to select among {} inverted indexes",
                     _selection_candidates.size()));
         }
-        field_type = get_inverted_index_leaf_field_type(column_type);
+        field_type = is_variant_root_index() ? FieldType::OLAP_FIELD_TYPE_STRING
+                                             : get_inverted_index_leaf_field_type(column_type);
     }
     auto selection = select_best_inverted_index_candidate(_selection_candidates, _key_to_entries,
                                                           field_type, query_type, normalized_key);

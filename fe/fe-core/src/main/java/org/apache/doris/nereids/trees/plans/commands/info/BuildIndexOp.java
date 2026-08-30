@@ -18,6 +18,7 @@
 package org.apache.doris.nereids.trees.plans.commands.info;
 
 import org.apache.doris.alter.AlterOpType;
+import org.apache.doris.analysis.InvertedIndexProperties;
 import org.apache.doris.catalog.DatabaseIf;
 import org.apache.doris.catalog.Env;
 import org.apache.doris.catalog.Index;
@@ -132,6 +133,11 @@ public class BuildIndexOp extends AlterTableOp {
         }
         if (existedIdx == null) {
             throw new AnalysisException("Index[" + indexName + "] is not exist in table[" + tableName.getTbl() + "]");
+        }
+        if (existedIdx.getProperties() != null
+                && InvertedIndexProperties.VARIANT_INDEX_MODE_ROOT.equals(
+                existedIdx.getProperties().get(InvertedIndexProperties.VARIANT_INDEX_MODE_KEY))) {
+            throw new AnalysisException("BUILD INDEX is not supported for a VARIANT root index");
         }
 
         IndexType indexType = existedIdx.getIndexType();

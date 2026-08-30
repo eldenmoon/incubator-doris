@@ -171,10 +171,10 @@ private:
     Status failed_ = Status::OK();
 };
 
-// Sequential positions-posting decoder for one term in one source SNII index.
-// It accepts all v1 physical shapes (inline, slim POD-ref and windowed POD-ref),
-// validates the decoded doc/frequency/position stream, applies a validated
-// row-id conversion, and yields surviving rows in destination-order chunks.
+// Sequential posting decoder for one term in one source SNII index. It accepts all v1 physical
+// shapes (inline, slim POD-ref and windowed POD-ref), including docs-only T1 postings, validates
+// the decoded doc/frequency/position stream, applies a validated row-id conversion, and yields
+// surviving rows in destination-order chunks.
 //
 // The borrowed read context and row-id capability must outlive the cursor. A
 // cursor is single-use and single-threaded. Only one cursor may hold a context

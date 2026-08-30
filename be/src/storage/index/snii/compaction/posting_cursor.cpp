@@ -600,11 +600,7 @@ Status SniiPostingCursor::init() {
     if (!read_context_->failed_status().ok()) {
         return read_context_->failed_status();
     }
-    if (index_->tier() == format::IndexTier::kT1) {
-        return Status::Error<ErrorCode::INVERTED_INDEX_NOT_SUPPORTED, false>(
-                "posting_cursor: positions index is required");
-    }
-    if (!index_->has_positions()) {
+    if (term_has_positions_ && !index_->has_positions()) {
         return posting_corruption("positions tier lacks positions capability", source_ordinal_);
     }
     if (source_ordinal_ >= rowid_conversion_->source_segment_count()) {

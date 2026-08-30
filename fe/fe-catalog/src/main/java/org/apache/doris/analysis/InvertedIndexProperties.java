@@ -62,6 +62,11 @@ public class InvertedIndexProperties {
 
     public static String INVERTED_INDEX_PARSER_FIELD_PATTERN_KEY = "field_pattern";
 
+    public static final String VARIANT_INDEX_MODE_KEY = "variant_index_mode";
+    public static final String VARIANT_INDEX_MODE_ROOT = "root";
+    public static final String VARIANT_ROOT_FORMAT_VERSION_KEY = "variant_root_format_version";
+    public static final String VARIANT_ROOT_FORMAT_VERSION_V1 = "1";
+
     // Default analyzer key constant - matches BE's INVERTED_INDEX_DEFAULT_ANALYZER_KEY
     public static final String INVERTED_INDEX_DEFAULT_ANALYZER_KEY = "__default__";
 
@@ -107,6 +112,11 @@ public class InvertedIndexProperties {
         }
         String normalizer = properties.get(INVERTED_INDEX_NORMALIZER_NAME_KEY);
         return normalizer != null ? normalizer : "";
+    }
+
+    public static boolean isAnalyzed(Map<String, String> properties) {
+        return !Strings.isNullOrEmpty(getPreferredAnalyzer(properties))
+                || !INVERTED_INDEX_PARSER_NONE.equalsIgnoreCase(getInvertedIndexParser(properties));
     }
 
     public static Map<String, String> getInvertedIndexCharFilter(Map<String, String> properties) {

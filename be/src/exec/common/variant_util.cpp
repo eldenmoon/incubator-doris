@@ -87,6 +87,7 @@
 #include "re2/re2.h"
 #include "runtime/exec_env.h"
 #include "runtime/runtime_state.h"
+#include "storage/index/inverted/variant_root_index.h"
 #include "storage/olap_common.h"
 #include "storage/rowset/beta_rowset.h"
 #include "storage/rowset/rowset.h"
@@ -1377,6 +1378,19 @@ Status VariantCompactionUtil::get_extended_compaction_schema(
         }
         VLOG_DEBUG << "column " << column->name() << " unique id " << column->unique_id();
 
+        const auto parent_indexes = target->inverted_indexs(column->unique_id());
+        const bool has_root_index =
+                std::ranges::any_of(parent_indexes, [](const TabletIndex* index) {
+                    return segment_v2::variant_root_index::is_root_index(*index);
+                });
+        if (has_root_index) {
+            // A root index rebuild consumes the complete logical object. Keeping this column as
+            // one compaction field selects the hierarchical reader and lets the Variant writer
+            // shred the same logical value after all root indexes have observed it. Native SNII
+            // merge may skip the rebuild per index_id, but uses the same safe data path.
+            continue;
+        }
+
         const auto info_it = uid_to_variant_extended_info.find(column->unique_id());
         const VariantExtendedInfo empty_extended_info;
         const VariantExtendedInfo& extended_info = info_it == uid_to_variant_extended_info.end()
@@ -1777,7 +1791,14 @@ bool inherit_index(const std::vector<const TabletIndex*>& parent_indexes,
     if (field_is_numeric_type(column_type) ||
         (is_array_nested_type &&
          (field_is_numeric_type(column_type) || field_is_slice_type(column_type)))) {
-        auto index_ptr = std::make_shared<TabletIndex>(*parent_indexes[0]);
+        const auto parent_index = std::find_if(
+                parent_indexes.begin(), parent_indexes.end(), [](const TabletIndex* index) {
+                    return !segment_v2::variant_root_index::is_root_index(*index);
+                });
+        if (parent_index == parent_indexes.end()) {
+            return false;
+        }
+        auto index_ptr = std::make_shared<TabletIndex>(**parent_index);
         index_ptr->set_escaped_escaped_index_suffix_path(suffix_path);
         // no need parse for bkd index or array index
         index_ptr->remove_parser_and_analyzer();
@@ -1787,11 +1808,14 @@ bool inherit_index(const std::vector<const TabletIndex*>& parent_indexes,
     // string type need to inherit all indexes
     else if (field_is_slice_type(column_type) && !is_array_nested_type) {
         for (const auto& index : parent_indexes) {
+            if (segment_v2::variant_root_index::is_root_index(*index)) {
+                continue;
+            }
             auto index_ptr = std::make_shared<TabletIndex>(*index);
             index_ptr->set_escaped_escaped_index_suffix_path(suffix_path);
             subcolumns_indexes.emplace_back(std::move(index_ptr));
         }
-        return true;
+        return !subcolumns_indexes.empty();
     }
     return false;
 }

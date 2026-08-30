@@ -19,16 +19,21 @@
 
 #include <algorithm>
 #include <limits>
+#include <unordered_set>
 #include <utility>
 
 #include "common/cast_set.h"
+#include "common/config.h"
 #include "common/exception.h"
 #include "core/assert_cast.h"
 #include "core/column/column_string.h"
 #include "core/column/variant_v2/column_variant_v2.h"
 #include "exprs/function/parse/variant_jsonb_parse.h"
+#include "storage/index/inverted/inverted_index_parser.h"
+#include "storage/index/inverted/variant_root_index.h"
 #include "storage/iterator/olap_data_convertor.h"
 #include "storage/rowset/rowset_writer_context.h"
+#include "storage/segment/variant/v2/variant_root_index_writer.h"
 #include "storage/segment/variant/v2/variant_shredder.h"
 #include "storage/segment/variant/variant_column_writer_impl.h"
 #include "storage/segment/variant/variant_writer_helpers.h"
@@ -40,7 +45,8 @@ namespace {
 
 Status build_root_only_batch(const VariantColumnData& column, size_t num_rows,
                              std::span<const uint8_t> outer_nulls,
-                             ColumnString::MutablePtr* root_jsonb) {
+                             ColumnString::MutablePtr* root_jsonb,
+                             std::span<VariantRootIndexWriter*> root_index_writers) {
     DORIS_CHECK(column.column_data != nullptr);
     DORIS_CHECK(root_jsonb != nullptr);
     const auto* source = check_and_get_column<ColumnVariantV2>(*column.column_data);
@@ -57,6 +63,10 @@ Status build_root_only_batch(const VariantColumnData& column, size_t num_rows,
     const auto build_from_encoded = [&](const ColumnVariantV2::ReadView& view,
                                         size_t begin) -> Status {
         DORIS_CHECK(!view.is_typed());
+        if (!root_index_writers.empty()) {
+            RETURN_IF_ERROR(append_variant_root_indexes(root_index_writers, view, begin, num_rows,
+                                                        outer_nulls));
+        }
         auto result = ColumnString::create();
         JsonbWriter writer;
         try {
@@ -106,6 +116,36 @@ Status VariantV2ColumnWriter::init() {
             *_opts.rowset_ctx->tablet_schema, *_tablet_column));
     _root_only = variant_writer_helpers::has_extracted_variant_columns(
             *_opts.rowset_ctx->tablet_schema, _tablet_column->unique_id());
+    const auto parent_indexes =
+            _opts.rowset_ctx->tablet_schema->inverted_indexs(_tablet_column->unique_id());
+    std::unordered_set<std::string> root_analyzer_keys;
+    for (const TabletIndex* index : parent_indexes) {
+        if (!variant_root_index::is_root_index(*index)) {
+            continue;
+        }
+        const std::string analyzer_key = build_analyzer_key_from_properties(index->properties());
+        if (!root_analyzer_keys.emplace(analyzer_key).second) {
+            return Status::InvalidArgument(
+                    "VARIANT column {} has duplicate root index analyzer identity {}",
+                    _tablet_column->name(), analyzer_key);
+        }
+        const bool merged_by_compaction = _opts.rowset_ctx->snii_indexes_to_do_compaction.contains(
+                {_tablet_column->unique_id(), index->index_id()});
+        if (merged_by_compaction) {
+            continue;
+        }
+        if (_opts.index_file_writer == nullptr ||
+            _opts.index_file_writer->get_storage_format() != InvertedIndexStorageFormatPB::SNII) {
+            return Status::Error<ErrorCode::INVERTED_INDEX_NOT_SUPPORTED>(
+                    "VARIANT root index requires SNII storage format");
+        }
+        auto writer = std::make_unique<VariantRootIndexWriter>(
+                _opts.index_file_writer, index, _opts.is_direct_load,
+                config::variant_enable_duplicate_json_path_check);
+        RETURN_IF_ERROR(writer->init());
+        _root_index_writer_ptrs.push_back(writer.get());
+        _root_index_writers.push_back(std::move(writer));
+    }
     if (_root_only) {
         _root_jsonb = ColumnString::create();
         return Status::OK();
@@ -117,6 +157,7 @@ Status VariantV2ColumnWriter::init() {
     VariantShredderOptions options;
     RETURN_IF_ERROR(variant_writer_helpers::make_variant_shredder_options(
             *_opts.rowset_ctx->tablet_schema, *_tablet_column, physical_layout, &options));
+    options.root_index_writers = _root_index_writer_ptrs;
     _shredder = std::make_unique<VariantShredder>(std::move(options));
     return Status::OK();
 }
@@ -132,7 +173,8 @@ Status VariantV2ColumnWriter::append(const VariantColumnData& column, size_t num
             return Status::InvalidArgument("Variant writer row count overflows size_t");
         }
         ColumnString::MutablePtr batch_root_jsonb;
-        RETURN_IF_ERROR(build_root_only_batch(column, num_rows, outer_nulls, &batch_root_jsonb));
+        RETURN_IF_ERROR(build_root_only_batch(column, num_rows, outer_nulls, &batch_root_jsonb,
+                                              _root_index_writer_ptrs));
         DORIS_CHECK_EQ(batch_root_jsonb->size(), num_rows);
         RETURN_IF_CATCH_EXCEPTION(
                 { _root_jsonb->insert_range_from(*batch_root_jsonb, 0, num_rows); });
@@ -156,8 +198,11 @@ Status VariantV2ColumnWriter::_write_root(const IColumn* root_jsonb, int& column
                                        root_jsonb ? root_jsonb->size() : 0, _num_rows);
     }
     DORIS_CHECK_EQ(_outer_nulls->size(), _num_rows);
+    ColumnWriterOptions root_options = _opts;
+    root_options.inverted_indexes.clear();
+    root_options.need_inverted_index = false;
     _root_writer = std::make_unique<ScalarColumnWriter>(
-            _opts, std::make_shared<TabletColumn>(*_tablet_column), _opts.file_writer);
+            root_options, std::make_shared<TabletColumn>(*_tablet_column), _opts.file_writer);
     RETURN_IF_ERROR(_root_writer->init());
 
     const auto& values = assert_cast<const ColumnString&>(*root_jsonb);
@@ -314,6 +359,7 @@ Status VariantV2ColumnWriter::write_zone_map() {
 
 Status VariantV2ColumnWriter::write_inverted_index() {
     DORIS_CHECK(_is_finalized);
+    RETURN_IF_ERROR(finish_variant_root_indexes(_root_index_writer_ptrs));
     for (size_t index = 0; index < _subcolumn_writers.size(); ++index) {
         if (_subcolumn_opts[index].need_inverted_index) {
             RETURN_IF_ERROR(_subcolumn_writers[index]->write_inverted_index());
@@ -339,13 +385,17 @@ Status VariantV2ColumnWriter::write_bloom_filter_index() {
 }
 
 uint64_t VariantV2ColumnWriter::estimate_buffer_size() {
+    uint64_t root_index_size = 0;
+    for (const auto& writer : _root_index_writers) {
+        root_index_size += writer->size();
+    }
     if (!_is_finalized) {
         if (_root_only) {
             DORIS_CHECK(_root_jsonb);
-            return _outer_nulls->byte_size() + _root_jsonb->byte_size();
+            return _outer_nulls->byte_size() + _root_jsonb->byte_size() + root_index_size;
         }
         DORIS_CHECK(_shredder != nullptr);
-        return _outer_nulls->byte_size() + _shredder->byte_size();
+        return _outer_nulls->byte_size() + _shredder->byte_size() + root_index_size;
     }
     uint64_t size = _root_writer->estimate_buffer_size();
     for (const auto& writer : _subcolumn_writers) {
@@ -354,7 +404,7 @@ uint64_t VariantV2ColumnWriter::estimate_buffer_size() {
     if (_binary_writer != nullptr) {
         size += _binary_writer->estimate_buffer_size();
     }
-    return size;
+    return size + root_index_size;
 }
 
 } // namespace doris::segment_v2

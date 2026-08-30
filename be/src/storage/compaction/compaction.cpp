@@ -71,6 +71,7 @@
 #include "storage/index/inverted/inverted_index_desc.h"
 #include "storage/index/inverted/inverted_index_fs_directory.h"
 #include "storage/index/inverted/similarity/collection_statistics.h"
+#include "storage/index/inverted/variant_root_index.h"
 #include "storage/index/snii/compaction/eligibility.h"
 #include "storage/index/snii/compaction/snii_index_compaction.h"
 #include "storage/index/snii/writer/memory_reporter.h"
@@ -270,6 +271,10 @@ void Compaction::init_profile(const std::string& label) {
     _output_row_num_counter = ADD_COUNTER(_profile, "output_row_num", TUnit::UNIT);
     _output_segments_num_counter = ADD_COUNTER(_profile, "output_segments_num", TUnit::UNIT);
     _merge_rowsets_latency_timer = ADD_TIMER(_profile, "merge_rowsets_latency");
+    _merge_row_data_latency_timer = ADD_TIMER(_profile, "merge_row_data_latency");
+    _inverted_index_compaction_latency_timer =
+            ADD_TIMER(_profile, "inverted_index_compaction_latency");
+    _build_output_rowset_latency_timer = ADD_TIMER(_profile, "build_output_rowset_latency");
 }
 
 int64_t Compaction::merge_way_num() {
@@ -312,27 +317,31 @@ Status Compaction::merge_input_rowsets() {
     Status res;
     {
         SCOPED_TIMER(_merge_rowsets_latency_timer);
-        // 1. Merge segment files and write bkd inverted index
-        // TODO implement vertical compaction for seq map
-        if (_is_vertical && !_tablet->tablet_schema()->has_seq_map()) {
-            if (!_tablet->tablet_schema()->cluster_key_uids().empty()) {
-                RETURN_IF_ERROR(update_delete_bitmap());
+        {
+            SCOPED_TIMER(_merge_row_data_latency_timer);
+            // 1. Merge segment files and write bkd inverted index
+            // TODO implement vertical compaction for seq map
+            if (_is_vertical && !_tablet->tablet_schema()->has_seq_map()) {
+                if (!_tablet->tablet_schema()->cluster_key_uids().empty()) {
+                    RETURN_IF_ERROR(update_delete_bitmap());
+                }
+                auto progress_cb = [compaction_id = this->_compaction_id](int64_t total,
+                                                                          int64_t completed) {
+                    CompactionTaskTracker::instance()->update_progress(compaction_id, total,
+                                                                       completed);
+                };
+                res = Merger::vertical_merge_rowsets(
+                        _tablet, compaction_type(), *_cur_tablet_schema, input_rs_readers,
+                        _output_rs_writer.get(), cast_set<uint32_t>(get_avg_segment_rows()),
+                        way_num, &_stats, progress_cb);
+            } else {
+                if (!_tablet->tablet_schema()->cluster_key_uids().empty()) {
+                    return Status::InternalError(
+                            "mow table with cluster keys does not support non vertical compaction");
+                }
+                res = Merger::vmerge_rowsets(_tablet, compaction_type(), *_cur_tablet_schema,
+                                             input_rs_readers, _output_rs_writer.get(), &_stats);
             }
-            auto progress_cb = [compaction_id = this->_compaction_id](int64_t total,
-                                                                      int64_t completed) {
-                CompactionTaskTracker::instance()->update_progress(compaction_id, total, completed);
-            };
-            res = Merger::vertical_merge_rowsets(_tablet, compaction_type(), *_cur_tablet_schema,
-                                                 input_rs_readers, _output_rs_writer.get(),
-                                                 cast_set<uint32_t>(get_avg_segment_rows()),
-                                                 way_num, &_stats, progress_cb);
-        } else {
-            if (!_tablet->tablet_schema()->cluster_key_uids().empty()) {
-                return Status::InternalError(
-                        "mow table with cluster keys does not support non vertical compaction");
-            }
-            res = Merger::vmerge_rowsets(_tablet, compaction_type(), *_cur_tablet_schema,
-                                         input_rs_readers, _output_rs_writer.get(), &_stats);
         }
 
         _tablet->last_compaction_status = res;
@@ -340,16 +349,22 @@ Status Compaction::merge_input_rowsets() {
             return res;
         }
         // 2. Merge the remaining inverted index files of the string type
-        RETURN_IF_ERROR(do_inverted_index_compaction());
+        {
+            SCOPED_TIMER(_inverted_index_compaction_latency_timer);
+            RETURN_IF_ERROR(do_inverted_index_compaction());
+        }
     }
 
     COUNTER_UPDATE(_merged_rows_counter, _stats.merged_rows);
     COUNTER_UPDATE(_filtered_rows_counter, _stats.filtered_rows);
 
     // 3. In the `build`, `_close_file_writers` is called to close the inverted index file writer and write the final compound index file.
-    RETURN_NOT_OK_STATUS_WITH_WARN(_output_rs_writer->build(_output_rowset),
-                                   fmt::format("rowset writer build failed. output_version: {}",
-                                               _output_version.to_string()));
+    {
+        SCOPED_TIMER(_build_output_rowset_latency_timer);
+        RETURN_NOT_OK_STATUS_WITH_WARN(_output_rs_writer->build(_output_rowset),
+                                       fmt::format("rowset writer build failed. output_version: {}",
+                                                   _output_version.to_string()));
+    }
     _output_rowset->rowset_meta()->set_commit_tso(commit_tso_range(_input_rowsets));
 
     // When true, writers should remove variant extracted subcolumns from the
@@ -1471,8 +1486,13 @@ void Compaction::construct_index_compaction_columns(RowsetWriterContext& ctx) {
                 continue;
             }
             const int32_t col_unique_id = col_unique_ids[0];
-            if (!_cur_tablet_schema->has_column_unique_id(col_unique_id) ||
-                !field_is_slice_type(_cur_tablet_schema->column_by_uid(col_unique_id).type())) {
+            if (!_cur_tablet_schema->has_column_unique_id(col_unique_id)) {
+                continue;
+            }
+            const TabletColumn& column = _cur_tablet_schema->column_by_uid(col_unique_id);
+            if (!field_is_slice_type(column.type()) &&
+                !(column.is_variant_type() &&
+                  segment_v2::variant_root_index::is_root_index(*destination_index))) {
                 continue;
             }
 
