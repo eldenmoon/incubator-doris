@@ -135,7 +135,7 @@ public class BuildIndexOp extends AlterTableOp {
             throw new AnalysisException("Index[" + indexName + "] is not exist in table[" + tableName.getTbl() + "]");
         }
         if (existedIdx.getProperties() != null
-                && InvertedIndexProperties.VARIANT_INDEX_MODE_ROOT.equals(
+                && InvertedIndexProperties.isVariantRootIndexMode(
                 existedIdx.getProperties().get(InvertedIndexProperties.VARIANT_INDEX_MODE_KEY))) {
             throw new AnalysisException("BUILD INDEX is not supported for a VARIANT root index");
         }

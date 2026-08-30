@@ -27,6 +27,7 @@ import org.apache.doris.nereids.trees.expressions.ExprId;
 import org.apache.doris.nereids.trees.expressions.Expression;
 import org.apache.doris.nereids.trees.expressions.GreaterThan;
 import org.apache.doris.nereids.trees.expressions.InPredicate;
+import org.apache.doris.nereids.trees.expressions.MatchAny;
 import org.apache.doris.nereids.trees.expressions.SlotReference;
 import org.apache.doris.nereids.trees.expressions.functions.agg.Avg;
 import org.apache.doris.nereids.trees.expressions.functions.agg.Count;
@@ -107,6 +108,25 @@ public class ExpressionAnalyzerVariantAutoCastTest {
         ElementAt elementAt = new ElementAt(slot, new StringLiteral("num_a"));
         Expression result = analyze(elementAt, scope, true);
         assertCastElementAt(result);
+    }
+
+    @Test
+    public void testMatchKeepsRootVariantButCastsSubcolumn() {
+        VariantType variantType = buildVariantType();
+        SlotReference slot = buildVariantSlot(variantType);
+        Scope scope = new Scope(ImmutableList.of(slot));
+
+        MatchAny rootMatch = new MatchAny(slot, new StringLiteral("doris"));
+        Expression rootResult = analyze(rootMatch, scope, true);
+        Assertions.assertTrue(rootResult instanceof MatchAny);
+        Assertions.assertTrue(rootResult.child(0).getDataType().isVariantType());
+        Assertions.assertFalse(rootResult.child(0) instanceof Cast);
+
+        ElementAt elementAt = new ElementAt(slot, new StringLiteral("str_name"));
+        MatchAny pathMatch = new MatchAny(elementAt, new StringLiteral("doris"));
+        Expression pathResult = analyze(pathMatch, scope, true);
+        Assertions.assertTrue(pathResult instanceof MatchAny);
+        assertCastElementAt(pathResult.child(0));
     }
 
     @Test

@@ -77,6 +77,12 @@ Status InvertedIndexIterator::read_from_index(const IndexParam& param) {
         return Status::Error<ErrorCode::INVERTED_INDEX_CLUCENE_ERROR>(
                 "inverted index reader is null");
     }
+    const auto& selected_properties = reader->get_index_properties();
+    i_param->requires_recheck =
+            variant_root_index::is_path_root_mode_properties(selected_properties) ||
+            (variant_root_index::is_all_values_mode_properties(selected_properties) &&
+             selected_properties.contains(
+                     std::string(variant_root_index::VARIANT_ROOT_QUERY_PATH_KEY)));
     auto* runtime_state = _context->runtime_state;
     if (!i_param->skip_try && reader->type() == InvertedIndexReaderType::BKD) {
         if (runtime_state != nullptr &&
@@ -138,6 +144,19 @@ bool InvertedIndexIterator::is_variant_root_index() const {
     return std::ranges::any_of(_readers, [](const InvertedIndexReaderPtr& reader) {
         return variant_root_index::is_root_mode_properties(reader->get_index_properties());
     });
+}
+
+bool InvertedIndexIterator::has_variant_all_values_reader(InvertedIndexReaderType type) const {
+    for (size_t i = 0; i < _selection_candidates.size(); ++i) {
+        if (_selection_candidates[i].reader_type == type) {
+            DORIS_CHECK(i < _readers.size());
+            if (variant_root_index::is_all_values_mode_properties(
+                        _readers[i]->get_index_properties())) {
+                return true;
+            }
+        }
+    }
+    return false;
 }
 
 Status InvertedIndexIterator::try_read_from_inverted_index(const InvertedIndexReaderPtr& reader,

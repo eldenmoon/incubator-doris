@@ -697,7 +697,8 @@ public:
         if (iter == nullptr) {
             return Status::OK();
         }
-        if (!segment_v2::IndexReaderHelper::has_string_or_bkd_index(iter)) {
+        if (!segment_v2::IndexReaderHelper::has_string_or_bkd_index(iter) &&
+            !iter->has_variant_all_values_reader(segment_v2::InvertedIndexReaderType::FULLTEXT)) {
             return Status::OK();
         }
         segment_v2::InvertedIndexQueryType query_type;
@@ -745,7 +746,7 @@ public:
             null_bitmap = null_bitmap_cache_handle.get_bitmap();
         }
         segment_v2::InvertedIndexResultBitmap result(param.roaring, null_bitmap,
-                                                     iter->is_variant_root_index());
+                                                     param.requires_recheck);
         bitmap_result = result;
         bitmap_result.mask_out_null();
 

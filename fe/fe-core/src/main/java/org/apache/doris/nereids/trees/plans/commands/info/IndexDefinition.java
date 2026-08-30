@@ -108,14 +108,13 @@ public class IndexDefinition {
         if (properties != null) {
             this.properties.putAll(properties);
         }
-        if (InvertedIndexUtil.VARIANT_INDEX_MODE_ROOT.equals(
+        if (InvertedIndexUtil.isVariantRootIndexMode(
                 this.properties.get(InvertedIndexUtil.VARIANT_INDEX_MODE_KEY))) {
             this.properties.putIfAbsent(InvertedIndexUtil.VARIANT_ROOT_FORMAT_VERSION_KEY,
                     InvertedIndexUtil.VARIANT_ROOT_FORMAT_VERSION_V1);
             this.properties.putIfAbsent(InvertedIndexUtil.INVERTED_INDEX_SUPPORT_PHRASE_KEY,
                     "false");
         }
-
         if (indexType == IndexType.NGRAM_BF) {
             this.properties.putIfAbsent(NGRAM_SIZE_KEY, DEFAULT_NGRAM_SIZE);
             this.properties.putIfAbsent(NGRAM_BF_SIZE_KEY, DEFAULT_NGRAM_BF_SIZE);
@@ -548,7 +547,7 @@ public class IndexDefinition {
 
     public boolean isVariantRootIndex() {
         return indexType == IndexType.INVERTED
-                && InvertedIndexUtil.VARIANT_INDEX_MODE_ROOT.equals(
+                && InvertedIndexUtil.isVariantRootIndexMode(
                         properties.get(InvertedIndexUtil.VARIANT_INDEX_MODE_KEY));
     }
 
@@ -559,15 +558,17 @@ public class IndexDefinition {
         String formatVersion = properties.get(InvertedIndexUtil.VARIANT_ROOT_FORMAT_VERSION_KEY);
         if (mode == null) {
             if (formatVersion != null) {
-                throw new AnalysisException("variant_root_format_version requires variant_index_mode=root");
+                throw new AnalysisException(
+                        "variant_root_format_version requires variant_index_mode=root or all_values");
             }
             return;
         }
-        if (!InvertedIndexUtil.VARIANT_INDEX_MODE_ROOT.equals(mode)) {
-            throw new AnalysisException("variant_index_mode must be root");
+        if (!InvertedIndexUtil.isVariantRootIndexMode(mode)) {
+            throw new AnalysisException("variant_index_mode must be root or all_values");
         }
         if (!isVariant) {
-            throw new AnalysisException("variant_index_mode=root can only be used on VARIANT columns");
+            throw new AnalysisException(
+                    "variant_index_mode=" + mode + " can only be used on VARIANT columns");
         }
         if (!Config.enable_variant_v2) {
             throw new AnalysisException("VARIANT root index requires enable_variant_v2=true");

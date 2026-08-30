@@ -52,7 +52,7 @@ public:
 
     Status init();
     Status begin_document(bool sql_null);
-    Status add_leaf(std::string_view relative_path, const VariantRef& value);
+    Status add_leaf(std::string_view relative_path, const VariantRef& value, bool is_root_value);
     Status end_document();
     Status append(const ColumnVariantV2::ReadView& view, size_t begin, size_t length,
                   std::span<const uint8_t> outer_nulls);
@@ -66,12 +66,18 @@ private:
         Slice value;
     };
 
+    struct OwnedAnalyzedValue {
+        std::string prefix;
+        std::string value;
+    };
+
     Status _mark_leaf(std::string_view relative_path, bool* inserted);
 
     IndexFileWriter* _index_file_writer = nullptr;
     const TabletIndex* _index_meta = nullptr;
     bool _is_direct_load = false;
     bool _check_duplicate_json_path = false;
+    bool _all_values = false;
     bool _should_analyze = false;
     uint32_t _ignore_above = 0;
     bool _document_open = false;
@@ -79,6 +85,7 @@ private:
     std::unique_ptr<SniiIndexColumnWriter> _writer;
     std::vector<std::string> _exact_terms;
     std::vector<AnalyzedValue> _analyzed_values;
+    std::vector<OwnedAnalyzedValue> _owned_analyzed_values;
     std::unordered_set<std::string> _seen_paths;
 };
 

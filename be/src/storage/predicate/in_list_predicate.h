@@ -155,7 +155,9 @@ public:
         }
         // only string type and bkd inverted index reader can be used for in
         if (iterator->get_reader(segment_v2::InvertedIndexReaderType::STRING_TYPE) == nullptr &&
-            iterator->get_reader(segment_v2::InvertedIndexReaderType::BKD) == nullptr) {
+            iterator->get_reader(segment_v2::InvertedIndexReaderType::BKD) == nullptr &&
+            !iterator->has_variant_all_values_reader(
+                    segment_v2::InvertedIndexReaderType::FULLTEXT)) {
             //NOT support in list when parser is FULLTEXT for expr inverted index evaluate.
             return Status::Error<ErrorCode::INVERTED_INDEX_EVALUATE_SKIPPED>(
                     "Inverted index evaluate skipped, no inverted index reader can not support "

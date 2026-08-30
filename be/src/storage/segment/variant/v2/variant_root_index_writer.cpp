@@ -53,6 +53,7 @@ Status VariantRootIndexWriter::init() {
         return Status::Error<ErrorCode::INVERTED_INDEX_NOT_SUPPORTED>(
                 "VARIANT root index does not support phrase positions");
     }
+    _all_values = variant_root_index::is_all_values_index(*_index_meta);
     _ignore_above = cast_set<uint32_t>(
             std::stoul(get_parser_ignore_above_value_from_properties(_index_meta->properties())));
     _should_analyze =
@@ -71,6 +72,7 @@ Status VariantRootIndexWriter::begin_document(bool sql_null) {
     _sql_null = sql_null;
     _exact_terms.clear();
     _analyzed_values.clear();
+    _owned_analyzed_values.clear();
     _seen_paths.clear();
     return Status::OK();
 }
@@ -91,10 +93,30 @@ Status VariantRootIndexWriter::_mark_leaf(std::string_view relative_path, bool* 
     return Status::OK();
 }
 
-Status VariantRootIndexWriter::add_leaf(std::string_view relative_path, const VariantRef& value) {
+Status VariantRootIndexWriter::add_leaf(std::string_view relative_path, const VariantRef& value,
+                                        bool is_root_value) {
+    if (is_root_value && !_all_values) {
+        return Status::OK();
+    }
     bool inserted = false;
     RETURN_IF_ERROR(_mark_leaf(relative_path, &inserted));
     if (!inserted) {
+        return Status::OK();
+    }
+
+    if (_all_values) {
+        if (value.is_null()) {
+            return Status::OK();
+        }
+        std::string serialized;
+        RETURN_IF_ERROR(variant_root_index::serialize_all_value(value, &serialized));
+        if (_should_analyze) {
+            _owned_analyzed_values.push_back(
+                    {.prefix = variant_root_index::encode_all_value_token_term(""),
+                     .value = std::move(serialized)});
+        } else if (serialized.size() <= _ignore_above) {
+            _exact_terms.push_back(variant_root_index::encode_all_value_term(serialized));
+        }
         return Status::OK();
     }
 
@@ -121,9 +143,12 @@ Status VariantRootIndexWriter::end_document() {
         status = _writer->add_nulls(1);
     } else {
         std::vector<SniiIndexColumnWriter::PrefixedAnalyzedValue> analyzed_values;
-        analyzed_values.reserve(_analyzed_values.size());
+        analyzed_values.reserve(_analyzed_values.size() + _owned_analyzed_values.size());
         for (const AnalyzedValue& value : _analyzed_values) {
             analyzed_values.push_back({.term_prefix = value.prefix, .value = value.value});
+        }
+        for (const OwnedAnalyzedValue& value : _owned_analyzed_values) {
+            analyzed_values.push_back({.term_prefix = value.prefix, .value = Slice(value.value)});
         }
         status = _writer->add_document(_exact_terms, analyzed_values);
     }
@@ -136,12 +161,10 @@ namespace {
 Status visit_root_index_writers(std::span<VariantRootIndexWriter*> writers, const VariantRef& value,
                                 const PathInData& relative_path) {
     if (value.basic_type() != VariantBasicType::OBJECT) {
-        if (relative_path.empty()) {
-            return Status::OK();
-        }
+        const bool is_root_value = relative_path.empty();
         for (VariantRootIndexWriter* writer : writers) {
             DORIS_CHECK(writer != nullptr);
-            RETURN_IF_ERROR(writer->add_leaf(relative_path.get_path(), value));
+            RETURN_IF_ERROR(writer->add_leaf(relative_path.get_path(), value, is_root_value));
         }
         return Status::OK();
     }
@@ -279,6 +302,10 @@ size_t VariantRootIndexWriter::size() const {
     }
     for (const AnalyzedValue& value : _analyzed_values) {
         result += value.prefix.capacity();
+    }
+    for (const OwnedAnalyzedValue& value : _owned_analyzed_values) {
+        result += value.prefix.capacity();
+        result += value.value.capacity();
     }
     for (const std::string& path : _seen_paths) {
         result += path.capacity();

@@ -868,29 +868,35 @@ Status SniiIndexReader::_query_variant_root(const IndexQueryContextPtr& context,
                                             std::shared_ptr<roaring::Roaring>& bit_map,
                                             InvertedIndexQueryCacheHandle* null_bitmap_cache_handle,
                                             const InvertedIndexAnalyzerCtx* analyzer_ctx) {
+    static_cast<void>(column_name);
     if (query_type != InvertedIndexQueryType::EQUAL_QUERY &&
         query_type != InvertedIndexQueryType::MATCH_ANY_QUERY &&
         query_type != InvertedIndexQueryType::MATCH_ALL_QUERY) {
         return Status::Error<ErrorCode::INVERTED_INDEX_EVALUATE_SKIPPED>(
                 "VARIANT root index supports only equality, IN, MATCH_ANY, and MATCH_ALL");
     }
+    const bool all_values =
+            variant_root_index::is_all_values_mode_properties(_index_meta.properties());
     const auto bound_path = _index_meta.properties().find(
             std::string(variant_root_index::VARIANT_ROOT_QUERY_PATH_KEY));
-    const std::string_view path = bound_path != _index_meta.properties().end()
-                                          ? std::string_view(bound_path->second)
-                                          : std::string_view(column_name);
-    if (path.empty()) {
+    const bool has_bound_path = bound_path != _index_meta.properties().end();
+    const std::string_view path =
+            has_bound_path ? std::string_view(bound_path->second) : std::string_view {};
+    if ((!all_values && !has_bound_path) || (has_bound_path && path.empty()) ||
+        (all_values && !has_bound_path && query_type == InvertedIndexQueryType::EQUAL_QUERY)) {
         return Status::Error<ErrorCode::INVERTED_INDEX_EVALUATE_SKIPPED>(
                 "VARIANT root index query has no relative path binding");
     }
-    const auto bound_family = _index_meta.properties().find(
-            std::string(variant_root_index::VARIANT_ROOT_QUERY_VALUE_FAMILY_KEY));
-    const std::string_view query_family =
-            variant_root_index::query_value_family(query_value.get_type());
-    if (bound_family == _index_meta.properties().end() || query_family.empty() ||
-        bound_family->second != query_family) {
-        return Status::Error<ErrorCode::INVERTED_INDEX_EVALUATE_SKIPPED>(
-                "VARIANT root index path type is incompatible with the query value type");
+    if (has_bound_path) {
+        const auto bound_family = _index_meta.properties().find(
+                std::string(variant_root_index::VARIANT_ROOT_QUERY_VALUE_FAMILY_KEY));
+        const std::string_view query_family =
+                variant_root_index::query_value_family(query_value.get_type());
+        if (bound_family == _index_meta.properties().end() || query_family.empty() ||
+            bound_family->second != query_family) {
+            return Status::Error<ErrorCode::INVERTED_INDEX_EVALUATE_SKIPPED>(
+                    "VARIANT root index path type is incompatible with the query value type");
+        }
     }
 
     snii_doris::DorisSniiFileReader::ScopedIOContext io_context_scope(context->io_ctx);
@@ -912,45 +918,89 @@ Status SniiIndexReader::_query_variant_root(const IndexQueryContextPtr& context,
 
     std::vector<std::string> terms;
     InvertedIndexQueryInfo query_info;
+    InvertedIndexQueryType execution_query_type = query_type;
     const bool should_analyze =
             inverted_index::InvertedIndexAnalyzer::should_analyzer(_index_meta.properties());
     if (query_type == InvertedIndexQueryType::EQUAL_QUERY) {
         if (should_analyze) {
-            return Status::Error<ErrorCode::INVERTED_INDEX_EVALUATE_SKIPPED>(
-                    "VARIANT token root index cannot evaluate equality");
-        }
-        if (query_value.is_null()) {
-            return Status::Error<ErrorCode::INVERTED_INDEX_EVALUATE_SKIPPED>(
-                    "VARIANT exact root index does not evaluate NULL or missing paths");
-        }
-        if (is_string_type(query_value.get_type()) &&
-            query_value.as_string_view().size() >
-                    cast_set<size_t>(std::stoul(get_parser_ignore_above_value_from_properties(
-                            _index_meta.properties())))) {
-            return Status::Error<ErrorCode::INVERTED_INDEX_EVALUATE_SKIPPED>(
-                    "VARIANT root equality value exceeds ignore_above");
+            if (!all_values) {
+                return Status::Error<ErrorCode::INVERTED_INDEX_EVALUATE_SKIPPED>(
+                        "VARIANT token root index cannot evaluate this equality");
+            }
+            std::string serialized_query;
+            RETURN_IF_ERROR(variant_root_index::serialize_all_values_query_value(
+                    query_value, &serialized_query));
+            if (serialized_query.empty() &&
+                !(is_string_type(query_value.get_type()) && query_value.as_string_view().empty())) {
+                return Status::Error<ErrorCode::INVERTED_INDEX_EVALUATE_SKIPPED>(
+                        "VARIANT token all-values equality type is unsupported");
+            }
+            RETURN_IF_ERROR(_parse_query_terms(context, std::move(serialized_query),
+                                               InvertedIndexQueryType::MATCH_ALL_QUERY,
+                                               analyzer_ctx, &query_info));
+            for (const TermInfo& term : query_info.term_infos) {
+                DORIS_CHECK(term.is_single_term());
+                terms.push_back(
+                        variant_root_index::encode_all_value_token_term(term.get_single_term()));
+            }
+            if (terms.empty()) {
+                return Status::Error<ErrorCode::INVERTED_INDEX_EVALUATE_SKIPPED>(
+                        "VARIANT all-values equality has no analyzer terms");
+            }
+            execution_query_type = InvertedIndexQueryType::MATCH_ALL_QUERY;
         } else {
-            RETURN_IF_ERROR(
-                    variant_root_index::encode_query_value_terms(path, query_value, &terms));
+            if (query_value.is_null()) {
+                return Status::Error<ErrorCode::INVERTED_INDEX_EVALUATE_SKIPPED>(
+                        "VARIANT exact root index does not evaluate NULL or missing paths");
+            }
+            if (is_string_type(query_value.get_type()) &&
+                query_value.as_string_view().size() >
+                        cast_set<size_t>(std::stoul(get_parser_ignore_above_value_from_properties(
+                                _index_meta.properties())))) {
+                return Status::Error<ErrorCode::INVERTED_INDEX_EVALUATE_SKIPPED>(
+                        "VARIANT root equality value exceeds ignore_above");
+            }
+            if (all_values) {
+                RETURN_IF_ERROR(variant_root_index::encode_all_values_query_value_terms(query_value,
+                                                                                        &terms));
+            } else {
+                RETURN_IF_ERROR(
+                        variant_root_index::encode_query_value_terms(path, query_value, &terms));
+            }
             if (terms.empty()) {
                 return Status::Error<ErrorCode::INVERTED_INDEX_EVALUATE_SKIPPED>(
                         "VARIANT root equality type is unsupported");
             }
         }
     } else {
-        if (!should_analyze) {
-            return Status::Error<ErrorCode::INVERTED_INDEX_EVALUATE_SKIPPED>(
-                    "VARIANT exact root index cannot evaluate MATCH");
-        }
         if (!is_string_type(query_value.get_type())) {
             return Status::Error<ErrorCode::INVERTED_INDEX_EVALUATE_SKIPPED>(
                     "VARIANT root MATCH value is not a string");
         }
-        RETURN_IF_ERROR(_parse_query_terms(context, std::string(query_value.as_string_view()),
-                                           query_type, analyzer_ctx, &query_info));
-        for (const TermInfo& term : query_info.term_infos) {
-            DORIS_CHECK(term.is_single_term());
-            terms.push_back(variant_root_index::encode_token_term(path, term.get_single_term()));
+        if (!should_analyze) {
+            if (!all_values) {
+                return Status::Error<ErrorCode::INVERTED_INDEX_EVALUATE_SKIPPED>(
+                        "VARIANT exact root index cannot evaluate MATCH");
+            }
+            if (query_value.as_string_view().size() >
+                cast_set<size_t>(std::stoul(
+                        get_parser_ignore_above_value_from_properties(_index_meta.properties())))) {
+                return Status::Error<ErrorCode::INVERTED_INDEX_EVALUATE_SKIPPED>(
+                        "VARIANT all-values MATCH value exceeds ignore_above");
+            }
+            terms.push_back(
+                    variant_root_index::encode_all_value_term(query_value.as_string_view()));
+            execution_query_type = InvertedIndexQueryType::EQUAL_QUERY;
+        } else {
+            RETURN_IF_ERROR(_parse_query_terms(context, std::string(query_value.as_string_view()),
+                                               query_type, analyzer_ctx, &query_info));
+            for (const TermInfo& term : query_info.term_infos) {
+                DORIS_CHECK(term.is_single_term());
+                terms.push_back(all_values ? variant_root_index::encode_all_value_token_term(
+                                                     term.get_single_term())
+                                           : variant_root_index::encode_token_term(
+                                                     path, term.get_single_term()));
+            }
         }
         if (terms.empty()) {
             bit_map = std::make_shared<roaring::Roaring>();
@@ -962,8 +1012,8 @@ Status SniiIndexReader::_query_variant_root(const IndexQueryContextPtr& context,
     // ordinary plain-term router would reject the binary format-version prefix as an internal
     // namespace marker.
     SniiQueryExecutionResult result;
-    RETURN_IF_ERROR(execute_snii_query(*logical_reader, query_type, query_info, "", terms, 0, false,
-                                       &result, nullptr));
+    RETURN_IF_ERROR(execute_snii_query(*logical_reader, execution_query_type, query_info, "", terms,
+                                       0, false, &result, nullptr));
     bit_map = std::move(result.bitmap);
     if (null_bitmap_cache_handle != nullptr) {
         RETURN_IF_ERROR(_read_null_bitmap(context, null_bitmap_cache_handle, logical_reader));

@@ -76,6 +76,40 @@ public class OlapTableTest {
     }
 
     @Test
+    public void testVariantRootMatchSelectsOnlyAllValuesIndex() {
+        Column variantColumn = new Column("v", Type.VARIANT);
+        Map<String, String> pathRootProperties = Maps.newHashMap();
+        pathRootProperties.put(InvertedIndexProperties.INVERTED_INDEX_PARSER_KEY,
+                InvertedIndexProperties.INVERTED_INDEX_PARSER_ENGLISH);
+        pathRootProperties.put(InvertedIndexProperties.VARIANT_INDEX_MODE_KEY,
+                InvertedIndexProperties.VARIANT_INDEX_MODE_ROOT);
+        Map<String, String> allValuesProperties = Maps.newHashMap(pathRootProperties);
+        allValuesProperties.put(InvertedIndexProperties.VARIANT_INDEX_MODE_KEY,
+                InvertedIndexProperties.VARIANT_INDEX_MODE_ALL_VALUES);
+        allValuesProperties.put(InvertedIndexProperties.VARIANT_ROOT_FORMAT_VERSION_KEY,
+                InvertedIndexProperties.VARIANT_ROOT_FORMAT_VERSION_V1);
+
+        Index pathRoot = new Index(1L, "v_root", Lists.newArrayList("v"),
+                IndexType.INVERTED, pathRootProperties, "");
+        Index allValues = new Index(2L, "v_all_values", Lists.newArrayList("v"),
+                IndexType.INVERTED, allValuesProperties, "");
+        OlapTable table = new OlapTable();
+        table.setIndexes(Lists.newArrayList(pathRoot, allValues));
+
+        Assert.assertSame(pathRoot,
+                table.getInvertedIndex(variantColumn, Lists.newArrayList(), "english"));
+        Assert.assertSame(allValues, table.getVariantAllValuesIndex(variantColumn, "english"));
+        Map<String, String> unsupportedProperties = Maps.newHashMap(allValuesProperties);
+        unsupportedProperties.put(InvertedIndexProperties.VARIANT_ROOT_FORMAT_VERSION_KEY, "2");
+        Index unsupported = new Index(3L, "v_all_values_v2", Lists.newArrayList("v"),
+                IndexType.INVERTED, unsupportedProperties, "");
+        table.setIndexes(Lists.newArrayList(unsupported));
+        Assert.assertNull(table.getVariantAllValuesIndex(variantColumn, "english"));
+        table.setIndexes(Lists.newArrayList(pathRoot));
+        Assert.assertNull(table.getVariantAllValuesIndex(variantColumn, "english"));
+    }
+
+    @Test
     public void testGetTableStatusStatsUsesSinglePassSemantics() {
         OlapTable olapTable = new OlapTable();
         MaterializedIndex index = new MaterializedIndex(10, MaterializedIndex.IndexState.NORMAL);

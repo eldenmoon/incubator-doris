@@ -1540,7 +1540,10 @@ TabletIndexes VariantColumnReader::find_subcolumn_tablet_indexes(const TabletCol
             }
             const bool analyzed =
                     inverted_index::InvertedIndexAnalyzer::should_analyzer(index->properties());
-            if ((analyzed && is_string_type(path_type)) || (!analyzed && root_exact_supported)) {
+            if ((analyzed &&
+                 (is_string_type(path_type) ||
+                  (variant_root_index::is_all_values_index(*index) && root_exact_supported))) ||
+                (!analyzed && root_exact_supported)) {
                 sub_column_info.indexes.push_back(
                         variant_root_index::make_query_index(*index, relative_path_str, path_type));
             }

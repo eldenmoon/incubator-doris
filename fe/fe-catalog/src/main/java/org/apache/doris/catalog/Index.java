@@ -83,7 +83,7 @@ public class Index implements Writable {
                             .INVERTED_INDEX_SUPPORT_PHRASE_KEY;
                     if (!this.properties.containsKey(supportPhraseKey)) {
                         this.properties.put(supportPhraseKey,
-                                InvertedIndexProperties.VARIANT_INDEX_MODE_ROOT.equals(
+                                InvertedIndexProperties.isVariantRootIndexMode(
                                         this.properties.get(InvertedIndexProperties.VARIANT_INDEX_MODE_KEY))
                                         ? "false" : "true");
                     }
@@ -326,5 +326,14 @@ public class Index implements Writable {
     public boolean isAnalyzedInvertedIndex() {
         return indexType == IndexType.INVERTED
                 && InvertedIndexProperties.isAnalyzed(properties);
+    }
+
+    public boolean isVariantAllValuesIndex() {
+        return indexType == IndexType.INVERTED
+                && properties != null
+                && InvertedIndexProperties.VARIANT_INDEX_MODE_ALL_VALUES.equals(
+                        properties.get(InvertedIndexProperties.VARIANT_INDEX_MODE_KEY))
+                && InvertedIndexProperties.VARIANT_ROOT_FORMAT_VERSION_V1.equals(
+                        properties.get(InvertedIndexProperties.VARIANT_ROOT_FORMAT_VERSION_KEY));
     }
 }

@@ -273,6 +273,26 @@ TEST(SniiCompactionEligibilityTest, AcceptsHomogeneousDocsOnlyT1Sources) {
                         .ok());
 }
 
+TEST(SniiCompactionEligibilityTest, AllValuesModeIsEligibleButCannotMergeWithPathRootMode) {
+    auto source_index = open_index(IndexShape {.tier = format::IndexTier::kT1});
+    auto all_values_properties = docs_only_properties();
+    all_values_properties["variant_index_mode"] = "all_values";
+    auto source_meta = make_index(all_values_properties);
+    auto all_values_destination = make_index(all_values_properties);
+    std::vector sources {source(*source_index, *source_meta)};
+
+    compaction::SniiCompactionEligibility eligibility;
+    ASSERT_TRUE(compaction::validate_snii_compaction_eligibility(sources, *all_values_destination,
+                                                                 &eligibility)
+                        .ok());
+    EXPECT_EQ(eligibility.kind, compaction::SniiStreamedMergeKind::kDocsOnlyT1);
+
+    auto path_root_destination = make_index(docs_only_properties());
+    expect_rejected(compaction::validate_snii_compaction_eligibility(
+                            sources, *path_root_destination, &eligibility),
+                    "destination properties differ");
+}
+
 TEST(SniiCompactionEligibilityTest, RejectsOrdinaryDocsOnlyIndex) {
     auto source_index = open_index(IndexShape {.tier = format::IndexTier::kT1});
     auto source_meta = make_index({{"parser", "none"}, {"support_phrase", "false"}});

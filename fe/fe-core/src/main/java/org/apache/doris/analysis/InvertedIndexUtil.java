@@ -91,10 +91,16 @@ public class InvertedIndexUtil {
             InvertedIndexProperties.INVERTED_INDEX_PARSER_FIELD_PATTERN_KEY;
     public static final String VARIANT_INDEX_MODE_KEY = InvertedIndexProperties.VARIANT_INDEX_MODE_KEY;
     public static final String VARIANT_INDEX_MODE_ROOT = InvertedIndexProperties.VARIANT_INDEX_MODE_ROOT;
+    public static final String VARIANT_INDEX_MODE_ALL_VALUES =
+            InvertedIndexProperties.VARIANT_INDEX_MODE_ALL_VALUES;
     public static final String VARIANT_ROOT_FORMAT_VERSION_KEY =
             InvertedIndexProperties.VARIANT_ROOT_FORMAT_VERSION_KEY;
     public static final String VARIANT_ROOT_FORMAT_VERSION_V1 =
             InvertedIndexProperties.VARIANT_ROOT_FORMAT_VERSION_V1;
+
+    public static boolean isVariantRootIndexMode(String mode) {
+        return InvertedIndexProperties.isVariantRootIndexMode(mode);
+    }
 
     public static String getInvertedIndexFieldPattern(Map<String, String> properties) {
         return InvertedIndexProperties.getInvertedIndexFieldPattern(properties);

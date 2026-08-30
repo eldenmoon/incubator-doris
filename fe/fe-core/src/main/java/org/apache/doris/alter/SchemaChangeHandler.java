@@ -2603,7 +2603,7 @@ public class SchemaChangeHandler extends AlterHandler {
                             throw new DdlException("index " + dropIndexOp.getIndexName() + " does not exist");
                         }
                         if (found.getProperties() != null
-                                && InvertedIndexUtil.VARIANT_INDEX_MODE_ROOT.equals(
+                                && InvertedIndexUtil.isVariantRootIndexMode(
                                 found.getProperties().get(InvertedIndexUtil.VARIANT_INDEX_MODE_KEY))) {
                             throw new DdlException(
                                     "DROP INDEX is not supported for a VARIANT root index");
@@ -3408,7 +3408,7 @@ public class SchemaChangeHandler extends AlterHandler {
         }
 
         if (found.getProperties() != null
-                && InvertedIndexUtil.VARIANT_INDEX_MODE_ROOT.equals(
+                && InvertedIndexUtil.isVariantRootIndexMode(
                 found.getProperties().get(InvertedIndexUtil.VARIANT_INDEX_MODE_KEY))) {
             throw new DdlException("DROP INDEX is not supported for a VARIANT root index");
         }

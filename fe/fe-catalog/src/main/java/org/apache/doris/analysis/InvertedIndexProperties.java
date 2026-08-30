@@ -64,8 +64,13 @@ public class InvertedIndexProperties {
 
     public static final String VARIANT_INDEX_MODE_KEY = "variant_index_mode";
     public static final String VARIANT_INDEX_MODE_ROOT = "root";
+    public static final String VARIANT_INDEX_MODE_ALL_VALUES = "all_values";
     public static final String VARIANT_ROOT_FORMAT_VERSION_KEY = "variant_root_format_version";
     public static final String VARIANT_ROOT_FORMAT_VERSION_V1 = "1";
+
+    public static boolean isVariantRootIndexMode(String mode) {
+        return VARIANT_INDEX_MODE_ROOT.equals(mode) || VARIANT_INDEX_MODE_ALL_VALUES.equals(mode);
+    }
 
     // Default analyzer key constant - matches BE's INVERTED_INDEX_DEFAULT_ANALYZER_KEY
     public static final String INVERTED_INDEX_DEFAULT_ANALYZER_KEY = "__default__";

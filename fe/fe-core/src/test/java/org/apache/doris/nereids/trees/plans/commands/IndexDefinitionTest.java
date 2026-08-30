@@ -184,6 +184,36 @@ public class IndexDefinitionTest {
             Assertions.assertTrue(InvertedIndexUtil.canHaveMultipleInvertedIndexes(
                     VariantType.INSTANCE, Lists.newArrayList(root, tokenRoot)));
 
+            IndexDefinition allValues = new IndexDefinition("variant_all_values_index", false,
+                    Lists.newArrayList("col1"), "INVERTED",
+                    new HashMap<>(Map.of("variant_index_mode", "all_values", "parser", "english")),
+                    "comment");
+            allValues.checkColumn(new ColumnDefinition("col1", VariantType.INSTANCE, false,
+                            AggregateType.NONE, true, null, "comment"), KeysType.DUP_KEYS, false,
+                    TInvertedIndexFileStorageFormat.SNII);
+            Assertions.assertEquals("1",
+                    allValues.getProperties().get("variant_root_format_version"));
+            Assertions.assertEquals("false", allValues.getProperties().get("support_phrase"));
+            Index catalogAllValues = new Index(2, "variant_all_values_index",
+                    Lists.newArrayList("col1"), IndexType.INVERTED,
+                    new HashMap<>(Map.of("variant_index_mode", "all_values", "parser", "english",
+                            "variant_root_format_version", "1")),
+                    "comment");
+            Assertions.assertEquals("false",
+                    catalogAllValues.getProperties().get("support_phrase"));
+            Assertions.assertTrue(catalogAllValues.isVariantAllValuesIndex());
+            Index legacyIndexWithoutProperties = new Index();
+            legacyIndexWithoutProperties.setIndexType(IndexType.INVERTED);
+            Assertions.assertFalse(legacyIndexWithoutProperties.isVariantAllValuesIndex());
+
+            IndexDefinition invalidMode = new IndexDefinition("variant_invalid_mode", false,
+                    Lists.newArrayList("col1"), "INVERTED",
+                    new HashMap<>(Map.of("variant_index_mode", "unknown")), "comment");
+            Assertions.assertThrows(AnalysisException.class, () -> invalidMode.checkColumn(
+                    new ColumnDefinition("col1", VariantType.INSTANCE, false, AggregateType.NONE,
+                            true, null, "comment"), KeysType.DUP_KEYS, false,
+                    TInvertedIndexFileStorageFormat.SNII));
+
             IndexDefinition duplicateExactRoot = new IndexDefinition(
                     "variant_root_duplicate_exact_index", false, Lists.newArrayList("col1"),
                     "INVERTED", new HashMap<>(Map.of("variant_index_mode", "root", "parser", "none")),

@@ -35,6 +35,9 @@ struct InvertedIndexParam {
     uint32_t num_rows;
     std::shared_ptr<roaring::Roaring> roaring;
     bool skip_try = false;
+    // Set by read_from_index() from the selected reader. Path-qualified root indexes and
+    // path-bound all-values indexes are candidates; an unbound all-values root MATCH is exact.
+    bool requires_recheck = false;
     // Non-null only when the caller consumes both the query result and this reader's null bitmap.
     InvertedIndexQueryCacheHandle* null_bitmap_cache_handle = nullptr;
     // Pointer to analyzer context (can be nullptr if not needed)
@@ -56,6 +59,7 @@ public:
 
     [[nodiscard]] Result<bool> has_null() override;
     bool is_variant_root_index() const override;
+    bool has_variant_all_values_reader(InvertedIndexReaderType type) const override;
 
     IndexReaderPtr get_reader(IndexReaderType reader_type) const override;
 

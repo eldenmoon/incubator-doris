@@ -24,10 +24,17 @@
 #include <thread>
 #include <vector>
 
+#include "core/assert_cast.h"
 #include "core/block/block.h"
 #include "core/column/column_string.h"
 #include "core/column/column_vector.h"
+#include "core/column/variant_v2/column_variant_v2.h"
+#include "core/data_type/data_type_number.h"
+#include "core/data_type/data_type_string.h"
+#include "core/data_type/data_type_variant_v2.h"
+#include "core/value/variant/variant_batch_builder.h"
 #include "exprs/function/match.h"
+#include "exprs/function/parse/variant_string_parse.h"
 #include "runtime/runtime_state.h"
 #include "storage/index/inverted/analyzer/analyzer.h"
 #include "storage/index/inverted/analyzer/custom_analyzer.h"
@@ -66,6 +73,7 @@ public:
         auto* inverted = std::get<segment_v2::InvertedIndexParam*>(param);
         inverted->roaring->add(1);
         inverted->roaring->add(3);
+        inverted->requires_recheck = true;
         return Status::OK();
     }
 
@@ -470,7 +478,9 @@ TEST(FunctionMatchTest, array_offset_handling) {
         int32_t offset = 0;
         auto tokens = match_any.analyse_data_token("test_col", ctx.ctx.get(), string_col.get(), 0,
                                                    &array_offsets, offset);
-        EXPECT_GT(tokens.size(), 0);
+        ASSERT_EQ(tokens.size(), 2);
+        EXPECT_EQ(tokens[0].get_single_term(), "first");
+        EXPECT_EQ(tokens[1].get_single_term(), "second");
         // offset should be updated to 2
         EXPECT_EQ(offset, 2);
     }
@@ -480,7 +490,9 @@ TEST(FunctionMatchTest, array_offset_handling) {
         int32_t offset = 2; // Start from where previous ended
         auto tokens = match_any.analyse_data_token("test_col", ctx.ctx.get(), string_col.get(), 1,
                                                    &array_offsets, offset);
-        EXPECT_GT(tokens.size(), 0);
+        ASSERT_EQ(tokens.size(), 2);
+        EXPECT_EQ(tokens[0].get_single_term(), "third");
+        EXPECT_EQ(tokens[1].get_single_term(), "fourth");
         // offset should be updated to 4
         EXPECT_EQ(offset, 4);
     }
@@ -608,6 +620,50 @@ TEST(FunctionMatchTest, VariantRootMatchKeepsScalarResidual) {
     ASSERT_NE(result.get_data_bitmap(), nullptr);
     EXPECT_EQ(result.get_data_bitmap()->cardinality(), 2U);
     EXPECT_TRUE(result.requires_recheck());
+}
+
+TEST(FunctionMatchTest, VariantRootResidualMatchesAcrossPathsArraysAndScalars) {
+    JsonStringToVariantEncoder encoder;
+    for (const std::string_view json : {
+                 R"({"message":"Apache","repo":"Doris"})",
+                 R"({"message":"Apache only"})",
+                 R"({"tags":["apache","doris"]})",
+                 R"("Apache Doris")",
+                 R"(null)",
+         }) {
+        encoder.add_json({json.data(), json.size()});
+    }
+    VariantBatchBuilder batch = encoder.finish_batch();
+    auto values = ColumnVariantV2::create();
+    values->insert_encoded_batch(batch);
+    ColumnPtr values_column = std::move(values);
+
+    TQueryOptions query_options;
+    query_options.__set_enable_match_without_inverted_index(true);
+    RuntimeState runtime_state(query_options, TQueryGlobals {});
+    auto context = FunctionContext::create_context(&runtime_state, {}, {});
+    auto analyzer = create_inverted_index_ctx(InvertedIndexParserType::PARSER_ENGLISH);
+    std::shared_ptr<InvertedIndexAnalyzerCtx> analyzer_state(std::move(analyzer.ctx));
+    context->set_function_state(FunctionContext::THREAD_LOCAL, analyzer_state);
+
+    const auto execute = [&](FunctionMatchBase& function, std::string_view query) {
+        auto query_column = ColumnString::create();
+        query_column->insert_data(query.data(), query.size());
+        Block block;
+        block.insert({values_column, std::make_shared<DataTypeVariantV2>(), "payload"});
+        block.insert({std::move(query_column), std::make_shared<DataTypeString>(), "query"});
+        block.insert({ColumnUInt8::create(), std::make_shared<DataTypeUInt8>(), "result"});
+        EXPECT_TRUE(
+                function.execute_impl(context.get(), block, {0, 1}, 2, values_column->size()).ok());
+        const auto& result =
+                assert_cast<const ColumnUInt8&>(*block.get_by_position(2).column).get_data();
+        return std::vector<uint8_t>(result.begin(), result.end());
+    };
+
+    FunctionMatchAll match_all;
+    EXPECT_EQ(execute(match_all, "apache doris"), std::vector<uint8_t>({1, 0, 1, 1, 0}));
+    FunctionMatchAny match_any;
+    EXPECT_EQ(execute(match_any, "doris"), std::vector<uint8_t>({1, 0, 1, 1, 0}));
 }
 
 // Test check function with different error conditions
