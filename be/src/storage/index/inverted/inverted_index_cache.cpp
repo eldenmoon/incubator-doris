@@ -98,7 +98,7 @@ InvertedIndexSearcherCache::InvertedIndexSearcherCache(size_t capacity, uint32_t
     uint64_t open_searcher_limit = fd_number * search_limit_percent / 100;
     LOG(INFO) << "fd_number: " << fd_number
               << ", inverted index open searcher limit: " << open_searcher_limit;
-#ifdef BE_TEST
+#if defined(BE_TEST) && !defined(BE_BENCHMARK)
     open_searcher_limit = 2;
 #endif
 
