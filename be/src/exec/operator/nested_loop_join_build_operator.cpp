@@ -68,8 +68,6 @@ NestedLoopJoinBuildSinkOperatorX::NestedLoopJoinBuildSinkOperatorX(ObjectPool* p
                                                                    const DescriptorTbl& descs)
         : JoinBuildSinkOperatorX<NestedLoopJoinBuildSinkLocalState>(pool, operator_id, dest_id,
                                                                     tnode, descs),
-          _is_output_probe_side_only(tnode.nested_loop_join_node.__isset.is_output_left_side_only &&
-                                     tnode.nested_loop_join_node.is_output_left_side_only),
           _row_descriptor(descs, tnode.row_tuples) {}
 
 Status NestedLoopJoinBuildSinkOperatorX::init(const TPlanNode& tnode, RuntimeState* state) {
@@ -85,14 +83,17 @@ Status NestedLoopJoinBuildSinkOperatorX::init(const TPlanNode& tnode, RuntimeSta
 
 Status NestedLoopJoinBuildSinkOperatorX::prepare(RuntimeState* state) {
     RETURN_IF_ERROR(JoinBuildSinkOperatorX<NestedLoopJoinBuildSinkLocalState>::prepare(state));
-    size_t num_build_tuples = _child->row_desc().tuple_descriptors().size();
+    size_t num_build_tuples =
+            _child->operator_row_desc_after_projection().tuple_descriptors().size();
 
     for (size_t i = 0; i < num_build_tuples; ++i) {
-        TupleDescriptor* build_tuple_desc = _child->row_desc().tuple_descriptors()[i];
+        TupleDescriptor* build_tuple_desc =
+                _child->operator_row_desc_after_projection().tuple_descriptors()[i];
         auto tuple_idx = _row_descriptor.get_tuple_idx(build_tuple_desc->id());
         RETURN_IF_INVALID_TUPLE_IDX(build_tuple_desc->id(), tuple_idx);
     }
-    RETURN_IF_ERROR(VExpr::prepare(_filter_src_expr_ctxs, state, _child->row_desc()));
+    RETURN_IF_ERROR(VExpr::prepare(_filter_src_expr_ctxs, state,
+                                   _child->operator_row_desc_after_projection()));
     return VExpr::open(_filter_src_expr_ctxs, state);
 }
 
@@ -114,13 +115,6 @@ Status NestedLoopJoinBuildSinkOperatorX::sink_impl(doris::RuntimeState* state, B
     }
 
     if (eos) {
-        // optimize `in bitmap`, see https://github.com/apache/doris/issues/14338
-        if (_is_output_probe_side_only && ((_join_op == TJoinOp::type::LEFT_SEMI_JOIN &&
-                                            local_state._shared_state->build_blocks.empty()) ||
-                                           (_join_op == TJoinOp::type::LEFT_ANTI_JOIN &&
-                                            !local_state._shared_state->build_blocks.empty()))) {
-            local_state._shared_state->probe_side_eos = true;
-        }
         local_state._dependency->set_ready_to_read();
     }
 

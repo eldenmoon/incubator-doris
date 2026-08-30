@@ -73,7 +73,10 @@ public:
         return Status::OK();
     }
 
-    const RowDescriptor& row_desc() const override { return *_mock_row_desc; }
+    void set_mock_row_desc(std::unique_ptr<MockRowDescriptor> row_desc) {
+        _mock_row_desc = std::move(row_desc);
+        _row_descriptor = *_mock_row_desc;
+    }
 
 private:
     std::unique_ptr<MockRowDescriptor> _mock_row_desc;
@@ -83,8 +86,10 @@ struct StreamingAggOperatorTest : public testing::Test {
         state = std::make_shared<MockRuntimeState>();
         op = std::make_shared<MockStreamingAggOperatorX>();
         child_op = std::make_shared<MockStreamingAggOperatorChildOperator>();
-        child_op->_mock_row_desc.reset(new MockRowDescriptor {
-                {std::make_shared<DataTypeInt64>(), std::make_shared<DataTypeInt64>()}, &pool});
+        child_op->set_mock_row_desc(std::make_unique<MockRowDescriptor>(
+                std::vector<DataTypePtr> {std::make_shared<DataTypeInt64>(),
+                                          std::make_shared<DataTypeInt64>()},
+                &pool));
     }
 
     std::shared_ptr<MockStreamingAggOperatorX> op;
@@ -161,11 +166,11 @@ TEST_F(StreamingAggOperatorTest, require_hash_shuffle_after_non_hash_local_excha
     op->_partition_exprs.emplace_back();
 
     OperatorPtr child = std::make_shared<LocalExchangeSourceOperatorX>();
-    EXPECT_TRUE(child->init(ExchangeType::ADAPTIVE_PASSTHROUGH).ok());
+    EXPECT_TRUE(child->init(TLocalPartitionType::ADAPTIVE_PASSTHROUGH).ok());
     EXPECT_TRUE(op->set_child(child));
 
     const auto distribution = op->required_data_distribution(state.get());
-    EXPECT_EQ(ExchangeType::HASH_SHUFFLE, distribution.distribution_type);
+    EXPECT_EQ(TLocalPartitionType::GLOBAL_EXECUTION_HASH_SHUFFLE, distribution.distribution_type);
 }
 
 TEST_F(StreamingAggOperatorTest, test2) {

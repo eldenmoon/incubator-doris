@@ -34,6 +34,7 @@
 #include "cloud/cloud_schema_change_job.h"
 #include "cloud/config.h"
 #include "common/cast_set.h"
+#include "common/check.h"
 #include "common/consts.h"
 #include "common/logging.h"
 #include "common/signal_handler.h"
@@ -43,6 +44,7 @@
 #include "core/block/column_with_type_and_name.h"
 #include "core/column/column.h"
 #include "core/column/column_nullable.h"
+#include "exec/common/util.hpp"
 #include "exec/common/variant_util.h"
 #include "exprs/aggregate/aggregate_function.h"
 #include "exprs/aggregate/aggregate_function_reader.h"
@@ -91,6 +93,48 @@ using namespace ErrorCode;
 
 constexpr int ALTER_TABLE_BATCH_SIZE = 4064;
 
+namespace {
+
+bool nullable_column_contains_null(const ColumnPtr& column) {
+    const auto* null_map = VectorizedUtils::get_null_map(column);
+    DORIS_CHECK(null_map != nullptr);
+    if (is_column_const(*column)) {
+        return (*null_map)[0];
+    }
+    const auto* data = null_map->data();
+    const size_t rows = column->size();
+    for (size_t i = 0; i < rows; ++i) {
+        if (data[i]) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool nullable_columns_have_different_null_maps(const ColumnPtr& lhs_column,
+                                               const ColumnPtr& rhs_column) {
+    const auto* lhs_null_map = VectorizedUtils::get_null_map(lhs_column);
+    const auto* rhs_null_map = VectorizedUtils::get_null_map(rhs_column);
+    DORIS_CHECK(lhs_null_map != nullptr);
+    DORIS_CHECK(rhs_null_map != nullptr);
+
+    const bool lhs_is_single = is_column_const(*lhs_column);
+    const bool rhs_is_single = is_column_const(*rhs_column);
+    const auto* lhs_data = lhs_null_map->data();
+    const auto* rhs_data = rhs_null_map->data();
+    const size_t rows = lhs_column->size();
+    for (size_t i = 0; i < rows; ++i) {
+        const auto lhs_null = lhs_is_single ? lhs_data[0] : lhs_data[i];
+        const auto rhs_null = rhs_is_single ? rhs_data[0] : rhs_data[i];
+        if (lhs_null != rhs_null) {
+            return true;
+        }
+    }
+    return false;
+}
+
+} // namespace
+
 class MultiBlockMerger {
 public:
     MultiBlockMerger(BaseTabletSPtr tablet) : _tablet(tablet), _cmp(*tablet) {}
@@ -116,7 +160,7 @@ public:
         // The block version is incremental.
         std::stable_sort(row_refs.begin(), row_refs.end(), _cmp);
 
-        auto finalized_block = _tablet->tablet_schema()->create_block();
+        auto finalized_block = _tablet->tablet_schema()->create_storage_block();
         int columns = finalized_block.columns();
         *merged_rows += rows;
 
@@ -137,6 +181,10 @@ public:
                                 tablet_schema->column(i).name(),
                                 tablet_schema->column(i).aggregation());
                     }
+                    const auto* column = finalized_block.get_by_position(i).column.get();
+                    const IColumn* function_columns[] = {column};
+                    function->check_input_columns_type(function_columns);
+                    function->check_result_column_type(*column);
                     agg_functions.push_back(function);
                     // create aggregate data
                     auto* place = new char[function->size_of_data()];
@@ -379,7 +427,7 @@ Status BlockChanger::change_block(Block* ref_block, Block* new_block) const {
             const auto& value = _schema_mapping[idx].default_value;
             auto column = new_block->get_by_position(idx).column->assert_mutable();
             if (value.is_null()) {
-                DCHECK(column->is_nullable());
+                DCHECK(is_column_nullable(*column));
                 column->insert_many_defaults(row_num);
             } else {
                 column = column->convert_to_predicate_column_if_dictionary();
@@ -396,8 +444,8 @@ Status BlockChanger::change_block(Block* ref_block, Block* new_block) const {
         auto& ref_col = ref_block->get_by_position(it.first).column;
         auto& new_col = new_block->get_by_position(it.second).column;
 
-        bool ref_col_nullable = ref_col->is_nullable();
-        bool new_col_nullable = new_col->is_nullable();
+        bool ref_col_nullable = is_column_nullable(*ref_col);
+        bool new_col_nullable = is_column_nullable(*new_col);
 
         if (ref_col_nullable != new_col_nullable) {
             // not nullable to nullable
@@ -438,45 +486,34 @@ Status BlockChanger::_check_cast_valid(ColumnPtr input_column, ColumnPtr output_
 
     if (input_column->is_nullable() != output_column->is_nullable()) {
         if (input_column->is_nullable()) {
-            const auto* ref_null_map = assert_cast<const ColumnNullable&>(*input_column)
-                                               .get_null_map_column()
-                                               .get_data()
-                                               .data();
-
-            bool is_changed = false;
-            for (size_t i = 0; i < input_column->size(); i++) {
-                is_changed |= ref_null_map[i];
-            }
-            if (is_changed) {
+            if (nullable_column_contains_null(input_column)) {
                 return Status::DataQualityError(
                         "some null data is changed to not null, intput_column={}",
                         input_column->get_name());
             }
         } else {
-            const auto& output_nullable = assert_cast<const ColumnNullable&>(*output_column);
-            const auto& null_map_column = output_nullable.get_null_map_column();
-            const auto& nested_column = output_nullable.get_nested_column();
-            const auto* new_null_map = null_map_column.get_data().data();
+            if (const auto* output_nullable =
+                        check_and_get_column<ColumnNullable>(output_column.get())) {
+                const auto& null_map_column = output_nullable->get_null_map_column();
+                const auto& nested_column = output_nullable->get_nested_column();
 
-            if (null_map_column.size() != output_column->size()) {
-                return Status::InternalError(
-                        "null_map_column size mismatch output_column_size, "
-                        "null_map_column_size={}, output_column_size={}; input_column={}",
-                        null_map_column.size(), output_column->size(), input_column->get_name());
+                if (null_map_column.size() != output_column->size()) {
+                    return Status::InternalError(
+                            "null_map_column size mismatch output_column_size, "
+                            "null_map_column_size={}, output_column_size={}; input_column={}",
+                            null_map_column.size(), output_column->size(),
+                            input_column->get_name());
+                }
+
+                if (nested_column.size() != output_column->size()) {
+                    return Status::InternalError(
+                            "nested_column size is changed, nested_column_size={}, "
+                            "ouput_column_size={}; input_column={}",
+                            nested_column.size(), output_column->size(), input_column->get_name());
+                }
             }
 
-            if (nested_column.size() != output_column->size()) {
-                return Status::InternalError(
-                        "nested_column size is changed, nested_column_size={}, "
-                        "ouput_column_size={}; input_column={}",
-                        nested_column.size(), output_column->size(), input_column->get_name());
-            }
-
-            bool is_changed = false;
-            for (size_t i = 0; i < input_column->size(); i++) {
-                is_changed |= new_null_map[i];
-            }
-            if (is_changed) {
+            if (nullable_column_contains_null(output_column)) {
                 return Status::DataQualityError(
                         "some not null data is changed to null, intput_column={}",
                         input_column->get_name());
@@ -485,20 +522,7 @@ Status BlockChanger::_check_cast_valid(ColumnPtr input_column, ColumnPtr output_
     }
 
     if (input_column->is_nullable() && output_column->is_nullable()) {
-        const auto* ref_null_map = assert_cast<const ColumnNullable&>(*input_column)
-                                           .get_null_map_column()
-                                           .get_data()
-                                           .data();
-        const auto* new_null_map = assert_cast<const ColumnNullable&>(*output_column)
-                                           .get_null_map_column()
-                                           .get_data()
-                                           .data();
-
-        bool is_changed = false;
-        for (size_t i = 0; i < input_column->size(); i++) {
-            is_changed |= (ref_null_map[i] != new_null_map[i]);
-        }
-        if (is_changed) {
+        if (nullable_columns_have_different_null_maps(input_column, output_column)) {
             return Status::DataQualityError(
                     "null map is changed after calculation, input_column={}",
                     input_column->get_name());
@@ -554,17 +578,11 @@ Status VSchemaChangeDirectly::_inner_process(RowsetReaderSharedPtr rowset_reader
                                              RowsetWriter* rowset_writer, BaseTabletSPtr new_tablet,
                                              TabletSchemaSPtr base_tablet_schema,
                                              TabletSchemaSPtr new_tablet_schema) {
+    const auto& source_block_schema = rowset_reader->read_schema();
     bool eof = false;
     do {
-        auto new_block = Block::create_unique(new_tablet_schema->create_block());
-        // create_block() skips dropped columns (from light-weight schema change).
-        // Dropped columns are only needed for delete predicate evaluation, which
-        // SegmentIterator handles internally — it creates temporary columns for
-        // predicate columns not present in the block (via `i >= block->columns()`
-        // guard in _init_current_block). If dropped columns were included here,
-        // the block would have more columns than VMergeIterator's output_schema
-        // expects, causing DCHECK failures in copy_rows.
-        auto ref_block = Block::create_unique(base_tablet_schema->create_block());
+        auto new_block = Block::create_unique(new_tablet_schema->create_storage_block());
+        auto ref_block = Block::create_unique(source_block_schema.create_read_block());
 
         Status st = next_batch(rowset_reader, ref_block.get(), _row_same_bit);
         if (!st) {
@@ -601,6 +619,7 @@ Status VBaseSchemaChangeWithSorting::_inner_process(RowsetReaderSharedPtr rowset
                                                     BaseTabletSPtr new_tablet,
                                                     TabletSchemaSPtr base_tablet_schema,
                                                     TabletSchemaSPtr new_tablet_schema) {
+    const auto& source_block_schema = rowset_reader->read_schema();
     // for internal sorting
     std::vector<std::unique_ptr<Block>> blocks;
 
@@ -629,18 +648,11 @@ Status VBaseSchemaChangeWithSorting::_inner_process(RowsetReaderSharedPtr rowset
         return Status::OK();
     };
 
-    auto new_block = Block::create_unique(new_tablet_schema->create_block());
+    auto new_block = Block::create_unique(new_tablet_schema->create_storage_block());
 
     bool eof = false;
     do {
-        // create_block() skips dropped columns (from light-weight schema change).
-        // Dropped columns are only needed for delete predicate evaluation, which
-        // SegmentIterator handles internally — it creates temporary columns for
-        // predicate columns not present in the block (via `i >= block->columns()`
-        // guard in _init_current_block). If dropped columns were included here,
-        // the block would have more columns than VMergeIterator's output_schema
-        // expects, causing DCHECK failures in copy_rows.
-        auto ref_block = Block::create_unique(base_tablet_schema->create_block());
+        auto ref_block = Block::create_unique(source_block_schema.create_read_block());
         Status st = next_batch(rowset_reader, ref_block.get(), _row_same_bit);
         if (!st) {
             if (st.is<ErrorCode::END_OF_FILE>()) {
@@ -676,7 +688,7 @@ Status VBaseSchemaChangeWithSorting::_inner_process(RowsetReaderSharedPtr rowset
         _mem_tracker->consume(new_block->allocated_bytes());
 
         // move unique ptr
-        blocks.push_back(Block::create_unique(new_tablet_schema->create_block()));
+        blocks.push_back(Block::create_unique(new_tablet_schema->create_storage_block()));
         swap(blocks.back(), new_block);
     } while (!eof);
 
@@ -914,39 +926,17 @@ Status SchemaChangeJob::_do_process_alter_tablet(const TAlterTabletReqV2& reques
     std::vector<RowSetSplits> rs_splits;
     // delete handlers for new tablet
     DeleteHandler delete_handler;
-    std::vector<ColumnId> return_columns;
 
-    // Use tablet schema directly from base tablet, they are the newest schema, not contain
-    // dropped column during light weight schema change.
-    // But the tablet schema in base tablet maybe not the latest from FE, so that if fe pass through
-    // a tablet schema, then use request schema.
-    //
-    // return_columns does NOT include dropped columns. It is computed here BEFORE
-    // merge_dropped_columns() appends dropped columns to _base_tablet_schema below.
-    // This means return_columns only covers the original (non-dropped) columns.
-    //
-    // This is important because:
-    // - BetaRowsetReader builds _output_schema from return_columns, which determines the
-    //   number of columns in ref_block (via create_block() which also skips dropped cols).
-    // - VMergeIterator's copy_rows iterates over _output_schema columns, so ref_block
-    //   must match _output_schema exactly.
-    // - Dropped columns are only needed for delete predicate evaluation, and SegmentIterator
-    //   handles them internally (creates temporary columns for predicate columns not present
-    //   in the block via `i >= block->columns()` guard in _init_current_block).
-    //
-    // Example: table has columns [k1, v1, v2], then DROP COLUMN v1, then
-    //   DELETE FROM t WHERE v1 = 'x' was issued before the drop.
-    //   - _base_tablet_schema after merge_dropped_columns: [k1, v2, v1(DROPPED)]
-    //   - return_columns (computed before merge): [0, 1] → [k1, v2]
-    //   - _output_schema / ref_block columns: [k1, v2] (2 columns)
-    //   - SegmentIterator reads v1 internally for delete predicate, but does not
-    //     output it to ref_block. copy_rows only iterates 2 columns — no OOB access.
+    // Use the visible schema from the base tablet. If FE supplies a schema in
+    // the request, prefer it because the tablet schema may not be the latest.
+    // Historical delete columns are appended after this schema-change output
+    // prefix and are not returned in Blocks.
     size_t num_cols =
             request.columns.empty() ? _base_tablet_schema->num_columns() : request.columns.size();
-    return_columns.resize(num_cols);
-    for (int i = 0; i < num_cols; ++i) {
-        return_columns[i] = i;
-    }
+    DORIS_CHECK_LE(num_cols, _base_tablet_schema->columns().size());
+    std::vector<TabletColumnPtr> read_columns(_base_tablet_schema->columns().begin(),
+                                              _base_tablet_schema->columns().begin() + num_cols);
+    ReadSchemaSPtr read_schema = std::make_shared<ReadSchema>(std::move(read_columns));
     std::vector<uint32_t> cluster_key_idxes;
 
     DBUG_EXECUTE_IF("SchemaChangeJob::_do_process_alter_tablet.block", DBUG_BLOCK);
@@ -958,7 +948,7 @@ Status SchemaChangeJob::_do_process_alter_tablet(const TAlterTabletReqV2& reques
         std::lock_guard new_tablet_lock(_new_tablet->get_push_lock());
         std::lock_guard base_tablet_wlock(_base_tablet->get_header_lock());
         SCOPED_SIMPLE_TRACE_IF_TIMEOUT(TRACE_TABLET_LOCK_THRESHOLD);
-        std::lock_guard<std::shared_mutex> new_tablet_wlock(_new_tablet->get_header_lock());
+        std::lock_guard new_tablet_wlock(_new_tablet->get_header_lock());
 
         do {
             RowsetSharedPtr max_rowset;
@@ -1044,33 +1034,33 @@ Status SchemaChangeJob::_do_process_alter_tablet(const TAlterTabletReqV2& reques
                 if (!rs_meta->has_delete_predicate() || rs_meta->start_version() > end_version) {
                     continue;
                 }
-                _base_tablet_schema->merge_dropped_columns(*rs_meta->tablet_schema());
                 del_preds.push_back(rs_meta);
             }
-            res = delete_handler.init(_base_tablet_schema, del_preds, end_version);
+            std::vector<TabletColumn> dropped_columns;
+            res = delete_handler.init(del_preds, end_version, read_schema, &dropped_columns);
             if (!res) {
                 LOG(WARNING) << "init delete handler failed. base_tablet="
                              << _base_tablet->tablet_id() << ", end_version=" << end_version;
                 break;
             }
+            read_schema->append_dropped_columns(std::move(dropped_columns));
 
             reader_context.reader_type = ReaderType::READER_ALTER_TABLE;
             reader_context.tablet_schema = _base_tablet_schema;
             reader_context.need_ordered_result = true;
             reader_context.delete_handler = &delete_handler;
-            reader_context.return_columns = &return_columns;
-            reader_context.sequence_id_idx = reader_context.tablet_schema->sequence_col_idx();
+            reader_context.read_schema = read_schema;
             reader_context.is_unique = _base_tablet->keys_type() == UNIQUE_KEYS;
             reader_context.batch_size = ALTER_TABLE_BATCH_SIZE;
             reader_context.delete_bitmap = _base_tablet->tablet_meta()->delete_bitmap_ptr();
             reader_context.version = Version(0, end_version);
             if (!_base_tablet_schema->cluster_key_uids().empty()) {
                 for (const auto& uid : _base_tablet_schema->cluster_key_uids()) {
-                    cluster_key_idxes.emplace_back(_base_tablet_schema->field_index(uid));
+                    cluster_key_idxes.emplace_back(read_schema->ordinal_by_uid(uid));
                 }
                 reader_context.read_orderby_key_columns = &cluster_key_idxes;
                 reader_context.is_unique = false;
-                reader_context.sequence_id_idx = -1;
+                reader_context.use_sequence_column_for_merge_order = false;
             }
             for (auto& rs_split : rs_splits) {
                 res = rs_split.rs_reader->init(&reader_context);
@@ -1154,7 +1144,7 @@ Status SchemaChangeJob::_do_process_alter_tablet(const TAlterTabletReqV2& reques
             }
         } else {
             // set state to ready
-            std::lock_guard<std::shared_mutex> new_wlock(_new_tablet->get_header_lock());
+            std::lock_guard new_wlock(_new_tablet->get_header_lock());
             SCOPED_SIMPLE_TRACE_IF_TIMEOUT(TRACE_TABLET_LOCK_THRESHOLD);
             res = _new_tablet->set_tablet_state(TabletState::TABLET_RUNNING);
             if (!res) {

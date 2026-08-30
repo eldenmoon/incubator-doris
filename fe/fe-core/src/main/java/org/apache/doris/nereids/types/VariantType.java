@@ -40,8 +40,10 @@ import java.util.stream.Collectors;
 public class VariantType extends PrimitiveType {
 
     public static final VariantType INSTANCE = new VariantType(0);
-
     public static final int WIDTH = 24;
+
+    public static final String UNSUPPORTED_ORDERING_COMPARISON_MESSAGE =
+            "Variant does not support ordering/comparison, CAST to a concrete type first";
 
     private final int variantMaxSubcolumnsCount;
 
@@ -114,6 +116,11 @@ public class VariantType extends PrimitiveType {
         this.variantDocMaterializationMinRows = variantDocMaterializationMinRows;
         this.variantDocShardCount = variantDocShardCount;
         this.enableNestedGroup = enableNestedGroup;
+    }
+
+    @Override
+    public boolean isInjectiveCastTo(DataType target) {
+        return target instanceof VariantType;
     }
 
     @Override
@@ -297,4 +304,5 @@ public class VariantType extends PrimitiveType {
     public boolean getEnableNestedGroup() {
         return enableNestedGroup;
     }
+
 }

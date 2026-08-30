@@ -704,6 +704,12 @@ public class RestoreJob extends AbstractJob implements GsonPostProcessable {
                 BackupOlapTableInfo tblInfo = olapTableEntry.getValue();
                 Table remoteTbl = backupMeta.getTable(tableName);
                 Preconditions.checkNotNull(remoteTbl);
+                OlapTable remoteOlapTbl = (OlapTable) remoteTbl;
+                if (remoteOlapTbl.needRowBinlog()) {
+                    status = new Status(ErrCode.COMMON_ERROR,
+                            "Do not support restore table with binlog<Row> enabled: " + remoteOlapTbl.getName());
+                    return;
+                }
                 Table localTbl = db.getTableNullable(jobInfo.getAliasByOriginNameIfSet(tableName));
                 boolean isSchemaChanged = false;
                 if (localTbl != null && localTbl.getType() != TableType.OLAP) {
@@ -722,8 +728,6 @@ public class RestoreJob extends AbstractJob implements GsonPostProcessable {
                                         + localOlapTbl.getName());
                         return;
                     }
-                    OlapTable remoteOlapTbl = (OlapTable) remoteTbl;
-
                     if (localOlapTbl.isColocateTable() || (reserveColocate && remoteOlapTbl.isColocateTable())) {
                         status = new Status(ErrCode.COMMON_ERROR, "Not support to restore to local table "
                                 + tableName + " with colocate group.");
@@ -870,7 +874,6 @@ public class RestoreJob extends AbstractJob implements GsonPostProcessable {
 
                 // Table does not exist or atomic restore
                 if (localTbl == null || isAtomicRestore) {
-                    OlapTable remoteOlapTbl = (OlapTable) remoteTbl;
                     // Retain only expected restore partitions in this table;
                     Set<String> allPartNames = remoteOlapTbl.getPartitionNames();
                     for (String partName : allPartNames) {
@@ -1162,9 +1165,20 @@ public class RestoreJob extends AbstractJob implements GsonPostProcessable {
                     if (reserveReplica) {
                         restoreReplicaAlloc = remotePartitionInfo.getReplicaAllocation(remotePartId);
                     }
+                    boolean isInMemory = remotePartitionInfo.getIsInMemory(remotePartId);
+                    if (Config.isCloudMode()) {
+                        // In cloud mode, storage_medium, cooldown_time, storage_policy and in_memory
+                        // from the source cluster are not applicable. Reset them to defaults.
+                        remoteDataProperty = new DataProperty(
+                                DataProperty.DEFAULT_STORAGE_MEDIUM,
+                                DataProperty.MAX_COOLDOWN_TIME_MS,
+                                "",
+                                remoteDataProperty.isMutable());
+                        isInMemory = false;
+                    }
                     localPartitionInfo.addPartition(restoredPart.getId(), false, remoteItem,
                             remoteDataProperty, restoreReplicaAlloc,
-                            remotePartitionInfo.getIsInMemory(remotePartId),
+                            isInMemory,
                             remotePartitionInfo.getIsMutable(remotePartId));
                 }
                 localTbl.addPartition(restoredPart);
@@ -1447,10 +1461,6 @@ public class RestoreJob extends AbstractJob implements GsonPostProcessable {
                 Env.getCurrentInvertedIndex().addTablet(restoreTablet.getId(), tabletMeta);
                 for (Replica restoreReplica : restoreTablet.getReplicas()) {
                     Env.getCurrentInvertedIndex().addReplica(restoreTablet.getId(), restoreReplica);
-                    MaterializedIndexMeta rowBinlogIndexMeta = null;
-                    if (localTbl.needRowBinlog() && restoredIdx.getId() == localTbl.getBaseIndexId()) {
-                        rowBinlogIndexMeta = localTbl.getRowBinlogMeta();
-                    }
                     CreateReplicaTask task = new CreateReplicaTask(restoreReplica.getBackendIdWithoutException(), dbId,
                             localTbl.getId(), restorePart.getId(), restoredIdx.getId(),
                             restoreTablet.getId(), restoreReplica.getId(), indexMeta.getShortKeyColumnCount(),
@@ -1481,8 +1491,7 @@ public class RestoreJob extends AbstractJob implements GsonPostProcessable {
                             localTbl.storagePageSize(), localTbl.getTDEAlgorithm(),
                             localTbl.storageDictPageSize(),
                             localTbl.getColumnSeqMapping(),
-                            localTbl.getVerticalCompactionNumColumnsPerGroup(),
-                            rowBinlogIndexMeta);
+                            localTbl.getVerticalCompactionNumColumnsPerGroup());
                     task.setInvertedIndexFileStorageFormat(localTbl.getInvertedIndexFileStorageFormat());
                     task.setInRestoreMode(true);
                     if (baseTabletRef != null) {
@@ -1706,9 +1715,20 @@ public class RestoreJob extends AbstractJob implements GsonPostProcessable {
             if (reserveReplica) {
                 restoreReplicaAlloc = remotePartitionInfo.getReplicaAllocation(remotePartId);
             }
+            boolean isInMemory = remotePartitionInfo.getIsInMemory(remotePartId);
+            if (Config.isCloudMode()) {
+                // In cloud mode, storage_medium, cooldown_time, storage_policy and in_memory
+                // from the source cluster are not applicable. Reset them to defaults.
+                remoteDataProperty = new DataProperty(
+                        DataProperty.DEFAULT_STORAGE_MEDIUM,
+                        DataProperty.MAX_COOLDOWN_TIME_MS,
+                        "",
+                        remoteDataProperty.isMutable());
+                isInMemory = false;
+            }
             localPartitionInfo.addPartition(restorePart.getId(), false, remotePartitionInfo.getItem(remotePartId),
                     remoteDataProperty, restoreReplicaAlloc,
-                    remotePartitionInfo.getIsInMemory(remotePartId),
+                    isInMemory,
                     remotePartitionInfo.getIsMutable(remotePartId));
             localTbl.addPartition(restorePart);
 
@@ -2504,7 +2524,8 @@ public class RestoreJob extends AbstractJob implements GsonPostProcessable {
                             restoreOlapTable.writeLock();
                             try {
                                 for (Partition part : restoreOlapTable.getPartitions()) {
-                                    for (MaterializedIndex idx : part.getMaterializedIndices(IndexExtState.VISIBLE)) {
+                                    for (MaterializedIndex idx
+                                            : part.getMaterializedIndices(IndexExtState.VISIBLE, true)) {
                                         for (Tablet tablet : idx.getTablets()) {
                                             Env.getCurrentInvertedIndex().deleteTablet(tablet.getId());
                                         }
@@ -2542,7 +2563,7 @@ public class RestoreJob extends AbstractJob implements GsonPostProcessable {
                         restoreTbl.getName(), entry.second.getName());
                 try {
                     restoreTbl.dropPartitionAndReserveTablet(entry.second.getName());
-                    for (MaterializedIndex index : entry.second.getMaterializedIndices(IndexExtState.ALL)) {
+                    for (MaterializedIndex index : entry.second.getMaterializedIndices(IndexExtState.ALL, true)) {
                         for (Tablet tablet : index.getTablets()) {
                             Env.getCurrentInvertedIndex().deleteTablet(tablet.getId());
                         }

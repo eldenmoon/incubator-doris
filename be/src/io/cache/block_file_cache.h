@@ -24,7 +24,10 @@
 #include <array>
 #include <atomic>
 #include <boost/lockfree/spsc_queue.hpp>
+#include <condition_variable>
 #include <functional>
+#include <limits>
+#include <map>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -77,7 +80,25 @@ private:
     }                                                                                             \
     LockScopedTimer cache_lock_timer;
 
+class AsyncCacheWriteManager;
 class FSFileCacheStorage;
+class InflightWriteBufferIndex;
+
+struct FileBlocksProbeResult {
+    explicit FileBlocksProbeResult(std::vector<FileBlockSPtr> file_blocks_)
+            : file_blocks(std::move(file_blocks_)) {}
+    FileBlocksProbeResult(FileBlocksProbeResult&&) noexcept = default;
+    FileBlocksProbeResult& operator=(FileBlocksProbeResult&&) noexcept = delete;
+    FileBlocksProbeResult(const FileBlocksProbeResult&) = delete;
+    FileBlocksProbeResult& operator=(const FileBlocksProbeResult&) = delete;
+    ~FileBlocksProbeResult();
+
+    /// One entry per cache-block-sized input slot, in offset order. A null entry is a cache miss;
+    /// a non-null entry covers the whole slot. Its right boundary can exceed the final short slot
+    /// while a file writer still owns a full-size preallocated tail block. Retaining and releasing
+    /// a probe result never acquires or completes downloader ownership.
+    std::vector<FileBlockSPtr> file_blocks;
+};
 
 // NeedUpdateLRUBlocks keeps FileBlockSPtr entries that require LRU updates in a
 // deduplicated, sharded container. Entries are keyed by the raw FileBlock
@@ -91,7 +112,7 @@ public:
 
     // Insert a block into the pending set. Returns true only when the block
     // was not already queued. Null inputs are ignored.
-    bool insert(FileBlockSPtr block);
+    bool insert(FileBlockSPtr block, size_t max_queue_size = std::numeric_limits<size_t>::max());
 
     // Drain up to `limit` unique blocks into `output`. The method returns how
     // many blocks were actually drained and shrinks the internal size
@@ -114,6 +135,7 @@ private:
     };
 
     size_t shard_index(FileBlock* ptr) const;
+    void decrease_size(size_t delta);
 
     std::array<Shard, kShardCount> _shards;
     std::atomic<size_t> _size {0};
@@ -177,34 +199,7 @@ public:
 
     BlockFileCache(const std::string& cache_base_path, const FileCacheSettings& cache_settings);
 
-    virtual ~BlockFileCache() {
-        {
-            std::lock_guard lock(_close_mtx);
-            _close = true;
-        }
-        _close_cv.notify_all();
-        if (_cache_background_monitor_thread.joinable()) {
-            _cache_background_monitor_thread.join();
-        }
-        if (_cache_background_gc_thread.joinable()) {
-            _cache_background_gc_thread.join();
-        }
-        if (_cache_background_evict_in_advance_thread.joinable()) {
-            _cache_background_evict_in_advance_thread.join();
-        }
-        if (_cache_background_lru_dump_thread.joinable()) {
-            _cache_background_lru_dump_thread.join();
-        }
-        if (_cache_background_lru_log_replay_thread.joinable()) {
-            _cache_background_lru_log_replay_thread.join();
-        }
-        if (_cache_background_block_lru_update_thread.joinable()) {
-            _cache_background_block_lru_update_thread.join();
-        }
-        if (_ttl_mgr) {
-            _ttl_mgr.reset();
-        }
-    }
+    virtual ~BlockFileCache();
 
     /// Restore cache from local filesystem.
     Status initialize();
@@ -235,6 +230,37 @@ public:
     FileBlocksHolder get_or_set(const UInt128Wrapper& hash, size_t offset, size_t size,
                                 CacheContext& context);
 
+    /// Probe the block-aligned `[offset, offset + size)` range without creating cache cells or
+    /// touching LRU state. The result contains one ordered slot per cache block; each slot is null
+    /// on miss or owns an existing block that starts at and covers the slot. A final short slot can
+    /// be covered by a full-size block preallocated by a file writer. `context` supplies cache
+    /// metadata when lazy loading is required.
+    FileBlocksProbeResult probe(const UInt128Wrapper& hash, size_t offset, size_t size,
+                                const CacheContext& context);
+
+    /// Touch `block` after a successful local read, provided it is still the cached cell. The
+    /// supplied `context` controls the target LRU queue and query-level accounting.
+    void touch_probe_block_if_cached(const FileBlockSPtr& block, const CacheContext& context);
+
+    /// Check whether `block` is being deleted while taking cache/block locks in canonical order.
+    bool is_block_deleting(const FileBlockSPtr& block) const;
+
+    /// Return this cache disk's async-write manager.
+    AsyncCacheWriteManager* async_write_manager() const { return _async_write_manager.get(); }
+
+    /// Return this cache disk's inflight payload index.
+    InflightWriteBufferIndex* inflight_write_buffer_index() const {
+        return _inflight_write_buffer_index.get();
+    }
+
+    /**
+     * Return existing downloaded blocks only if they fully cover [offset, offset + size).
+     * This lookup is read-only: it does not reserve cache space or create EMPTY blocks.
+     */
+    Status get_downloaded_blocks_if_fully_covered(const UInt128Wrapper& hash, size_t offset,
+                                                  size_t size, const CacheContext& context,
+                                                  FileBlocks* blocks, bool* fully_covered);
+
     /**
      * record blocks read directly by CachedRemoteFileReader
      */
@@ -246,7 +272,7 @@ public:
      * @returns summary message
      */
     std::string clear_file_cache_async();
-    std::string clear_file_cache_directly();
+    std::string clear_file_cache_sync();
 
     /**
      * Reset the cache capacity. If the new_capacity is smaller than _capacity, the redundant data will be remove async.
@@ -310,9 +336,6 @@ public:
     void try_evict_in_advance(size_t size, std::lock_guard<std::mutex>& cache_lock);
 
     void update_ttl_atime(const UInt128Wrapper& hash);
-
-    void pause_ttl_manager();
-    void resume_ttl_manager();
 
     std::map<std::string, double> get_stats();
 
@@ -396,6 +419,11 @@ public:
     Status check_file_cache_consistency(InconsistencyContext& inconsistency_context);
 
 private:
+    // Shared scan used by both clear modes. It keeps the FileBlock holder lifecycle intact:
+    // releasable blocks are removed immediately, while blocks held by readers are only marked
+    // deleting and are later removed by FileBlocksHolder destruction.
+    std::string clear_file_cache_impl(bool sync_remove);
+
     LRUQueue& get_queue(FileCacheType type);
     const LRUQueue& get_queue(FileCacheType type) const;
 
@@ -469,6 +497,7 @@ private:
     void run_background_monitor();
     void run_background_gc();
     void run_background_lru_log_replay();
+    size_t replay_lru_logs_once();
     void run_background_lru_dump();
     void restore_lru_queues_from_disk(std::lock_guard<std::mutex>& cache_lock);
     void run_background_evict_in_advance();
@@ -557,6 +586,9 @@ private:
     std::unique_ptr<CacheLRUDumper> _lru_dumper;
     std::unique_ptr<BlockFileCacheTtlMgr> _ttl_mgr;
 
+    std::unique_ptr<InflightWriteBufferIndex> _inflight_write_buffer_index;
+    std::unique_ptr<AsyncCacheWriteManager> _async_write_manager;
+
     // metrics
     std::shared_ptr<bvar::Status<size_t>> _cache_capacity_metrics;
     std::shared_ptr<bvar::Status<size_t>> _cur_cache_size_metrics;
@@ -609,6 +641,7 @@ private:
 
     std::shared_ptr<bvar::LatencyRecorder> _cache_lock_wait_time_us;
     std::shared_ptr<bvar::LatencyRecorder> _get_or_set_latency_us;
+    std::shared_ptr<bvar::LatencyRecorder> _probe_latency_us;
     std::shared_ptr<bvar::LatencyRecorder> _storage_sync_remove_latency_us;
     std::shared_ptr<bvar::LatencyRecorder> _storage_retry_sync_remove_latency_us;
     std::shared_ptr<bvar::LatencyRecorder> _storage_async_remove_latency_us;
@@ -616,9 +649,17 @@ private:
     std::shared_ptr<bvar::LatencyRecorder> _recycle_keys_length_recorder;
     std::shared_ptr<bvar::LatencyRecorder> _update_lru_blocks_latency_us;
     std::shared_ptr<bvar::LatencyRecorder> _need_update_lru_blocks_length_recorder;
+    std::shared_ptr<bvar::Adder<size_t>> _need_update_lru_blocks_produce_metrics;
+    std::shared_ptr<bvar::Adder<size_t>> _need_update_lru_blocks_consume_metrics;
     std::shared_ptr<bvar::LatencyRecorder> _ttl_gc_latency_us;
 
     std::shared_ptr<bvar::LatencyRecorder> _shadow_queue_levenshtein_distance;
+    std::array<std::shared_ptr<bvar::LatencyRecorder>, 4> _lru_recorder_queue_length_recorder;
+    std::array<std::shared_ptr<bvar::Adder<size_t>>, 4> _lru_recorder_queue_produce_metrics;
+    std::array<std::shared_ptr<bvar::Adder<size_t>>, 4> _lru_recorder_queue_consume_metrics;
+    std::array<std::shared_ptr<bvar::Status<size_t>>, 4>
+            _lru_recorder_shadow_queue_element_count_metrics;
+    std::shared_ptr<bvar::Adder<size_t>> _lru_recorder_log_replay_idle_metrics;
     // keep _storage last so it will deconstruct first
     // otherwise, load_cache_info_into_memory might crash
     // coz it will use other members of BlockFileCache

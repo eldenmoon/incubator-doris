@@ -29,11 +29,11 @@
 #include <functional>
 #include <memory>
 #include <string>
+#include <string_view>
 
 #include "common/status.h"
 #include "core/block/column_numbers.h"
 #include "core/column/column_string.h"
-#include "core/column/predicate_column.h"
 #include "core/data_type/data_type_number.h"
 #include "core/data_type/define_primitive_type.h"
 #include "core/string_ref.h"
@@ -183,6 +183,8 @@ struct LikeSearchState {
 
     std::string pattern_str;
 
+    bool enable_hyperscan_fallback = true;
+
     /// Used for LIKE predicates if the pattern is a constant argument, and is either a
     /// constant string or has a constant string at the beginning or end of the pattern.
     /// This will be set in order to check for that pattern in the corresponding part of
@@ -227,7 +229,7 @@ struct LikeSearchState {
 
     LikeSearchState() = default;
 
-    Status clone(LikeSearchState& cloned);
+    Status clone(LikeSearchState& cloned) const;
 
     void set_search_string(const std::string& search_string_arg) {
         search_string = search_string_arg;
@@ -293,6 +295,8 @@ public:
     friend struct VectorEndsWithSearchState;
 
 protected:
+    static bool should_fallback_to_re2(std::string_view regexp);
+
     Status vector_const(const ColumnString& values, const StringRef* pattern_val,
                         ColumnUInt8::Container& result, const LikeFn& function,
                         LikeSearchState* search_state) const;

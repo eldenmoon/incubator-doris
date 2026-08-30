@@ -20,6 +20,7 @@
 #include <memory>
 #include <roaring/roaring.hh>
 
+#include "common/compiler_util.h"
 #include "common/exception.h"
 #include "core/column/column.h"
 #include "core/data_type/define_primitive_type.h"
@@ -48,9 +49,9 @@ enum class PredicateType {
     NOT_IN_LIST = 8,
     IS_NULL = 9,
     IS_NOT_NULL = 10,
-    BF = 11,            // BloomFilter
-    BITMAP_FILTER = 12, // BitmapFilter
-    MATCH = 13,         // fulltext match
+    BF = 11,    // BloomFilter
+    MATCH = 13, // fulltext match
+    LIKE = 14,
 };
 
 template <PrimitiveType primitive_type, typename ResultType>
@@ -115,6 +116,9 @@ inline std::string type_to_string(PredicateType type) {
 
     case PredicateType::BF:
         return "BF";
+
+    case PredicateType::LIKE:
+        return "LIKE";
     default:
         return "";
     };
@@ -182,20 +186,25 @@ struct PredicateTypeTraits {
     }
 };
 
-#define EVALUATE_BY_SELECTOR(EVALUATE_IMPL_WITH_NULL_MAP, EVALUATE_IMPL_WITHOUT_NULL_MAP) \
-    const bool is_dense_column = pred_col.size() == size;                                 \
-    for (uint16_t i = 0; i < size; i++) {                                                 \
-        uint16_t idx = is_dense_column ? i : sel[i];                                      \
-        if constexpr (is_nullable) {                                                      \
-            if (EVALUATE_IMPL_WITH_NULL_MAP(idx)) {                                       \
-                sel[new_size++] = idx;                                                    \
-            }                                                                             \
-        } else {                                                                          \
-            if (EVALUATE_IMPL_WITHOUT_NULL_MAP(idx)) {                                    \
-                sel[new_size++] = idx;                                                    \
-            }                                                                             \
-        }                                                                                 \
+template <bool is_nullable, typename PredColumn, typename WithNullFunc, typename WithoutNullFunc>
+inline ALWAYS_INLINE void evaluate_by_selector(const PredColumn& pred_col, uint16_t size,
+                                               uint16_t* sel, uint16_t& new_size,
+                                               WithNullFunc&& with_null_func,
+                                               WithoutNullFunc&& without_null_func) {
+    const bool is_dense_column = pred_col.size() == size;
+    for (uint16_t i = 0; i < size; i++) {
+        uint16_t idx = is_dense_column ? i : sel[i];
+        if constexpr (is_nullable) {
+            if (with_null_func(idx)) {
+                sel[new_size++] = idx;
+            }
+        } else {
+            if (without_null_func(idx)) {
+                sel[new_size++] = idx;
+            }
+        }
     }
+}
 
 class ColumnPredicate : public std::enable_shared_from_this<ColumnPredicate> {
 public:
@@ -344,7 +353,8 @@ public:
         if (_predicate_input_rows_counter == nullptr ||
             _predicate_filtered_rows_counter == nullptr ||
             _predicate_always_true_rows_counter == nullptr) {
-            throw Exception(INTERNAL_ERROR, "Predicate profile counters are not initialized");
+            throw Exception(ErrorCode::INTERNAL_ERROR,
+                            "Predicate profile counters are not initialized");
         }
         COUNTER_UPDATE(_predicate_input_rows_counter, input_rows);
         COUNTER_UPDATE(_predicate_filtered_rows_counter, filter_rows);
@@ -377,6 +387,8 @@ public:
             return "bf";
         case PredicateType::MATCH:
             return "match";
+        case PredicateType::LIKE:
+            return "like";
         default:
             return "unknown";
         }
@@ -387,14 +399,12 @@ public:
     // If true, it was definitely created by a runtime filter.
     // If false, it may still have been created by a runtime filter,
     // as certain filters like "in filter" generate key ranges instead of ColumnPredicate.
-    // is_runtime_filter uses _can_ignore, except for BitmapFilter,
-    // as BitmapFilter cannot ignore data.
     virtual bool is_runtime_filter() const { return _can_ignore(); }
 
 protected:
     virtual bool _can_ignore() const { return _runtime_filter_id != -1; }
     virtual uint16_t _evaluate_inner(const IColumn& column, uint16_t* sel, uint16_t size) const {
-        throw Exception(INTERNAL_ERROR, "Not Implemented _evaluate_inner");
+        throw Exception(ErrorCode::INTERNAL_ERROR, "Not Implemented _evaluate_inner");
     }
 
     void reset_judge_selectivity() const { _rf_selectivity.reset_judge_selectivity(); }

@@ -17,9 +17,9 @@
 
 package org.apache.doris.connector.jdbc.client;
 
-import org.apache.doris.connector.api.ConnectorType;
-import org.apache.doris.connector.api.DorisConnectorException;
 import org.apache.doris.connector.jdbc.JdbcDbType;
+import org.apache.doris.connector.spi.ConnectorType;
+import org.apache.doris.connector.spi.DorisConnectorException;
 
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
@@ -35,6 +35,7 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.function.Consumer;
@@ -78,13 +79,25 @@ public class JdbcMySQLConnectorClient extends JdbcConnectorClient {
             rs = stmt.executeQuery("SHOW VARIABLES LIKE 'version_comment'");
             if (rs.next()) {
                 String versionComment = rs.getString("Value");
-                isDoris = versionComment.toLowerCase().contains("doris");
+                isDoris = isDorisCompatibleVersionComment(versionComment);
             }
         } catch (Exception e) {
             LOG.warn("Failed to detect if remote MySQL is Doris: {}", e.getMessage());
         } finally {
             closeResources(rs, stmt, conn);
         }
+    }
+
+    static boolean isDorisCompatibleVersionComment(String versionComment) {
+        if (versionComment == null || versionComment.isEmpty()) {
+            return false;
+        }
+        String lowerVersionComment = versionComment.toLowerCase(Locale.ROOT);
+        return lowerVersionComment.contains("doris")
+                || lowerVersionComment.contains("selectdb")
+                || lowerVersionComment.contains("velodb")
+                || (lowerVersionComment.contains("enterprise version")
+                    && lowerVersionComment.contains("cloud mode"));
     }
 
     public boolean isDoris() {

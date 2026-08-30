@@ -28,6 +28,7 @@
 
 #include "core/column/column.h"
 #include "core/column/column_array.h"
+#include "core/column/column_decimal.h"
 #include "core/column/column_dictionary.h"
 #include "core/column/column_map.h"
 #include "core/cow.h"
@@ -1574,7 +1575,8 @@ public:
     //virtual void
     //for_each_subcolumn (ColumnCallback)
     //virtual void
-    //replace_column_data (const IColumn &, size_t row, size_t self_row=0) used in BlockReader(VerticalBlockReader)::_copy_agg_data() for agg value data
+    // replace_column_data(const IColumn&, size_t row, size_t self_row = 0) is used by
+    // VerticalBlockReader::_copy_agg_data() for aggregate value data.
     // the passed column must be non-variable length column: like columnVector...
     static void assert_replace_column_data_callback(MutableColumns& load_cols,
                                                     DataTypeSerDeSPtrs serders) {

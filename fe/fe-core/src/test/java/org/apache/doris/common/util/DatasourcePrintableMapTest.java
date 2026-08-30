@@ -43,8 +43,13 @@ public class DatasourcePrintableMapTest {
         Assertions.assertTrue(DatasourcePrintableMap.SENSITIVE_KEY.contains("bos_secret_accesskey"));
         Assertions.assertTrue(DatasourcePrintableMap.SENSITIVE_KEY.contains("jdbc.password"));
         Assertions.assertTrue(DatasourcePrintableMap.SENSITIVE_KEY.contains("elasticsearch.password"));
+        // All four iceberg REST secret keys must stay masked. These are enumerated explicitly in
+        // DatasourcePrintableMap (formerly reflected off the now-removed fe-core IcebergRestProperties);
+        // a dropped key is a silent SHOW CREATE CATALOG secret leak, so pin the full set.
         Assertions.assertTrue(DatasourcePrintableMap.SENSITIVE_KEY.contains("iceberg.rest.oauth2.credential"));
         Assertions.assertTrue(DatasourcePrintableMap.SENSITIVE_KEY.contains("iceberg.rest.oauth2.token"));
+        Assertions.assertTrue(DatasourcePrintableMap.SENSITIVE_KEY.contains("iceberg.rest.secret-access-key"));
+        Assertions.assertTrue(DatasourcePrintableMap.SENSITIVE_KEY.contains("iceberg.rest.session-token"));
 
         // Verify cloud storage related sensitive keys (these are constants added in static initialization block)
         Assertions.assertTrue(DatasourcePrintableMap.SENSITIVE_KEY.contains("s3.secret_key"));
@@ -265,5 +270,23 @@ public class DatasourcePrintableMapTest {
     @Test
     public void testPasswordMaskConstant() {
         Assertions.assertEquals("*XXX", DatasourcePrintableMap.PASSWORD_MASK);
+    }
+
+    @Test
+    public void testRegisterSensitiveKeysMasksNewlyRegisteredKey() {
+        // Simulates a filesystem provider contributing its sensitive alias at startup.
+        DatasourcePrintableMap.registerSensitiveKeys(
+                java.util.Collections.singleton("PROVIDER_CONTRIBUTED_SECRET_KEY"));
+
+        Map<String, String> testMap = new HashMap<>();
+        testMap.put("PROVIDER_CONTRIBUTED_SECRET_KEY", "super_secret_value");
+
+        DatasourcePrintableMap<String, String> printableMap =
+                new DatasourcePrintableMap<>(testMap, "=", false, false, true);
+        String result = printableMap.toString();
+
+        Assertions.assertFalse(result.contains("super_secret_value"));
+        Assertions.assertTrue(result.contains(
+                "PROVIDER_CONTRIBUTED_SECRET_KEY = " + DatasourcePrintableMap.PASSWORD_MASK));
     }
 }

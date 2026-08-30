@@ -96,13 +96,17 @@ struct MockAggsinkOperator : public AggSinkOperatorX {
 
 struct MockAggSourceOperator : public AggSourceOperatorX {
     MockAggSourceOperator() = default;
-    RowDescriptor& row_descriptor() override { return *mock_row_descriptor; }
+    void set_mock_row_descriptor(RowDescriptor* row_desc) {
+        mock_row_descriptor.reset(row_desc);
+        _row_descriptor = *mock_row_descriptor;
+    }
     std::unique_ptr<RowDescriptor> mock_row_descriptor;
 };
 
 class MockDistributionOperator final : public OperatorX<MockLocalState> {
 public:
-    MockDistributionOperator(ExchangeType exchange_type) : _exchange_type(exchange_type) {}
+    MockDistributionOperator(TLocalPartitionType::type exchange_type)
+            : _exchange_type(exchange_type) {}
 
     Status get_block_impl(RuntimeState* /*state*/, Block* /*block*/, bool* eos) override {
         *eos = true;
@@ -114,7 +118,7 @@ public:
     }
 
 private:
-    ExchangeType _exchange_type;
+    TLocalPartitionType::type _exchange_type;
 };
 
 std::shared_ptr<AggSinkOperatorX> create_agg_sink_op(OperatorContext& ctx, bool is_merge,
@@ -133,11 +137,11 @@ TEST(AggOperatorRequiredDistributionTest, require_hash_shuffle_after_non_hash_ch
     sink_op->_partition_exprs.emplace_back();
     sink_op->_needs_finalize = false;
     OperatorPtr child =
-            std::make_shared<MockDistributionOperator>(ExchangeType::ADAPTIVE_PASSTHROUGH);
+            std::make_shared<MockDistributionOperator>(TLocalPartitionType::ADAPTIVE_PASSTHROUGH);
     sink_op->_child = child;
 
     const auto distribution = sink_op->required_data_distribution(&ctx.state);
-    EXPECT_EQ(ExchangeType::HASH_SHUFFLE, distribution.distribution_type);
+    EXPECT_EQ(TLocalPartitionType::GLOBAL_EXECUTION_HASH_SHUFFLE, distribution.distribution_type);
 }
 
 TEST(AggOperatorRequiredDistributionTest, require_hash_shuffle_after_non_hash_local_exchange) {
@@ -145,7 +149,7 @@ TEST(AggOperatorRequiredDistributionTest, require_hash_shuffle_after_non_hash_lo
     auto sink_op = std::make_shared<MockAggsinkOperator>();
     sink_op->_needs_finalize = false;
     OperatorPtr child = std::make_shared<LocalExchangeSourceOperatorX>();
-    EXPECT_TRUE(child->init(ExchangeType::ADAPTIVE_PASSTHROUGH).ok());
+    EXPECT_TRUE(child->init(TLocalPartitionType::ADAPTIVE_PASSTHROUGH).ok());
     sink_op->_child = child;
 
     TExpr distinct_agg_expr;
@@ -157,18 +161,19 @@ TEST(AggOperatorRequiredDistributionTest, require_hash_shuffle_after_non_hash_lo
     sink_op->update_operator(tnode, false, false);
 
     const auto distribution = sink_op->required_data_distribution(&ctx.state);
-    EXPECT_EQ(ExchangeType::HASH_SHUFFLE, distribution.distribution_type);
+    EXPECT_EQ(TLocalPartitionType::GLOBAL_EXECUTION_HASH_SHUFFLE, distribution.distribution_type);
 
     Pipeline pipeline(0, 4, 4);
     EXPECT_TRUE(pipeline.add_operator(child, 0).ok());
-    pipeline.set_data_distribution(DataDistribution(ExchangeType::HASH_SHUFFLE));
+    pipeline.set_data_distribution(
+            DataDistribution(TLocalPartitionType::GLOBAL_EXECUTION_HASH_SHUFFLE));
     EXPECT_TRUE(pipeline.need_to_local_exchange(distribution, 1));
 }
 
 std::shared_ptr<AggSourceOperatorX> create_agg_source_op(OperatorContext& ctx, bool without_key,
                                                          bool needs_finalize) {
     auto op = std::make_shared<MockAggSourceOperator>();
-    op->mock_row_descriptor.reset(
+    op->set_mock_row_descriptor(
             new MockRowDescriptor {{std::make_shared<DataTypeInt64>()}, &ctx.pool});
     op->_without_key = without_key;
     op->_needs_finalize = needs_finalize;
@@ -293,7 +298,7 @@ TEST(AggOperatorTestWithOutGroupBy, test_multi_input) {
     EXPECT_TRUE(sink_op->prepare(&ctx.state).ok());
 
     auto source_op = std::make_shared<MockAggSourceOperator>();
-    source_op->mock_row_descriptor.reset(new MockRowDescriptor {
+    source_op->set_mock_row_descriptor(new MockRowDescriptor {
             {std::make_shared<DataTypeInt64>(), std::make_shared<DataTypeInt64>()}, &ctx.pool});
     source_op->_without_key = true;
     source_op->_needs_finalize = true;
@@ -356,7 +361,7 @@ TEST_F(AggOperatorTestWithGroupBy, test_need_finalize_only_key) {
             MockSlotRef::create_mock_contexts(std::make_shared<DataTypeInt64>());
 
     auto source_op = std::make_shared<MockAggSourceOperator>();
-    source_op->mock_row_descriptor.reset(new MockRowDescriptor {
+    source_op->set_mock_row_descriptor(new MockRowDescriptor {
             {std::make_shared<DataTypeInt64>(), std::make_shared<DataTypeInt64>()}, &ctx.pool});
     source_op->_without_key = false;
     source_op->_needs_finalize = true;
@@ -414,7 +419,7 @@ TEST_F(AggOperatorTestWithGroupBy, test_need_finalize) {
             MockSlotRef::create_mock_contexts(0, std::make_shared<DataTypeInt64>());
 
     auto source_op = std::make_shared<MockAggSourceOperator>();
-    source_op->mock_row_descriptor.reset(new MockRowDescriptor {
+    source_op->set_mock_row_descriptor(new MockRowDescriptor {
             {std::make_shared<DataTypeInt64>(), std::make_shared<DataTypeInt64>()}, &ctx.pool});
     source_op->_without_key = false;
     source_op->_needs_finalize = true;
@@ -454,7 +459,7 @@ TEST_F(AggOperatorTestWithGroupBy, test_need_finalize_mem_reuse_with_shared_outp
             MockSlotRef::create_mock_contexts(0, std::make_shared<DataTypeInt64>());
 
     auto source_op = std::make_shared<MockAggSourceOperator>();
-    source_op->mock_row_descriptor.reset(new MockRowDescriptor {
+    source_op->set_mock_row_descriptor(new MockRowDescriptor {
             {std::make_shared<DataTypeInt64>(), std::make_shared<DataTypeInt64>()}, &ctx.pool});
     source_op->_without_key = false;
     source_op->_needs_finalize = true;
@@ -498,7 +503,7 @@ TEST_F(AggOperatorTestWithGroupBy, test_no_need_finalize_mem_reuse_with_shared_o
             MockSlotRef::create_mock_contexts(0, std::make_shared<DataTypeInt64>());
 
     auto source_op = std::make_shared<MockAggSourceOperator>();
-    source_op->mock_row_descriptor.reset(new MockRowDescriptor {
+    source_op->set_mock_row_descriptor(new MockRowDescriptor {
             {std::make_shared<DataTypeInt64>(), std::make_shared<DataTypeInt64>()}, &ctx.pool});
     source_op->_without_key = false;
     source_op->_needs_finalize = false;
@@ -514,7 +519,7 @@ TEST_F(AggOperatorTestWithGroupBy, test_no_need_finalize_mem_reuse_with_shared_o
         EXPECT_TRUE(st.ok()) << st.msg();
     }
 
-    const auto& aggregate_function = sink_op->_aggregate_evaluators[0]->function();
+    const auto* aggregate_function = sink_op->_aggregate_evaluators[0];
     auto serialized_type = aggregate_function->get_serialized_type();
     Block block {ColumnHelper::create_column_with_name<DataTypeInt64>({}),
                  ColumnWithTypeAndName(aggregate_function->create_serialize_column(),
@@ -566,7 +571,7 @@ TEST_F(AggOperatorTestWithGroupBy, test_2_phase) {
                 MockSlotRef::create_mock_contexts(0, std::make_shared<DataTypeInt64>());
 
         auto source_op = std::make_shared<MockAggSourceOperator>();
-        source_op->mock_row_descriptor.reset(new MockRowDescriptor {
+        source_op->set_mock_row_descriptor(new MockRowDescriptor {
                 {std::make_shared<DataTypeInt64>(), std::make_shared<DataTypeInt64>()}, &ctx.pool});
         source_op->_without_key = false;
         source_op->_needs_finalize = false;
@@ -603,7 +608,7 @@ TEST_F(AggOperatorTestWithGroupBy, test_2_phase) {
                 MockSlotRef::create_mock_contexts(0, std::make_shared<DataTypeInt64>());
 
         auto source_op = std::make_shared<MockAggSourceOperator>();
-        source_op->mock_row_descriptor.reset(new MockRowDescriptor {
+        source_op->set_mock_row_descriptor(new MockRowDescriptor {
                 {std::make_shared<DataTypeInt64>(), std::make_shared<DataTypeInt64>()}, &ctx.pool});
         source_op->_without_key = false;
         source_op->_needs_finalize = true;
@@ -644,7 +649,7 @@ TEST_F(AggOperatorTestWithGroupBy, other_case_1) {
             MockSlotRef::create_mock_contexts(0, std::make_shared<DataTypeInt64>());
 
     auto source_op = std::make_shared<MockAggSourceOperator>();
-    source_op->mock_row_descriptor.reset(new MockRowDescriptor {
+    source_op->set_mock_row_descriptor(new MockRowDescriptor {
             {std::make_shared<DataTypeInt64>(), std::make_shared<DataTypeInt64>()}, &ctx.pool});
     source_op->_without_key = false;
     source_op->_needs_finalize = false;
@@ -722,7 +727,7 @@ TEST_F(AggOperatorTestWithGroupBy, other_case_2) {
             std::make_shared<DataTypeNullable>(std::make_shared<DataTypeInt64>()));
 
     auto source_op = std::make_shared<MockAggSourceOperator>();
-    source_op->mock_row_descriptor.reset(new MockRowDescriptor {
+    source_op->set_mock_row_descriptor(new MockRowDescriptor {
             {std::make_shared<DataTypeNullable>(std::make_shared<DataTypeInt64>()),
              std::make_shared<DataTypeInt64>()},
             &ctx.pool});
@@ -762,7 +767,7 @@ TEST_F(AggOperatorTestWithGroupBy, other_case_3) {
                 0, std::make_shared<DataTypeNullable>(std::make_shared<DataTypeInt64>()));
 
         auto source_op = std::make_shared<MockAggSourceOperator>();
-        source_op->mock_row_descriptor.reset(new MockRowDescriptor {
+        source_op->set_mock_row_descriptor(new MockRowDescriptor {
                 {std::make_shared<DataTypeNullable>(std::make_shared<DataTypeInt64>()),
                  std::make_shared<DataTypeInt64>()},
                 &ctx.pool});
@@ -802,7 +807,7 @@ TEST_F(AggOperatorTestWithGroupBy, other_case_3) {
                 0, std::make_shared<DataTypeNullable>(std::make_shared<DataTypeInt64>()));
 
         auto source_op = std::make_shared<MockAggSourceOperator>();
-        source_op->mock_row_descriptor.reset(new MockRowDescriptor {
+        source_op->set_mock_row_descriptor(new MockRowDescriptor {
                 {std::make_shared<DataTypeNullable>(std::make_shared<DataTypeInt64>()),
                  std::make_shared<DataTypeInt64>()},
                 &ctx.pool});
@@ -843,7 +848,7 @@ TEST(AggOperatorTestWithOutGroupBy, other_case_3) {
     sink_op->_is_merge = true;
 
     auto source_op = std::make_shared<MockAggSourceOperator>();
-    source_op->mock_row_descriptor.reset(new MockRowDescriptor {
+    source_op->set_mock_row_descriptor(new MockRowDescriptor {
             {std::make_shared<DataTypeNullable>(std::make_shared<DataTypeInt64>())}, &ctx.pool});
     source_op->_without_key = true;
     source_op->_needs_finalize = true;

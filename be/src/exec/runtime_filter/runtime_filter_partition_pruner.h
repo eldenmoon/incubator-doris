@@ -43,6 +43,10 @@ struct ParsedBoundary {
     int64_t partition_id = 0;
     SlotId slot_id = 0;
     bool is_nullable = false;
+    // True only when the original/projection boundary is a finite LIST value set.
+    // Bloom RF pruning relies on complete value enumeration and must not use RANGE
+    // boundaries, even when a RANGE projection degenerates to a single point.
+    bool is_list_boundary = false;
     ColumnValueRangeType boundary_cvr;
     // True if the partition's value set is exactly {NULL} (e.g. LIST
     // partition whose only key is NULL). The CVR alone cannot encode
@@ -129,8 +133,8 @@ private:
 // `OperatorXBase::parsed_partition_boundaries()`. The owner (ScanLocalStateBase)
 // passes the parsed object into `prune_by_runtime_filters` on each call.
 //
-// Thread safety: `is_partition_pruned()` is safe to call concurrently with
-// `prune_by_runtime_filters()` via an internal shared_mutex.
+// Thread safety: pruning updates and lookups are safe to call concurrently via
+// an internal shared_mutex.
 class RuntimeFilterPartitionPruner {
 public:
     RuntimeFilterPartitionPruner() = default;

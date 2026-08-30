@@ -27,6 +27,7 @@ import org.apache.doris.nereids.trees.plans.logical.LogicalPlan;
 import org.apache.doris.qe.StmtExecutor;
 import org.apache.doris.utframe.TestWithFeService;
 
+import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
 
 public class DropTableStreamTest extends TestWithFeService {
@@ -44,11 +45,13 @@ public class DropTableStreamTest extends TestWithFeService {
 
         createDatabase("test_stream");
         String createTableStr1 = "create table if not exists test_stream.tbl1\n" + "(k1 int, k2 int)\n" + "unique key(k1)\n"
-                + "distributed by hash(k1) buckets 1\n" + "properties('replication_num' = '1'); ";
+                + "distributed by hash(k1) buckets 1\n"
+                + "properties('replication_num' = '1', 'binlog.enable' = 'true', 'binlog.format' = 'ROW', "
+                + "'binlog.need_historical_value' = 'true'); ";
         createTable(createTableStr1);
 
         String createStreamStr1 =  "create stream test_stream.s1 on table test_stream.tbl1\n"
-                + "properties('type' = 'default', 'show_initial_rows' = 'true'); ";
+                + "properties('show_initial_rows' = 'true'); ";
         createTable(createStreamStr1);
         String createStreamStr2 =  "create stream test_stream.s2 on table test_stream.tbl1\n"
                 + "properties('type' = 'append_only', 'show_initial_rows' = 'true'); ";
@@ -86,6 +89,19 @@ public class DropTableStreamTest extends TestWithFeService {
         // test not exist
         ExceptionChecker.expectThrowsWithMsg(DdlException.class, "Unknown table 's3' in test_stream",
                 () -> dropStream("drop stream test_stream.s3;"));
+    }
+
+    @Test
+    public void testCloudDropRequiresForce() {
+        String previousCloudUniqueId = Config.cloud_unique_id;
+        Config.cloud_unique_id = "cloud_table_stream_ut";
+        try {
+            Exception exception = Assertions.assertThrows(Exception.class,
+                    () -> dropStream("drop stream test_stream.not_reached;"));
+            Assertions.assertTrue(exception.getMessage().contains("only supports DROP STREAM ... FORCE"));
+        } finally {
+            Config.cloud_unique_id = previousCloudUniqueId;
+        }
     }
 
     @Override

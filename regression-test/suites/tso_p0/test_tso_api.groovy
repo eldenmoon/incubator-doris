@@ -19,10 +19,9 @@ import org.apache.doris.regression.util.Http
 
 suite("test_tso_api", "nonConcurrent") {
     def currentTime = System.currentTimeMillis()
-    def masterFeHttpAddress = "${getMasterIp()}:${getMasterPort('http')}"
 
     // Test TSO API endpoint
-    def url = String.format("http://%s/api/tso", masterFeHttpAddress)
+    def url = String.format("http://%s/api/tso", context.config.feHttpAddress)
 
     // Test 1: Basic TSO API access
     def result = Http.GET(url, true, true)
@@ -43,6 +42,39 @@ suite("test_tso_api", "nonConcurrent") {
     assertTrue(data.current_tso > 0)
     assertTrue(data.current_tso_physical_time > 0)
     assertTrue(data.current_tso_logical_counter >= 0)
+
+    // Test local TSO API access
+    def localResult = Http.GET("${url}?local=true", true, true)
+    assertTrue(localResult.code == 0)
+    assertEquals(localResult.msg, "success")
+    assertTrue(localResult.data.containsKey("window_end_physical_time"))
+    assertTrue(localResult.data.containsKey("current_tso"))
+    assertTrue(localResult.data.containsKey("current_tso_physical_time"))
+    assertTrue(localResult.data.containsKey("current_tso_logical_counter"))
+
+    // Test information_schema TSO status interface
+    def statusRows = sql_return_maparray """
+            SELECT WINDOW_END_PHYSICAL_TIME, CURRENT_TSO,
+                   CURRENT_TSO_PHYSICAL_TIME, CURRENT_TSO_LOGICAL_COUNTER
+            FROM information_schema.tso_status
+        """
+    assertEquals(1, statusRows.size())
+
+    def status = statusRows[0]
+    assertTrue(status.containsKey("WINDOW_END_PHYSICAL_TIME"))
+    assertTrue(status.containsKey("CURRENT_TSO"))
+    assertTrue(status.containsKey("CURRENT_TSO_PHYSICAL_TIME"))
+    assertTrue(status.containsKey("CURRENT_TSO_LOGICAL_COUNTER"))
+
+    long statusWindowEnd = Long.parseLong(status.WINDOW_END_PHYSICAL_TIME.toString())
+    long statusCurrentTso = Long.parseLong(status.CURRENT_TSO.toString())
+    long statusPhysicalTime = Long.parseLong(status.CURRENT_TSO_PHYSICAL_TIME.toString())
+    long statusLogicalCounter = Long.parseLong(status.CURRENT_TSO_LOGICAL_COUNTER.toString())
+    assertTrue(statusWindowEnd >= statusPhysicalTime)
+    assertTrue(statusCurrentTso > 0)
+    assertTrue(statusPhysicalTime > 0)
+    assertTrue(statusLogicalCounter >= 0)
+    assertEquals(statusCurrentTso, (statusPhysicalTime << 18) | statusLogicalCounter)
 
     // Test 2: Multiple TSO API calls should return consistent increasing values
     def result1 = Http.GET(url, true, true)

@@ -18,9 +18,11 @@
 #include "exec/runtime_filter/runtime_filter_wrapper.h"
 
 #include "core/data_type/define_primitive_type.h"
+#include "core/string_ref.h"
 #include "exec/runtime_filter/runtime_filter_definitions.h"
 #include "exprs/create_predicate_function.h"
 #include "exprs/function/cast/cast_to_date_or_datetime_impl.hpp"
+#include "util/hash_util.hpp"
 
 namespace doris {
 RuntimeFilterWrapper::RuntimeFilterWrapper(const RuntimeFilterParams* params)
@@ -47,11 +49,6 @@ RuntimeFilterWrapper::RuntimeFilterWrapper(const RuntimeFilterParams* params)
         _hybrid_set.reset(create_set(_column_return_type, params->null_aware));
         _bloom_filter_func.reset(create_bloom_filter(_column_return_type, params->null_aware));
         _bloom_filter_func->init_params(params);
-        return;
-    }
-    case RuntimeFilterType::BITMAP_FILTER: {
-        _bitmap_filter_func.reset(create_bitmap_filter(_column_return_type));
-        _bitmap_filter_func->set_not_in(params->bitmap_filter_not_in);
         return;
     }
     default:
@@ -117,26 +114,6 @@ Status RuntimeFilterWrapper::insert(const ColumnPtr& column, size_t start) {
         }
         break;
     }
-    case RuntimeFilterType::BITMAP_FILTER: {
-        std::vector<const BitmapValue*> bitmaps;
-        if (column->is_nullable()) {
-            const auto* nullable = assert_cast<const ColumnNullable*>(column.get());
-            const auto& col = assert_cast<const ColumnBitmap&>(nullable->get_nested_column());
-            const auto& nullmap = nullable->get_null_map_column().get_data();
-            for (size_t i = start; i < column->size(); i++) {
-                if (!nullmap[i]) {
-                    bitmaps.push_back(&(col.get_data()[i]));
-                }
-            }
-        } else {
-            const auto* col = assert_cast<const ColumnBitmap*>(column.get());
-            for (size_t i = start; i < column->size(); i++) {
-                bitmaps.push_back(&(col->get_data()[i]));
-            }
-        }
-        _bitmap_filter_func->insert_many(bitmaps);
-        break;
-    }
     default:
         return Status::InternalError("`RuntimeFilterWrapper::insert` is not supported for RF {}",
                                      int(_filter_type));
@@ -149,6 +126,7 @@ bool RuntimeFilterWrapper::build_bf_by_runtime_size() const {
 }
 
 Status RuntimeFilterWrapper::merge(const RuntimeFilterWrapper* other) {
+    DORIS_CHECK(!_bucket_prune_hashes_started.load());
     if (_state == State::DISABLED) {
         return Status::OK();
     }
@@ -225,11 +203,6 @@ Status RuntimeFilterWrapper::merge(const RuntimeFilterWrapper* other) {
                 RETURN_IF_ERROR(_bloom_filter_func->merge(other->_bloom_filter_func.get()));
             }
         }
-        break;
-    }
-    case RuntimeFilterType::BITMAP_FILTER: {
-        // use input bitmap directly because we assume bitmap filter join always have full data
-        _bitmap_filter_func = other->_bitmap_filter_func;
         break;
     }
     default:
@@ -645,6 +618,52 @@ bool RuntimeFilterWrapper::contain_null() const {
     return false;
 }
 
+std::shared_ptr<const std::vector<uint32_t>>
+RuntimeFilterWrapper::get_or_compute_bucket_prune_hashes(const DataTypePtr& target_type) const {
+    DORIS_CHECK(_state.load() == State::READY);
+    DORIS_CHECK(_hybrid_set != nullptr);
+    DORIS_CHECK(target_type != nullptr);
+    PrimitiveType primitive_type = target_type->get_primitive_type();
+    DORIS_CHECK_EQ(primitive_type, _column_return_type);
+
+    std::call_once(_bucket_prune_hashes_once, [&] {
+        _bucket_prune_hashes_started.store(true);
+        // Materialize the exact-set values into a column so bucket pruning uses the
+        // column's type-specific CRC implementation. This intentionally makes a
+        // temporary copy of variable-length values. runtime_filter_max_in_num bounds
+        // the number of copied values, but not their total byte size; we accept this
+        // transient memory cost to avoid maintaining a separate per-type hash path.
+        MutableColumnPtr column = target_type->create_column();
+        auto* iter = _hybrid_set->begin();
+        while (iter->has_next()) {
+            const void* value = iter->get_value();
+            DORIS_CHECK(value != nullptr);
+            if (is_string_type(primitive_type)) {
+                const auto* string_value = reinterpret_cast<const StringRef*>(value);
+                column->insert_data(string_value->data, string_value->size);
+            } else {
+                // ColumnVector::insert_data ignores length for fixed-length values.
+                column->insert_data(reinterpret_cast<const char*>(value), 0);
+            }
+            iter->next();
+        }
+
+        auto hashes = std::make_shared<std::vector<uint32_t>>(column->size(), 0);
+        if (!hashes->empty()) {
+            column->update_crcs_with_value(hashes->data(), primitive_type,
+                                           static_cast<uint32_t>(column->size()));
+        }
+        if (_hybrid_set->contain_null()) {
+            // Keep one shared vector for nullable and non-nullable targets. A non-nullable
+            // target may retain this extra bucket, but can never lose matching rows.
+            hashes->push_back(HashUtil::zlib_crc_hash_null(0));
+        }
+        _bucket_prune_hashes = std::move(hashes);
+    });
+    DORIS_CHECK(_bucket_prune_hashes != nullptr);
+    return _bucket_prune_hashes;
+}
+
 std::string RuntimeFilterWrapper::debug_string() const {
     auto type_string = _filter_type == RuntimeFilterType::IN_OR_BLOOM_FILTER
                                ? fmt::format("{}({})", filter_type_to_string(_filter_type),
@@ -662,10 +681,6 @@ std::string RuntimeFilterWrapper::debug_string() const {
         }
         if (get_real_type() == RuntimeFilterType::IN_FILTER) {
             result += fmt::format(", size: {}, max_in_num: {}", _hybrid_set->size(), _max_in_num);
-        }
-        if (get_real_type() == RuntimeFilterType::BITMAP_FILTER) {
-            result += fmt::format(", size: {}, not_in: {}", _bitmap_filter_func->size(),
-                                  _bitmap_filter_func->is_not_in() ? "true" : "false");
         }
     }
 

@@ -66,59 +66,6 @@ public:
         return T;
     }
 
-    doris::FieldType get_storage_field_type() const override {
-        // Doris does not support uint8 at present, use uint8 as boolean type
-        if constexpr (T == TYPE_BOOLEAN) {
-            return doris::FieldType::OLAP_FIELD_TYPE_BOOL;
-        }
-        if constexpr (T == TYPE_TINYINT) {
-            return doris::FieldType::OLAP_FIELD_TYPE_TINYINT;
-        }
-        if constexpr (T == TYPE_SMALLINT) {
-            return doris::FieldType::OLAP_FIELD_TYPE_SMALLINT;
-        }
-        if constexpr (T == TYPE_INT) {
-            return doris::FieldType::OLAP_FIELD_TYPE_INT;
-        }
-        if constexpr (T == TYPE_BIGINT) {
-            return doris::FieldType::OLAP_FIELD_TYPE_BIGINT;
-        }
-        if constexpr (T == TYPE_LARGEINT) {
-            return doris::FieldType::OLAP_FIELD_TYPE_LARGEINT;
-        }
-        if constexpr (T == TYPE_FLOAT) {
-            return doris::FieldType::OLAP_FIELD_TYPE_FLOAT;
-        }
-        if constexpr (T == TYPE_DOUBLE) {
-            return doris::FieldType::OLAP_FIELD_TYPE_DOUBLE;
-        }
-        if constexpr (T == TYPE_DATE) {
-            return doris::FieldType::OLAP_FIELD_TYPE_DATE;
-        }
-        if constexpr (T == TYPE_DATETIME) {
-            return doris::FieldType::OLAP_FIELD_TYPE_DATETIME;
-        }
-        if constexpr (T == TYPE_DATEV2) {
-            return doris::FieldType::OLAP_FIELD_TYPE_DATEV2;
-        }
-        if constexpr (T == TYPE_DATETIMEV2) {
-            return doris::FieldType::OLAP_FIELD_TYPE_DATETIMEV2;
-        }
-        if constexpr (T == TYPE_TIMESTAMPTZ) {
-            return doris::FieldType::OLAP_FIELD_TYPE_TIMESTAMPTZ;
-        }
-        if constexpr (T == TYPE_IPV4) {
-            return doris::FieldType::OLAP_FIELD_TYPE_IPV4;
-        }
-        if constexpr (T == TYPE_IPV6) {
-            return doris::FieldType::OLAP_FIELD_TYPE_IPV6;
-        }
-        if constexpr (T == TYPE_TIMEV2) {
-            return doris::FieldType::OLAP_FIELD_TYPE_TIMEV2;
-        }
-        throw Exception(Status::FatalError("__builtin_unreachable"));
-    }
-
     Field get_field(const TExprNode& node) const override;
 
     int64_t get_uncompressed_serialized_bytes(const IColumn& column,
@@ -147,4 +94,23 @@ protected:
 private:
     bool _is_null_literal = false;
 };
+
+/// Instantiated once in data_type_number_base.cpp; suppresses per-TU implicit instantiation.
+extern template class DataTypeNumberBase<TYPE_BOOLEAN>;
+extern template class DataTypeNumberBase<TYPE_TINYINT>;
+extern template class DataTypeNumberBase<TYPE_SMALLINT>;
+extern template class DataTypeNumberBase<TYPE_INT>;
+extern template class DataTypeNumberBase<TYPE_BIGINT>;
+extern template class DataTypeNumberBase<TYPE_LARGEINT>;
+extern template class DataTypeNumberBase<TYPE_FLOAT>;
+extern template class DataTypeNumberBase<TYPE_DOUBLE>;
+extern template class DataTypeNumberBase<TYPE_DATE>;
+extern template class DataTypeNumberBase<TYPE_DATEV2>;
+extern template class DataTypeNumberBase<TYPE_DATETIME>;
+extern template class DataTypeNumberBase<TYPE_DATETIMEV2>;
+extern template class DataTypeNumberBase<TYPE_IPV4>;
+extern template class DataTypeNumberBase<TYPE_IPV6>;
+extern template class DataTypeNumberBase<TYPE_TIMEV2>;
+extern template class DataTypeNumberBase<TYPE_TIMESTAMPTZ>;
+
 } // namespace doris

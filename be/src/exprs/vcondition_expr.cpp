@@ -73,8 +73,7 @@ size_t VConditionExpr::count_true_with_notnull(const ColumnPtr& col) {
     }
 
     auto count = col->size();
-    if (col->is_nullable()) {
-        const auto* nullable = assert_cast<const ColumnNullable*>(col.get());
+    if (const auto* nullable = check_and_get_column<ColumnNullable>(col.get())) {
         const auto* __restrict null_data = nullable->get_null_map_data().data();
         const auto* __restrict bool_data =
                 ((const ColumnUInt8&)(nullable->get_nested_column())).get_data().data();
@@ -502,7 +501,7 @@ Status VectorizedIfNullExpr::execute_column_impl(VExprContext* context, const Bl
     RETURN_IF_ERROR(_children[0]->execute_column(context, block, selector, count, first_column));
     first_column = first_column->convert_to_full_column_if_const();
 
-    if (!first_column->is_nullable()) {
+    if (!is_column_nullable(*first_column)) {
         result_column = first_column;
         DCHECK(_data_type->is_nullable() == false);
         return Status::OK();
@@ -552,12 +551,9 @@ void insert_result_data(MutableColumnPtr& result_column, ColumnPtr& argument_col
                         const UInt8* __restrict null_map_data, UInt8* __restrict filled_flag,
                         const size_t input_rows_count) {
     if (result_column->size() == 0 && input_rows_count) {
-        result_column->resize(input_rows_count);
-        auto* __restrict result_raw_data =
-                assert_cast<ColumnType*>(result_column.get())->get_data().data();
-        for (int i = 0; i < input_rows_count; i++) {
-            result_raw_data[i] = {};
-        }
+        // The branchless accumulation below requires an all-zero buffer. Do not value-initialize
+        // date-like types here because their default values may have non-zero packed bits.
+        assert_cast<ColumnType*>(result_column.get())->get_data().resize_fill(input_rows_count);
     }
     auto* __restrict result_raw_data =
             assert_cast<ColumnType*>(result_column.get())->get_data().data();
@@ -677,6 +673,7 @@ Status VectorizedCoalesceExpr::execute_column_impl(VExprContext* context, const 
                                result_type->get_primitive_type() == PrimitiveType::TYPE_MAP ||
                                result_type->get_primitive_type() == PrimitiveType::TYPE_STRUCT ||
                                result_type->get_primitive_type() == PrimitiveType::TYPE_ARRAY ||
+                               result_type->get_primitive_type() == PrimitiveType::TYPE_VARIANT ||
                                result_type->get_primitive_type() == PrimitiveType::TYPE_JSONB;
     if (cannot_random_write) {
         result_column->reserve(input_rows_count);

@@ -314,7 +314,8 @@ public class GlobalTransactionMgr implements GlobalTransactionMgrIface {
         DatabaseTransactionMgr dbTransactionMgr = getDatabaseTransactionMgr(db.getId());
         StopWatch stopWatch = new StopWatch();
         stopWatch.start();
-        List<Table> lockTableList = buildLockTableList(tableList, dbTransactionMgr.getTransactionState(transactionId));
+        TransactionState transactionState = dbTransactionMgr.getTransactionState(transactionId);
+        List<Table> lockTableList = buildLockTableList(tableList, transactionState);
         if (!MetaLockUtils.tryWriteLockTablesOrMetaException(lockTableList, timeoutMillis, TimeUnit.MILLISECONDS)) {
             throw new UserException("get tableList write lock timeout, tableList=("
                     + StringUtils.join(lockTableList, ",") + ")");
@@ -446,6 +447,11 @@ public class GlobalTransactionMgr implements GlobalTransactionMgrIface {
             transactionStateList.addAll(dbTransactionMgr.getCommittedTxnList());
         }
         return transactionStateList;
+    }
+
+    @Override
+    public List<TransactionState> getCommittedTransactions(long dbId) throws AnalysisException {
+        return getDatabaseTransactionMgr(dbId).getCommittedTxnList();
     }
 
     public boolean existCommittedTxns(Long dbId, Long tableId, Long partitionId) {

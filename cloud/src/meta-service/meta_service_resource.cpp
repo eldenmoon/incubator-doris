@@ -760,6 +760,14 @@ static int add_hdfs_storage_vault(InstanceInfoPB& instance, Transaction* txn,
     return 0;
 }
 
+static bool has_non_empty_role_arn(const ObjectStoreInfoPB& obj) {
+    return obj.has_role_arn() && !obj.role_arn().empty();
+}
+
+static bool use_credential_provider(const ObjectStoreInfoPB& obj) {
+    return obj.has_cred_provider_type() || has_non_empty_role_arn(obj);
+}
+
 static void create_object_info_with_encrypt(const InstanceInfoPB& instance, ObjectStoreInfoPB* obj,
                                             bool sse_enabled, MetaServiceCode& code,
                                             std::string& msg) {
@@ -1250,7 +1258,9 @@ static int extract_object_storage_info(const AlterObjStoreInfoRequest* request,
     auto& [ak, sk, bucket, prefix, endpoint, external_endpoint, region, use_path_style, role_arn,
            external_id] = obj_desc;
 
-    if (!obj.has_role_arn()) {
+    bool use_credential_provider_for_add_vault =
+            request->op() == AlterObjStoreInfoRequest::ADD_S3_VAULT && obj.has_cred_provider_type();
+    if (!obj.has_role_arn() && !use_credential_provider_for_add_vault) {
         if (!obj.has_ak() || !obj.has_sk()) {
             code = MetaServiceCode::INVALID_ARGUMENT;
             msg = "s3 obj info err " + proto_to_json(*request);
@@ -1306,13 +1316,15 @@ static ObjectStoreInfoPB object_info_pb_factory(ObjectStorageDesc& obj_desc,
         last_item.set_user_id(obj.user_id());
     }
 
-    if (!obj.has_role_arn()) {
+    if (!use_credential_provider(obj)) {
         last_item.set_ak(std::move(cipher_ak_sk_pair.first));
         last_item.set_sk(std::move(cipher_ak_sk_pair.second));
         last_item.mutable_encryption_info()->CopyFrom(encryption_info);
     } else {
-        last_item.set_role_arn(role_arn);
-        last_item.set_external_id(external_id);
+        if (has_non_empty_role_arn(obj)) {
+            last_item.set_role_arn(role_arn);
+            last_item.set_external_id(external_id);
+        }
         last_item.set_cred_provider_type(get_cred_provider_type(obj));
     }
     last_item.set_bucket(bucket);
@@ -1476,18 +1488,17 @@ void MetaServiceImpl::alter_storage_vault(google::protobuf::RpcController* contr
             return;
         }
         // ATTN: prefix may be empty
-        if (((ak.empty() || sk.empty()) && role_arn.empty()) || bucket.empty() ||
+        if (((ak.empty() || sk.empty()) && !use_credential_provider(obj)) || bucket.empty() ||
             endpoint.empty() || region.empty()) {
             code = MetaServiceCode::INVALID_ARGUMENT;
             msg = "s3 conf info err, please check it";
             return;
         }
 
-        if (!role_arn.empty()) {
-            if (!obj.has_cred_provider_type() || !obj.has_provider() ||
-                obj.provider() != ObjectStoreInfoPB::S3) {
+        if (use_credential_provider(obj)) {
+            if (!obj.has_provider() || obj.provider() != ObjectStoreInfoPB::S3) {
                 code = MetaServiceCode::INVALID_ARGUMENT;
-                msg = "s3 conf info err with role_arn, please check it";
+                msg = "s3 conf info err with credentials_provider_type, please check it";
                 return;
             }
         }
@@ -2551,6 +2562,11 @@ static std::pair<MetaServiceCode, std::string> drop_single_instance(const std::s
 
     instance->set_status(InstanceInfoPB::DELETED);
     instance->set_mtime(duration_cast<seconds>(system_clock::now().time_since_epoch()).count());
+    if (!instance->has_recycle_state()) {
+        instance->set_recycle_state(INSTANCE_RECYCLE_STATE_DATA_CLEANUP_PENDING);
+        instance->set_recycle_state_update_time_ms(
+                duration_cast<milliseconds>(system_clock::now().time_since_epoch()).count());
+    }
 
     std::string serialized = instance->SerializeAsString();
     if (serialized.empty()) {
@@ -2623,6 +2639,11 @@ static std::pair<MetaServiceCode, std::string> drop_instance_chain(
     for (auto& instance : predecessors) {
         instance.set_status(InstanceInfoPB::DELETED);
         instance.set_mtime(now);
+        if (!instance.has_recycle_state()) {
+            instance.set_recycle_state(INSTANCE_RECYCLE_STATE_DATA_CLEANUP_PENDING);
+            instance.set_recycle_state_update_time_ms(
+                    duration_cast<milliseconds>(system_clock::now().time_since_epoch()).count());
+        }
         std::string serialized;
         if (!instance.SerializeToString(&serialized)) {
             std::string msg =
@@ -2636,6 +2657,11 @@ static std::pair<MetaServiceCode, std::string> drop_instance_chain(
 
     tail_instance->set_status(InstanceInfoPB::DELETED);
     tail_instance->set_mtime(now);
+    if (!tail_instance->has_recycle_state()) {
+        tail_instance->set_recycle_state(INSTANCE_RECYCLE_STATE_DATA_CLEANUP_PENDING);
+        tail_instance->set_recycle_state_update_time_ms(
+                duration_cast<milliseconds>(system_clock::now().time_since_epoch()).count());
+    }
     std::string serialized = tail_instance->SerializeAsString();
     if (serialized.empty()) {
         std::string msg = "failed to serialize";
@@ -2645,6 +2671,55 @@ static std::pair<MetaServiceCode, std::string> drop_instance_chain(
     LOG(INFO) << "drop instance_id=" << tail_instance_id << " and " << predecessors.size()
               << " predecessor instances, json=" << proto_to_json(*tail_instance);
     return {MetaServiceCode::OK, std::move(serialized)};
+}
+
+std::pair<MetaServiceCode, std::string> MetaServiceImpl::check_instance_recycle_completed(
+        const std::string& instance_id, bool& finished, std::string& reason) {
+    reason.clear();
+    std::unique_ptr<Transaction> txn;
+    TxnErrorCode err = txn_kv_->create_txn(&txn);
+    if (err != TxnErrorCode::TXN_OK) {
+        std::string msg = fmt::format("failed to create txn, err={}", err);
+        LOG(WARNING) << msg << " instance_id=" << instance_id;
+        return {MetaServiceCode::KV_TXN_CREATE_ERR, std::move(msg)};
+    }
+
+    std::string key = instance_key({instance_id});
+    std::string value;
+    err = txn->get(key, &value);
+    if (err == TxnErrorCode::TXN_KEY_NOT_FOUND) {
+        // The recycler only removes keys after cleanup is complete, so do not treat this as an
+        // incomplete or unknown state.
+        finished = true;
+        reason = fmt::format(
+                "instance recycling is considered completed because the instance key does not "
+                "exist, instance_id={}",
+                instance_id);
+        return {MetaServiceCode::OK, "OK"};
+    }
+    if (err != TxnErrorCode::TXN_OK) {
+        std::string msg =
+                fmt::format("failed to get instance, instance_id={}, err={}", instance_id, err);
+        LOG(WARNING) << msg;
+        return {MetaServiceCode::KV_TXN_GET_ERR, std::move(msg)};
+    }
+
+    InstanceInfoPB instance;
+    if (!instance.ParseFromString(value)) {
+        std::string msg = fmt::format("malformed instance info, key={}", hex(key));
+        LOG(WARNING) << msg;
+        return {MetaServiceCode::PROTOBUF_PARSE_ERR, std::move(msg)};
+    }
+
+    finished = instance.recycle_state() ==
+               InstanceRecycleState::INSTANCE_RECYCLE_STATE_CLEANUP_COMPLETED;
+    if (!finished) {
+        reason = fmt::format(
+                "instance has not completed recycling, instance_id={}, recycle_state={}",
+                instance_id, InstanceRecycleState_Name(instance.recycle_state()));
+        return {MetaServiceCode::OK, "OK"};
+    }
+    return {MetaServiceCode::OK, "OK"};
 }
 
 void MetaServiceImpl::alter_instance(google::protobuf::RpcController* controller,
@@ -2675,6 +2750,12 @@ void MetaServiceImpl::alter_instance(google::protobuf::RpcController* controller
     switch (request->op()) {
     case AlterInstanceRequest::DROP: {
         ret = alter_instance(request, [&instance_id](Transaction* txn, InstanceInfoPB* instance) {
+            if (instance->status() == InstanceInfoPB::DELETED) {
+                std::string msg = "instance has already been recycled";
+                LOG(WARNING) << msg << " instance_id=" << instance_id;
+                return std::make_pair(MetaServiceCode::OK, instance->SerializeAsString());
+            }
+
             // check instance doesn't have any cluster.
             if (instance->clusters_size() != 0) {
                 std::string msg = "failed to drop instance, instance has clusters";
@@ -3473,13 +3554,30 @@ void MetaServiceImpl::alter_cluster(google::protobuf::RpcController* controller,
     if (!cloud_unique_id.empty() && instance_id.empty()) {
         auto [is_degraded_format, id] =
                 ResourceManager::get_instance_id_by_cloud_unique_id(cloud_unique_id);
-        if (config::enable_check_instance_id && is_degraded_format &&
-            !resource_mgr_->is_instance_id_registered(id)) {
-            msg = "use degrade cloud_unique_id, but instance_id invalid, cloud_unique_id=" +
-                  cloud_unique_id;
-            LOG(WARNING) << msg;
-            code = MetaServiceCode::INVALID_ARGUMENT;
-            return;
+        if (config::enable_check_instance_id && is_degraded_format) {
+            InstanceInfoPB instance;
+            auto [code1, get_msg] = resource_mgr_->get_instance(nullptr, id, &instance);
+            { TEST_SYNC_POINT_CALLBACK("is_instance_id_registered", &code1); }
+            if (code1 == TxnErrorCode::TXN_KEY_NOT_FOUND) {
+                msg = "use degrade cloud_unique_id, but instance_id is not registered, "
+                      "cloud_unique_id=" +
+                      cloud_unique_id;
+                LOG(WARNING) << msg;
+                code = MetaServiceCode::INVALID_ARGUMENT;
+                return;
+            }
+            if (instance.has_status() && instance.status() == InstanceInfoPB::DELETED) {
+                msg = "instance status has been set delete, plz check it, recycle_state=" +
+                      InstanceRecycleState_Name(instance.recycle_state());
+                LOG(WARNING) << "use degraded format cloud_unique_id, but check instance failed, "
+                                "cloud_unique_id="
+                             << cloud_unique_id << " code=" << code1 << " info=" << get_msg
+                             << " status=" << instance.status() << " recycle_state="
+                             << InstanceRecycleState_Name(instance.recycle_state());
+                LOG(WARNING) << msg;
+                code = MetaServiceCode::INVALID_ARGUMENT;
+                return;
+            }
         }
         instance_id = get_instance_id(resource_mgr_, cloud_unique_id);
         if (instance_id.empty()) {

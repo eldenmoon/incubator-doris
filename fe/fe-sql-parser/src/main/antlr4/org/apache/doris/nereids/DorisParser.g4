@@ -40,6 +40,7 @@ expressionWithEof
 statement
     : statementBase # statementBaseAlias
     | CALL name=multipartIdentifier LEFT_PAREN (expression (COMMA expression)*)? RIGHT_PAREN #callProcedure
+    | SHOW (PROCEDURE | FUNCTION) STATUS (LIKE pattern=valueExpression | whereClause)? #showProcedureStatus
     // FIXME: like should be wildWhere? FRONTEND should not contain FROM backendid
     | ADMIN? SHOW type=(FRONTEND | BACKEND) CONFIG (LIKE pattern=valueExpression)? (FROM backendId=INTEGER_VALUE)? #showConfig
     ;
@@ -236,7 +237,7 @@ supportedCreateStatement
         partitionSpec?                                                          #buildIndex
     | CREATE INDEX (IF NOT EXISTS)? name=identifier
         ON tableName=multipartIdentifier identifierList
-        (USING (NGRAM_BF | INVERTED | ANN))?
+        (USING indexType=(BLOOMFILTER | NGRAM_BF | INVERTED | ANN))?
         properties=propertyClause? (COMMENT STRING_LITERAL)?                    #createIndex
     | CREATE WORKLOAD POLICY (IF NOT EXISTS)? name=identifierOrText
         (CONDITIONS LEFT_PAREN workloadPolicyConditions RIGHT_PAREN)?
@@ -517,7 +518,8 @@ supportedLoadStatement
     | RESUME ALL ROUTINE LOAD                                                       #resumeAllRoutineLoad
     | STOP ROUTINE LOAD FOR label=multipartIdentifier                               #stopRoutineLoad
     | SHOW ALL? ROUTINE LOAD ((FOR label=multipartIdentifier) | (LIKE STRING_LITERAL)?)         #showRoutineLoad
-    | SHOW ROUTINE LOAD TASK ((FROM | IN) database=identifier)? wildWhere?          #showRoutineLoadTask
+    | SHOW ROUTINE LOAD TASK ((FOR label=multipartIdentifier)
+        | (((FROM | IN) database=identifier)? wildWhere?))                           #showRoutineLoadTask
     | SHOW INVERTED INDEX ANALYZER                                                  #showIndexAnalyzer
     | SHOW INVERTED INDEX TOKENIZER                                                 #showIndexTokenizer
     | SHOW INVERTED INDEX TOKEN_FILTER                                              #showIndexTokenFilter
@@ -542,6 +544,7 @@ supportedOtherStatement
     | WARM UP (CLUSTER | COMPUTE GROUP) destination=identifier WITH
         ((CLUSTER | COMPUTE GROUP) source=identifier |
             (warmUpItem (AND warmUpItem)*)) FORCE?
+            onTablesClause?
             properties=propertyClause?                                              #warmUpCluster
     | explain? WARM UP SELECT namedExpressionSeq
       FROM warmUpSingleTableRef whereClause?                                        #warmUpSelect
@@ -551,7 +554,15 @@ supportedOtherStatement
     | START TRANSACTION (WITH CONSISTENT SNAPSHOT)?                                 #unsupportedStartTransaction
     ;
 
- warmUpItem
+onTablesClause
+    : ON TABLES LEFT_PAREN onTablesFilterRule (COMMA onTablesFilterRule)* RIGHT_PAREN
+    ;
+
+onTablesFilterRule
+    : (INCLUDE | EXCLUDE) STRING_LITERAL
+    ;
+
+warmUpItem
     : TABLE tableName=multipartIdentifier (PARTITION partitionName=identifier)?
     ;
 
@@ -648,6 +659,7 @@ supportedAdminStatement
     | ADMIN DIAGNOSE TABLET tabletId=INTEGER_VALUE                                  #adminDiagnoseTablet
     | ADMIN SHOW REPLICA STATUS FROM baseTableRef (WHERE STATUS EQ|NEQ STRING_LITERAL)?   #adminShowReplicaStatus
     | ADMIN COMPACT TABLE baseTableRef (WHERE TYPE EQ STRING_LITERAL)?              #adminCompactTable
+    | ADMIN COMPACT TABLET tabletId=INTEGER_VALUE WHERE TYPE EQ STRING_LITERAL       #adminCompactTablet
     | ADMIN CHECK tabletList properties=propertyClause?                             #adminCheckTablets
     | ADMIN SHOW TABLET STORAGE FORMAT VERBOSE?                                     #adminShowTabletStorageFormat
     | ADMIN SET (FRONTEND | (ALL FRONTENDS)) CONFIG
@@ -761,11 +773,11 @@ addRollupClause
     ;
 
 alterTableClause
-    : ADD COLUMN columnDef columnPosition? toRollup? properties=propertyClause?     #addColumnClause
+    : ADD COLUMN columnDefWithPath columnPosition? toRollup? properties=propertyClause? #addColumnClause
     | ADD COLUMN LEFT_PAREN columnDefs RIGHT_PAREN
         toRollup? properties=propertyClause?                                        #addColumnsClause
-    | DROP COLUMN name=identifier fromRollup? properties=propertyClause?            #dropColumnClause
-    | MODIFY COLUMN columnDef columnPosition? fromRollup?
+    | DROP COLUMN name=qualifiedName fromRollup? properties=propertyClause?         #dropColumnClause
+    | MODIFY COLUMN columnDefWithPath columnPosition? fromRollup?
     properties=propertyClause?                                                      #modifyColumnClause
     | ORDER BY identifierList fromRollup? properties=propertyClause?                #reorderColumnsClause
     | ADD TEMPORARY? partitionDef
@@ -784,15 +796,14 @@ alterTableClause
     | RENAME newName=identifier                                                     #renameClause
     | RENAME ROLLUP name=identifier newName=identifier                              #renameRollupClause
     | RENAME PARTITION name=identifier newName=identifier                           #renamePartitionClause
-    | RENAME COLUMN name=identifier newName=identifier                              #renameColumnClause
+    | RENAME COLUMN name=qualifiedName TO? newName=identifier                       #renameColumnClause
     | ADD indexDef                                                                  #addIndexClause
     | DROP INDEX (IF EXISTS)? name=identifier partitionSpec?                          #dropIndexClause
     | ENABLE FEATURE name=STRING_LITERAL (WITH properties=propertyClause)?          #enableFeatureClause
     | MODIFY DISTRIBUTION (DISTRIBUTED BY (HASH hashKeys=identifierList | RANDOM)
         (BUCKETS (INTEGER_VALUE | autoBucket=AUTO))?)?                              #modifyDistributionClause
     | MODIFY COMMENT comment=STRING_LITERAL                                         #modifyTableCommentClause
-    | MODIFY COLUMN name=identifier COMMENT comment=STRING_LITERAL                  #modifyColumnCommentClause
-    | MODIFY ENGINE TO name=identifier properties=propertyClause?                   #modifyEngineClause
+    | MODIFY COLUMN name=qualifiedName COMMENT comment=STRING_LITERAL               #modifyColumnCommentClause
     | ADD TEMPORARY? PARTITIONS
         FROM from=partitionValueList TO to=partitionValueList
         INTERVAL INTEGER_VALUE unit=identifier? properties=propertyClause?          #alterMultiPartitionClause
@@ -920,8 +931,7 @@ workloadPolicyActions
     ;
 
 workloadPolicyAction
-    : SET_SESSION_VARIABLE STRING_LITERAL
-    | identifier (STRING_LITERAL)?
+    : identifier (STRING_LITERAL)?
     ;
 
 workloadPolicyConditions
@@ -1179,8 +1189,7 @@ replayCommand
     : PLAN REPLAYER replayType;
 
 replayType
-    : DUMP query
-    | PLAY filePath=STRING_LITERAL;
+    : DUMP query;
 
 mergeType
     : APPEND
@@ -1544,12 +1553,23 @@ columnDef
         (COMMENT comment=STRING_LITERAL)?
     ;
 
+columnDefWithPath
+    : columnDef
+    | colNames+=identifier (DOT colNames+=identifier)+ type=dataType
+        KEY?
+        (aggType=aggTypeDef)?
+        ((GENERATED ALWAYS)? AS LEFT_PAREN generatedExpr=expression RIGHT_PAREN)?
+        ((NOT)? nullable=NULL)?
+        (AUTO_INCREMENT (LEFT_PAREN autoIncInitValue=number RIGHT_PAREN)?)?
+        (COMMENT comment=STRING_LITERAL)?
+    ;
+
 indexDefs
     : indexes+=indexDef (COMMA indexes+=indexDef)*
     ;
 
 indexDef
-    : INDEX (ifNotExists=IF NOT EXISTS)? indexName=identifier cols=identifierList (USING indexType=(INVERTED | NGRAM_BF | ANN ))? (PROPERTIES LEFT_PAREN properties=propertyItemList RIGHT_PAREN)? (COMMENT comment=STRING_LITERAL)?
+    : INDEX (ifNotExists=IF NOT EXISTS)? indexName=identifier cols=identifierList (USING indexType=(BLOOMFILTER | INVERTED | NGRAM_BF | ANN ))? (PROPERTIES LEFT_PAREN properties=propertyItemList RIGHT_PAREN)? (COMMENT comment=STRING_LITERAL)?
     ;
 
 partitionsDef
@@ -2111,6 +2131,7 @@ nonReserved
     | EXCLUDE
     | EXPIRED
     | EXTERNAL
+    | BLOOMFILTER
     | FAILED_LOGIN_ATTEMPTS
     | FAST
     | FEATURE
@@ -2151,6 +2172,7 @@ nonReserved
     | IMMEDIATE
     | INCREMENTAL
     | INTEGRATION
+    | INCLUDE
     | INDEXES
     | INSERT
     | INVERTED
@@ -2305,7 +2327,6 @@ nonReserved
     | MICROSECOND
     | SEPARATOR
     | SERIALIZABLE
-    | SET_SESSION_VARIABLE
     | SESSION
     | SESSION_USER
     | SHAPE

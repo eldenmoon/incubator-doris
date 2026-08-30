@@ -19,12 +19,14 @@
 
 #include <gen_cpp/FrontendService_types.h>
 
+#include <boost/algorithm/string.hpp>
 #include <memory>
 
 #include "core/column/column_nullable.h"
 #include "core/data_type/data_type_factory.hpp"
 #include "exec/operator/operator.h"
 #include "runtime/runtime_profile.h"
+#include "util/string_util.h"
 
 namespace doris {
 class RuntimeState;
@@ -123,6 +125,11 @@ Status SchemaScanOperatorX::init(const TPlanNode& tnode, RuntimeState* state) {
         _common_scanner_param->thread_id = tnode.schema_scan_node.thread_id;
     }
 
+    if (tnode.schema_scan_node.__isset.mysql_compatible_index_metadata) {
+        _common_scanner_param->mysql_compatible_index_metadata =
+                tnode.schema_scan_node.mysql_compatible_index_metadata;
+    }
+
     if (tnode.schema_scan_node.__isset.catalog) {
         _common_scanner_param->catalog =
                 state->obj_pool()->add(new std::string(tnode.schema_scan_node.catalog));
@@ -186,6 +193,8 @@ Status SchemaScanOperatorX::prepare(RuntimeState* state) {
         for (; j < columns_desc.size(); ++j) {
             if (boost::iequals(_dest_tuple_desc->slots()[i]->col_name(), columns_desc[j].name)) {
                 _slot_offsets[i] = j;
+                _common_scanner_param->required_columns.insert(
+                        to_upper(_dest_tuple_desc->slots()[i]->col_name()));
                 break;
             }
         }
@@ -261,10 +270,10 @@ Status SchemaScanOperatorX::get_block_impl(RuntimeState* state, Block* block, bo
                         IColumn::mutate(std::move(block->get_by_position(i).column));
                 ColumnPtr src_column = src_block.safe_get_by_position(_slot_offsets[i])
                                                .column->convert_to_full_column_if_const();
-                if (column_ptr->is_nullable() && !src_column->is_nullable()) {
+                if (is_column_nullable(*column_ptr) && !is_column_nullable(*src_column)) {
                     src_column = make_nullable(src_column);
                 }
-                DORIS_CHECK(column_ptr->is_nullable() == src_column->is_nullable());
+                DORIS_CHECK(is_column_nullable(*column_ptr) == is_column_nullable(*src_column));
                 column_ptr->insert_range_from(*src_column, 0, src_block.rows());
                 block->replace_by_position(i, std::move(column_ptr));
             }

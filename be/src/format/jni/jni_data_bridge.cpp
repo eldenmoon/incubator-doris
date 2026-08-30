@@ -38,6 +38,8 @@
 #include "core/data_type/primitive_type.h"
 #include "core/types.h"
 #include "core/value/decimalv2_value.h"
+#include "util/string_util.h"
+#include "util/url_coding.h"
 
 namespace doris {
 
@@ -107,8 +109,7 @@ Status JniDataBridge::fill_column(TableMetaAddress& address, ColumnPtr& doris_co
     }
     auto mutable_doris_column = IColumn::mutate(std::move(doris_column));
     MutableColumnPtr data_column;
-    if (mutable_doris_column->is_nullable()) {
-        auto* nullable_column = assert_cast<ColumnNullable*>(mutable_doris_column.get());
+    if (auto* nullable_column = check_and_get_column<ColumnNullable>(mutable_doris_column.get())) {
         data_column = nullable_column->get_nested_column_ptr();
         NullMap& null_map = nullable_column->get_null_map_data();
         size_t origin_size = null_map.size();
@@ -491,6 +492,55 @@ std::string JniDataBridge::get_jni_type_with_different_string(const DataTypePtr&
     }
 }
 
+std::string JniDataBridge::encode_schema_values(const std::vector<std::string>& values) {
+    std::vector<std::string> encoded_values;
+    encoded_values.reserve(values.size());
+    for (const auto& value : values) {
+        std::string encoded;
+        base64_encode(value, &encoded);
+        // Prefix every element so an empty Base64 token remains distinct from an empty list.
+        encoded_values.emplace_back("$" + encoded);
+    }
+    return join(encoded_values, ",");
+}
+
+std::string JniDataBridge::get_jni_type_with_encoded_struct_fields(const DataTypePtr& data_type) {
+    switch (data_type->get_primitive_type()) {
+    case TYPE_STRUCT: {
+        const auto* type_struct =
+                assert_cast<const DataTypeStruct*>(remove_nullable(data_type).get());
+        std::ostringstream buffer;
+        buffer << "struct<";
+        for (int i = 0; i < type_struct->get_elements().size(); ++i) {
+            if (i != 0) {
+                buffer << ",";
+            }
+            std::string encoded_name;
+            base64_encode(type_struct->get_element_name(i), &encoded_name);
+            // '$' versions the nested-name token and cannot collide with Base64 or grammar
+            // delimiters; Java rejects an unversioned name in the encoded schema path.
+            buffer << "$" << encoded_name << ":"
+                   << get_jni_type_with_encoded_struct_fields(type_struct->get_element(i));
+        }
+        buffer << ">";
+        return buffer.str();
+    }
+    case TYPE_ARRAY: {
+        const auto* type_array =
+                assert_cast<const DataTypeArray*>(remove_nullable(data_type).get());
+        return "array<" + get_jni_type_with_encoded_struct_fields(type_array->get_nested_type()) +
+               ">";
+    }
+    case TYPE_MAP: {
+        const auto* type_map = assert_cast<const DataTypeMap*>(remove_nullable(data_type).get());
+        return "map<" + get_jni_type_with_encoded_struct_fields(type_map->get_key_type()) + "," +
+               get_jni_type_with_encoded_struct_fields(type_map->get_value_type()) + ">";
+    }
+    default:
+        return get_jni_type_with_different_string(data_type);
+    }
+}
+
 Status JniDataBridge::_fill_column_meta(const ColumnPtr& doris_column, const DataTypePtr& data_type,
                                         std::vector<long>& meta_data) {
     auto logical_type = data_type->get_primitive_type();
@@ -507,10 +557,9 @@ Status JniDataBridge::_fill_column_meta(const ColumnPtr& doris_column, const Dat
 
     // insert null map address
     const IColumn* data_column = nullptr;
-    if (column->is_nullable()) {
-        const auto& nullable_column = assert_cast<const ColumnNullable&>(*column);
-        data_column = &(nullable_column.get_nested_column());
-        const auto& null_map = nullable_column.get_null_map_data();
+    if (const auto* nullable_column = check_and_get_column<ColumnNullable>(column)) {
+        data_column = &(nullable_column->get_nested_column());
+        const auto& null_map = nullable_column->get_null_map_data();
         meta_data.emplace_back((long)null_map.data());
     } else {
         meta_data.emplace_back(0);

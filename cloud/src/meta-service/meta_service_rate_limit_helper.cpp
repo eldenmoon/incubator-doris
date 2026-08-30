@@ -360,7 +360,7 @@ std::optional<CgroupMemoryInfo> get_cgroup_memory_info() {
             }
             auto metrics = read_metrics_map(*dir / "memory.stat");
             int64_t adjusted_usage = *usage;
-            adjusted_usage -= metrics["inactive_file"];
+            adjusted_usage -= metrics["inactive_file"] + metrics["active_file"];
             adjusted_usage -= metrics["slab_reclaimable"];
             adjusted_usage = std::max<int64_t>(0, adjusted_usage);
             return CgroupMemoryInfo {limit_bytes, adjusted_usage};
@@ -564,6 +564,9 @@ public:
     // Compute decision from metrics and store it in latest_decision_.
     // Called by the background thread or synchronously in tests.
     void update(int64_t now_ms, const MsStressMetrics& metrics) {
+        g_bvar_ms_cpu_usage_percent.set_value(metrics.ms_cpu_usage_percent);
+        g_bvar_ms_memory_usage_percent.set_value(metrics.ms_memory_usage_percent);
+
         MsStressDecision decision;
         decision.fdb_commit_latency_ns = metrics.fdb_commit_latency_ns;
         decision.fdb_read_latency_ns = metrics.fdb_read_latency_ns;
@@ -798,6 +801,21 @@ MsStressDecision get_ms_stress_decision() {
     // Rate limit injection is per-request (random), so apply it here, not in the background thread.
     maybe_apply_ms_rate_limit_injection(&decision, get_ms_rate_limit_injection_random_value());
     return decision;
+}
+
+void record_ms_rate_limit_triggers(const MsStressDecision& decision) {
+    if (decision.fdb_cluster_under_pressure) {
+        g_bvar_ms_rate_limit_trigger_fdb_cluster << 1;
+    }
+    if (decision.fdb_client_thread_under_pressure) {
+        g_bvar_ms_rate_limit_trigger_fdb_client_thread << 1;
+    }
+    if (decision.ms_resource_under_pressure) {
+        g_bvar_ms_rate_limit_trigger_ms_resource << 1;
+    }
+    if (decision.rate_limit_injected_for_test) {
+        g_bvar_ms_rate_limit_trigger_test_injection << 1;
+    }
 }
 
 MsStressDecision update_ms_stress_detector_for_test(int64_t now_ms, const MsStressMetrics& metrics,

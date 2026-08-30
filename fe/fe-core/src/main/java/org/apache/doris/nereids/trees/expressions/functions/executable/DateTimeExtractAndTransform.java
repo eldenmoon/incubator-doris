@@ -26,6 +26,7 @@ import org.apache.doris.nereids.trees.expressions.functions.scalar.FromMilliseco
 import org.apache.doris.nereids.trees.expressions.functions.scalar.FromSecond;
 import org.apache.doris.nereids.trees.expressions.literal.BigIntLiteral;
 import org.apache.doris.nereids.trees.expressions.literal.BooleanLiteral;
+import org.apache.doris.nereids.trees.expressions.literal.DateLiteral;
 import org.apache.doris.nereids.trees.expressions.literal.DateTimeLiteral;
 import org.apache.doris.nereids.trees.expressions.literal.DateTimeV2Literal;
 import org.apache.doris.nereids.trees.expressions.literal.DateV2Literal;
@@ -38,6 +39,7 @@ import org.apache.doris.nereids.trees.expressions.literal.SmallIntLiteral;
 import org.apache.doris.nereids.trees.expressions.literal.StringLikeLiteral;
 import org.apache.doris.nereids.trees.expressions.literal.StringLiteral;
 import org.apache.doris.nereids.trees.expressions.literal.TimeV2Literal;
+import org.apache.doris.nereids.trees.expressions.literal.TimestampTzLiteral;
 import org.apache.doris.nereids.trees.expressions.literal.TinyIntLiteral;
 import org.apache.doris.nereids.trees.expressions.literal.VarcharLiteral;
 import org.apache.doris.nereids.types.DateTimeV2Type;
@@ -745,12 +747,20 @@ public class DateTimeExtractAndTransform {
             hourValue = hourValue > 0 ? 838 : -838;
             minuteValue = 59;
             secondValue = 59;
-        } else if (Math.abs(hourValue) == 838 && secondValue > 59) {
-            secondValue = 59;
         }
 
-        return new TimeV2Literal((int) Math.abs(hourValue), (int) minuteValue, (int) secondValue,
-                            (int) Math.round(secondValue * 1000000) % 1000000, 6, hourValue < 0);
+        long totalMicrosecond = Math.abs(hourValue) * 3600L * 1000000
+                + minuteValue * 60L * 1000000 + Math.round(secondValue * 1000000);
+        long maxMicrosecond = 838L * 3600L * 1000000 + 59L * 60L * 1000000 + 59999999L;
+        totalMicrosecond = Math.min(totalMicrosecond, maxMicrosecond);
+
+        int newHour = (int) (totalMicrosecond / 3600L / 1000000);
+        totalMicrosecond %= 3600L * 1000000;
+        int newMinute = (int) (totalMicrosecond / 60L / 1000000);
+        totalMicrosecond %= 60L * 1000000;
+        int newSecond = (int) (totalMicrosecond / 1000000);
+        int microsecond = (int) (totalMicrosecond % 1000000);
+        return new TimeV2Literal(newHour, newMinute, newSecond, microsecond, 6, hourValue < 0);
     }
 
     /**
@@ -1082,12 +1092,14 @@ public class DateTimeExtractAndTransform {
 
     @ExecFunction(name = "from_second")
     public static Expression fromSecond(BigIntLiteral second) {
-        return fromMicroSecond(second.getValue() * 1000 * 1000, FromSecond.RESULT_SCALE);
+        return fromMicroSecond(toMicroSecond(second.getValue(), 1000L * 1000L, "from_second"),
+                FromSecond.RESULT_SCALE);
     }
 
     @ExecFunction(name = "from_millisecond")
     public static Expression fromMilliSecond(BigIntLiteral milliSecond) {
-        return fromMicroSecond(milliSecond.getValue() * 1000, FromMillisecond.RESULT_SCALE);
+        return fromMicroSecond(toMicroSecond(milliSecond.getValue(), 1000L, "from_millisecond"),
+                FromMillisecond.RESULT_SCALE);
     }
 
     @ExecFunction(name = "from_microsecond")
@@ -1107,118 +1119,183 @@ public class DateTimeExtractAndTransform {
                 dateTime.getMinute(), dateTime.getSecond(), dateTime.getNano() / 1000);
     }
 
+    /**
+     * Widens {@code value} to microseconds without letting the multiplication wrap.
+     *
+     * <p>The range check lives in {@link #fromMicroSecond(long, int)}, which runs after the
+     * widening, so a product that overflows long can land back inside the accepted range: a
+     * literal argument then folds to a bogus datetime instead of being reported as out of range.
+     * The BE divides rather than multiplies and rejects the same argument, so only constant
+     * folding on the FE was affected.
+     */
+    private static long toMicroSecond(long value, long ratio, String functionName) {
+        try {
+            return Math.multiplyExact(value, ratio);
+        } catch (ArithmeticException e) {
+            throw new AnalysisException("Operation " + functionName + " of " + value + " out of range");
+        }
+    }
+
     @ExecFunction(name = "microseconds_diff")
     public static Expression microsecondsDiff(DateTimeV2Literal t1, DateTimeV2Literal t2) {
-        return new BigIntLiteral(ChronoUnit.MICROS.between(t2.toJavaDateType(), t1.toJavaDateType()));
+        return new BigIntLiteral(DateTimeV2Literal.datetimeDiffInMicroSeconds(t1, t2));
+    }
+
+    @ExecFunction(name = "microseconds_diff")
+    public static Expression microsecondsDiff(TimestampTzLiteral t1, TimestampTzLiteral t2) {
+        return new BigIntLiteral(DateTimeV2Literal.datetimeDiffInMicroSeconds(t1, t2));
     }
 
     @ExecFunction(name = "milliseconds_diff")
     public static Expression millisecondsDiff(DateTimeV2Literal t1, DateTimeV2Literal t2) {
-        return new BigIntLiteral(ChronoUnit.MILLIS.between(t2.toJavaDateType(), t1.toJavaDateType()));
+        return new BigIntLiteral(DateTimeV2Literal.datetimeDiffInMicroSeconds(t1, t2) / 1000L);
+    }
+
+    @ExecFunction(name = "milliseconds_diff")
+    public static Expression millisecondsDiff(TimestampTzLiteral t1, TimestampTzLiteral t2) {
+        return new BigIntLiteral(DateTimeV2Literal.datetimeDiffInMicroSeconds(t1, t2) / 1000L);
     }
 
     @ExecFunction(name = "seconds_diff")
     public static Expression secondsDiff(DateTimeV2Literal t1, DateTimeV2Literal t2) {
-        return new BigIntLiteral(ChronoUnit.SECONDS.between(t2.toJavaDateType(), t1.toJavaDateType()));
+        return new BigIntLiteral(DateTimeV2Literal.datetimeDiffInSecondsRoundToZeroByMicroSecond(t1, t2));
+    }
+
+    @ExecFunction(name = "seconds_diff")
+    public static Expression secondsDiff(TimestampTzLiteral t1, TimestampTzLiteral t2) {
+        return new BigIntLiteral(DateTimeV2Literal.datetimeDiffInSecondsRoundToZeroByMicroSecond(t1, t2));
     }
 
     @ExecFunction(name = "seconds_diff")
     public static Expression secondsDiff(DateTimeV2Literal t1, DateV2Literal t2) {
-        return new BigIntLiteral(ChronoUnit.SECONDS.between(t2.toJavaDateType(), t1.toJavaDateType()));
+        return new BigIntLiteral(DateTimeV2Literal.datetimeDiffInSecondsRoundToZeroByMicroSecond(t1, t2));
     }
 
     @ExecFunction(name = "seconds_diff")
     public static Expression secondsDiff(DateV2Literal t1, DateTimeV2Literal t2) {
-        return new BigIntLiteral(ChronoUnit.SECONDS.between(t2.toJavaDateType(), t1.toJavaDateType()));
+        return new BigIntLiteral(DateTimeV2Literal.datetimeDiffInSecondsRoundToZeroByMicroSecond(t1, t2));
     }
 
     @ExecFunction(name = "seconds_diff")
     public static Expression secondsDiff(DateV2Literal t1, DateV2Literal t2) {
-        return new BigIntLiteral(ChronoUnit.SECONDS.between(t2.toJavaDateType(), t1.toJavaDateType()));
+        return new BigIntLiteral(DateTimeV2Literal.datetimeDiffInSecondsRoundToZeroByMicroSecond(t1, t2));
     }
 
     @ExecFunction(name = "minutes_diff")
     public static Expression minutesDiff(DateTimeV2Literal t1, DateTimeV2Literal t2) {
-        return new BigIntLiteral(ChronoUnit.MINUTES.between(t2.toJavaDateType(), t1.toJavaDateType()));
+        return new BigIntLiteral(DateTimeV2Literal.datetimeDiffInSecondsRoundToZeroByMicroSecond(t1, t2) / 60L);
+    }
+
+    @ExecFunction(name = "minutes_diff")
+    public static Expression minutesDiff(TimestampTzLiteral t1, TimestampTzLiteral t2) {
+        return new BigIntLiteral(DateTimeV2Literal.datetimeDiffInSecondsRoundToZeroByMicroSecond(t1, t2) / 60L);
     }
 
     @ExecFunction(name = "minutes_diff")
     public static Expression minutesDiff(DateTimeV2Literal t1, DateV2Literal t2) {
-        return new BigIntLiteral(ChronoUnit.MINUTES.between(t2.toJavaDateType(), t1.toJavaDateType()));
+        return new BigIntLiteral(DateTimeV2Literal.datetimeDiffInSecondsRoundToZeroByMicroSecond(t1, t2) / 60L);
     }
 
     @ExecFunction(name = "minutes_diff")
     public static Expression minutesDiff(DateV2Literal t1, DateTimeV2Literal t2) {
-        return new BigIntLiteral(ChronoUnit.MINUTES.between(t2.toJavaDateType(), t1.toJavaDateType()));
+        return new BigIntLiteral(DateTimeV2Literal.datetimeDiffInSecondsRoundToZeroByMicroSecond(t1, t2) / 60L);
     }
 
     @ExecFunction(name = "minutes_diff")
     public static Expression minutesDiff(DateV2Literal t1, DateV2Literal t2) {
-        return new BigIntLiteral(ChronoUnit.MINUTES.between(t2.toJavaDateType(), t1.toJavaDateType()));
+        return new BigIntLiteral(DateTimeV2Literal.datetimeDiffInSecondsRoundToZeroByMicroSecond(t1, t2) / 60L);
     }
 
     @ExecFunction(name = "hours_diff")
     public static Expression hoursDiff(DateTimeV2Literal t1, DateTimeV2Literal t2) {
-        return new BigIntLiteral(ChronoUnit.HOURS.between(t2.toJavaDateType(), t1.toJavaDateType()));
+        return new BigIntLiteral(DateTimeV2Literal.datetimeDiffInSecondsRoundToZeroByMicroSecond(t1, t2) / 60L / 60L);
+    }
+
+    @ExecFunction(name = "hours_diff")
+    public static Expression hoursDiff(TimestampTzLiteral t1, TimestampTzLiteral t2) {
+        return new BigIntLiteral(DateTimeV2Literal.datetimeDiffInSecondsRoundToZeroByMicroSecond(t1, t2) / 60L / 60L);
     }
 
     @ExecFunction(name = "hours_diff")
     public static Expression hoursDiff(DateTimeV2Literal t1, DateV2Literal t2) {
-        return new BigIntLiteral(ChronoUnit.HOURS.between(t2.toJavaDateType(), t1.toJavaDateType()));
+        return new BigIntLiteral(DateTimeV2Literal.datetimeDiffInSecondsRoundToZeroByMicroSecond(t1, t2) / 60L / 60L);
     }
 
     @ExecFunction(name = "hours_diff")
     public static Expression hoursDiff(DateV2Literal t1, DateTimeV2Literal t2) {
-        return new BigIntLiteral(ChronoUnit.HOURS.between(t2.toJavaDateType(), t1.toJavaDateType()));
+        return new BigIntLiteral(DateTimeV2Literal.datetimeDiffInSecondsRoundToZeroByMicroSecond(t1, t2) / 60L / 60L);
     }
 
     @ExecFunction(name = "hours_diff")
     public static Expression hoursDiff(DateV2Literal t1, DateV2Literal t2) {
-        return new BigIntLiteral(ChronoUnit.HOURS.between(t2.toJavaDateType(), t1.toJavaDateType()));
+        return new BigIntLiteral(DateTimeV2Literal.datetimeDiffInSecondsRoundToZeroByMicroSecond(t1, t2) / 60L / 60L);
     }
 
     @ExecFunction(name = "days_diff")
     public static Expression daysDiff(DateTimeV2Literal t1, DateTimeV2Literal t2) {
-        return new BigIntLiteral(ChronoUnit.DAYS.between(t2.toJavaDateType(), t1.toJavaDateType()));
+        return daysDiff((DateLiteral) t1, t2);
+    }
+
+    @ExecFunction(name = "days_diff")
+    public static Expression daysDiff(TimestampTzLiteral t1, TimestampTzLiteral t2) {
+        return daysDiff((DateLiteral) t1, t2);
     }
 
     @ExecFunction(name = "days_diff")
     public static Expression daysDiff(DateTimeV2Literal t1, DateV2Literal t2) {
-        return new BigIntLiteral(ChronoUnit.DAYS.between(t2.toJavaDateType(), t1.toJavaDateType()));
+        return daysDiff((DateLiteral) t1, t2);
     }
 
     @ExecFunction(name = "days_diff")
     public static Expression daysDiff(DateV2Literal t1, DateTimeV2Literal t2) {
-        return new BigIntLiteral(ChronoUnit.DAYS.between(t2.toJavaDateType(), t1.toJavaDateType()));
+        return daysDiff((DateLiteral) t1, t2);
     }
 
     @ExecFunction(name = "days_diff")
     public static Expression daysDiff(DateV2Literal t1, DateV2Literal t2) {
-        return new BigIntLiteral(ChronoUnit.DAYS.between(t2.toJavaDateType(), t1.toJavaDateType()));
+        return daysDiff((DateLiteral) t1, t2);
+    }
+
+    private static Expression daysDiff(DateLiteral t1, DateLiteral t2) {
+        return new BigIntLiteral(DateTimeV2Literal.dateDiffInDaysRoundToZeroByTime(t1, t2));
     }
 
     @ExecFunction(name = "weeks_diff")
     public static Expression weeksDiff(DateTimeV2Literal t1, DateTimeV2Literal t2) {
-        return new BigIntLiteral(ChronoUnit.WEEKS.between(t2.toJavaDateType(), t1.toJavaDateType()));
+        return weeksDiff((DateLiteral) t1, t2);
+    }
+
+    @ExecFunction(name = "weeks_diff")
+    public static Expression weeksDiff(TimestampTzLiteral t1, TimestampTzLiteral t2) {
+        return weeksDiff((DateLiteral) t1, t2);
     }
 
     @ExecFunction(name = "weeks_diff")
     public static Expression weeksDiff(DateTimeV2Literal t1, DateV2Literal t2) {
-        return new BigIntLiteral(ChronoUnit.WEEKS.between(t2.toJavaDateType(), t1.toJavaDateType()));
+        return weeksDiff((DateLiteral) t1, t2);
     }
 
     @ExecFunction(name = "weeks_diff")
     public static Expression weeksDiff(DateV2Literal t1, DateTimeV2Literal t2) {
-        return new BigIntLiteral(ChronoUnit.WEEKS.between(t2.toJavaDateType(), t1.toJavaDateType()));
+        return weeksDiff((DateLiteral) t1, t2);
     }
 
     @ExecFunction(name = "weeks_diff")
     public static Expression weeksDiff(DateV2Literal t1, DateV2Literal t2) {
-        return new BigIntLiteral(ChronoUnit.WEEKS.between(t2.toJavaDateType(), t1.toJavaDateType()));
+        return weeksDiff((DateLiteral) t1, t2);
+    }
+
+    private static Expression weeksDiff(DateLiteral t1, DateLiteral t2) {
+        return new BigIntLiteral(DateTimeV2Literal.dateDiffInDaysRoundToZeroByTime(t1, t2) / 7L);
     }
 
     @ExecFunction(name = "months_diff")
     public static Expression monthsDiff(DateTimeV2Literal t1, DateTimeV2Literal t2) {
+        return new BigIntLiteral(ChronoUnit.MONTHS.between(t2.toJavaDateType(), t1.toJavaDateType()));
+    }
+
+    @ExecFunction(name = "months_diff")
+    public static Expression monthsDiff(TimestampTzLiteral t1, TimestampTzLiteral t2) {
         return new BigIntLiteral(ChronoUnit.MONTHS.between(t2.toJavaDateType(), t1.toJavaDateType()));
     }
 
@@ -1243,12 +1320,22 @@ public class DateTimeExtractAndTransform {
     }
 
     @ExecFunction(name = "quarters_diff")
+    public static Expression quartersDiff(TimestampTzLiteral t1, TimestampTzLiteral t2) {
+        return new BigIntLiteral(ChronoUnit.MONTHS.between(t2.toJavaDateType(), t1.toJavaDateType()) / 3);
+    }
+
+    @ExecFunction(name = "quarters_diff")
     public static Expression quartersDiff(DateV2Literal t1, DateV2Literal t2) {
         return new BigIntLiteral(ChronoUnit.MONTHS.between(t2.toJavaDateType(), t1.toJavaDateType()) / 3);
     }
 
     @ExecFunction(name = "years_diff")
     public static Expression yearsDiff(DateTimeV2Literal t1, DateTimeV2Literal t2) {
+        return new BigIntLiteral(ChronoUnit.YEARS.between(t2.toJavaDateType(), t1.toJavaDateType()));
+    }
+
+    @ExecFunction(name = "years_diff")
+    public static Expression yearsDiff(TimestampTzLiteral t1, TimestampTzLiteral t2) {
         return new BigIntLiteral(ChronoUnit.YEARS.between(t2.toJavaDateType(), t1.toJavaDateType()));
     }
 

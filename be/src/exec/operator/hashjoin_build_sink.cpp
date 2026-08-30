@@ -22,8 +22,10 @@
 #include <variant>
 
 #include "core/block/block.h"
+#include "core/column/column_const.h"
 #include "core/column/column_nullable.h"
 #include "core/data_type/data_type_nullable.h"
+#include "exec/common/hash_table/hash_map_util.h"
 #include "exec/common/template_helpers.hpp"
 #include "exec/operator/hashjoin_probe_operator.h"
 #include "exec/operator/operator.h"
@@ -55,6 +57,7 @@ Status HashJoinBuildSinkLocalState::init(RuntimeState* state, LocalSinkStateInfo
     _task_idx = info.task_idx;
     auto& p = _parent->cast<HashJoinBuildSinkOperatorX>();
     _shared_state->join_op_variants = p._join_op_variants;
+    custom_profile()->add_info_string("InstanceID", print_id(state->fragment_instance_id()));
 
     _build_expr_ctxs.resize(p._build_expr_ctxs.size());
     for (size_t i = 0; i < _build_expr_ctxs.size(); i++) {
@@ -110,8 +113,9 @@ Status HashJoinBuildSinkLocalState::init(RuntimeState* state, LocalSinkStateInfo
 
     _runtime_filter_producer_helper = std::make_shared<RuntimeFilterProducerHelper>(
             _should_build_hash_table, p._is_broadcast_join);
-    RETURN_IF_ERROR(_runtime_filter_producer_helper->init(
-            state, _build_expr_ctxs, p._runtime_filter_descs, p._child->row_desc()));
+    RETURN_IF_ERROR(
+            _runtime_filter_producer_helper->init(state, _build_expr_ctxs, p._runtime_filter_descs,
+                                                  p._child->operator_row_desc_after_projection()));
     return Status::OK();
 }
 
@@ -388,8 +392,8 @@ Status HashJoinBuildSinkLocalState::build_asof_index(Block& block) {
     // Handle nullable: extract nested column for value access, keep nullable for null checks
     const ColumnNullable* nullable_col = nullptr;
     ColumnPtr build_col_nested = asof_build_col;
-    if (asof_build_col->is_nullable()) {
-        nullable_col = assert_cast<const ColumnNullable*>(asof_build_col.get());
+    if (const auto* nullable = check_and_get_column<ColumnNullable>(asof_build_col.get())) {
+        nullable_col = nullable;
         build_col_nested = nullable_col->get_nested_column_ptr();
     }
 
@@ -514,7 +518,9 @@ Status HashJoinBuildSinkLocalState::_do_evaluate(Block& block, VExprContextSPtrs
             RETURN_IF_ERROR(exprs[i]->execute(&block, &result_col_id));
         }
 
-        // TODO: opt the column is const
+        // _extract_join_column() handles physical ColumnNullable only, so build-key const
+        // columns, including Const(Nullable), must be materialized before they are merged.
+        // TODO: if const-key optimization is added, update _extract_join_column() together.
         block.get_by_position(result_col_id).column =
                 block.get_by_position(result_col_id).column->convert_to_full_column_if_const();
         res_col_ids[i] = result_col_id;
@@ -544,15 +550,21 @@ Status HashJoinBuildSinkLocalState::_extract_join_column(Block& block,
     DCHECK(_should_build_hash_table);
     auto& shared_state = *_shared_state;
     for (size_t i = 0; i < shared_state.build_exprs_size; ++i) {
-        const auto* column = block.get_by_position(res_col_ids[i]).column.get();
-        if (!column->is_nullable() &&
-            _parent->cast<HashJoinBuildSinkOperatorX>()._serialize_null_into_key[i]) {
+        const auto& column_ptr = block.get_by_position(res_col_ids[i]).column;
+        const auto* column = column_ptr.get();
+        const bool serialize_null_into_key =
+                _parent->cast<HashJoinBuildSinkOperatorX>()._serialize_null_into_key[i];
+        // _do_evaluate() must have materialized Const(Nullable) build keys. If this check fails,
+        // is_nullable() no longer implies a physical ColumnNullable for the logic below.
+        const auto* const_column = check_and_get_column<ColumnConst>(*column);
+        DORIS_CHECK(const_column == nullptr ||
+                    !is_column_nullable(const_column->get_data_column()));
+        if (!column->is_nullable() && serialize_null_into_key) {
             _key_columns_holder.emplace_back(
                     make_nullable(block.get_by_position(res_col_ids[i]).column));
             raw_ptrs[i] = _key_columns_holder.back().get();
         } else if (const auto* nullable = check_and_get_column<ColumnNullable>(*column);
-                   !_parent->cast<HashJoinBuildSinkOperatorX>()._serialize_null_into_key[i] &&
-                   nullable) {
+                   !serialize_null_into_key && nullable) {
             // update nulllmap and split nested out of ColumnNullable when serialize_null_into_key is false and column is nullable
             const auto& col_nested = nullable->get_nested_column();
             const auto& col_nullmap = nullable->get_null_map_data();
@@ -574,7 +586,7 @@ Status HashJoinBuildSinkLocalState::process_build_block(RuntimeState* state, Blo
     // 1. Dispose the overflow of ColumnString
     // 2. Finalize the ColumnVariant to speed up
     for (auto& data : block) {
-        data.column = std::move(*data.column).mutate()->convert_column_if_overflow();
+        data.column = IColumn::mutate(std::move(data.column))->convert_column_if_overflow();
         if (p._need_finalize_variant_column) {
             auto mutable_column = IColumn::mutate(std::move(data.column));
             mutable_column->finalize();
@@ -802,13 +814,16 @@ Status HashJoinBuildSinkOperatorX::prepare(RuntimeState* state) {
             }
         }
     };
-    init_keep_column_flags(row_desc().tuple_descriptors(), _should_keep_column_flags);
-    RETURN_IF_ERROR(VExpr::prepare(_build_expr_ctxs, state, _child->row_desc()));
+    init_keep_column_flags(_child->operator_row_desc_after_projection().tuple_descriptors(),
+                           _should_keep_column_flags);
+    RETURN_IF_ERROR(
+            VExpr::prepare(_build_expr_ctxs, state, _child->operator_row_desc_after_projection()));
     // Prepare ASOF build-side expression against build child's row_desc directly.
     // match_condition is bound on input tuples, so child(1) references build child's slots.
     if (is_asof_join(_join_op)) {
         DORIS_CHECK(_asof_build_side_expr);
-        RETURN_IF_ERROR(_asof_build_side_expr->prepare(state, _child->row_desc()));
+        RETURN_IF_ERROR(_asof_build_side_expr->prepare(
+                state, _child->operator_row_desc_after_projection()));
         RETURN_IF_ERROR(_asof_build_side_expr->open(state));
     }
     return VExpr::open(_build_expr_ctxs, state);
@@ -824,8 +839,8 @@ Status HashJoinBuildSinkOperatorX::sink_impl(RuntimeState* state, Block* in_bloc
         // data from probe side.
 
         if (local_state._build_side_mutable_block.empty()) {
-            auto tmp_build_block =
-                    VectorizedUtils::create_empty_columnswithtypename(_child->row_desc());
+            auto tmp_build_block = VectorizedUtils::create_empty_columnswithtypename(
+                    _child->operator_row_desc_after_projection());
             tmp_build_block = *(tmp_build_block.create_same_struct_block(1, false));
             local_state._build_col_ids.resize(_build_expr_ctxs.size());
             RETURN_IF_ERROR(local_state._do_evaluate(tmp_build_block, local_state._build_expr_ctxs,

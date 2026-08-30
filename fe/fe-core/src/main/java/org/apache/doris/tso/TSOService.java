@@ -49,6 +49,33 @@ public class TSOService extends MasterDaemon {
     private final AtomicBoolean fatalClockBackwardReported = new AtomicBoolean(false);
     private final AtomicLong windowEndTSO = new AtomicLong(0);
 
+    /**
+     * Immutable snapshot of the current TSO service status.
+     */
+    public static final class TSOStatusSnapshot {
+        private final boolean initialized;
+        private final long currentTso;
+        private final long windowEndPhysicalTime;
+
+        public TSOStatusSnapshot(boolean initialized, long currentTso, long windowEndPhysicalTime) {
+            this.initialized = initialized;
+            this.currentTso = currentTso;
+            this.windowEndPhysicalTime = windowEndPhysicalTime;
+        }
+
+        public boolean isInitialized() {
+            return initialized;
+        }
+
+        public long getCurrentTso() {
+            return currentTso;
+        }
+
+        public long getWindowEndPhysicalTime() {
+            return windowEndPhysicalTime;
+        }
+    }
+
     private static final class TSOClockBackwardException extends RuntimeException {
         private TSOClockBackwardException(String message) {
             super(message);
@@ -76,7 +103,7 @@ public class TSOService extends MasterDaemon {
      */
     @Override
     protected void runAfterCatalogReady() {
-        if (!Config.enable_tso_feature) {
+        if (!isTsoEnabled()) {
             lock.lock();
             try {
                 isInitialized.set(false);
@@ -160,8 +187,8 @@ public class TSOService extends MasterDaemon {
      * @throws RuntimeException if TSO is not calibrated or other errors occur
      */
     public long getTSO() {
-        if (!Config.enable_tso_feature) {
-            throw new RuntimeException("TSO feature is disabled, please check enable_tso_feature");
+        if (!isTsoEnabled()) {
+            throw new RuntimeException("TSO feature is disabled, please check enable_feature_binlog");
         }
         if (!isInitialized.get()) {
             throw new RuntimeException("TSO timestamp is not calibrated, please check");
@@ -236,6 +263,21 @@ public class TSOService extends MasterDaemon {
     }
 
     /**
+     * Get a read-only snapshot of the TSO service status without allocating a new TSO timestamp.
+     *
+     * @return Current initialization state, composed TSO, and window end physical time
+     */
+    public TSOStatusSnapshot getStatusSnapshot() {
+        lock.lock();
+        try {
+            return new TSOStatusSnapshot(
+                    isInitialized.get(), globalTimestamp.composeTimestamp(), windowEndTSO.get());
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    /**
      * Calibrate the TSO timestamp when service starts
      * This ensures the timestamp is consistent with the last persisted value
      *
@@ -246,11 +288,6 @@ public class TSOService extends MasterDaemon {
     private void calibrateTimestamp() {
         if (isInitialized.get()) {
             return;
-        }
-        // Fail fast: calibration must persist the window end before the service can be considered initialized.
-        // Otherwise, a restart may lose the boundary and break TSO monotonicity guarantees.
-        if (!Config.enable_tso_persist_journal) {
-            throw new RuntimeException("TSO calibration requires enable_tso_persist_journal=true");
         }
         // Check if Env is ready before calibration
         Env env = Env.getCurrentEnv();
@@ -383,9 +420,9 @@ public class TSOService extends MasterDaemon {
      * @param timestamp The timestamp to write
      */
     private void writeTimestampToBDBJE(long timestamp) {
-        if (!Config.enable_tso_persist_journal) {
+        if (!isTsoEnabled()) {
             LOG.debug("TSO timestamp {} is not persisted to journal, "
-                    + "please check if enable_tso_persist_journal is set to true",
+                    + "please check if enable_feature_binlog is set to true",
                     new TSOTimestamp(timestamp, 0));
             return;
         }
@@ -445,7 +482,7 @@ public class TSOService extends MasterDaemon {
     private Pair<Long, Long> generateTSO() {
         lock.lock();
         try {
-            if (!Config.enable_tso_feature || !isInitialized.get()) {
+            if (!isTsoEnabled() || !isInitialized.get()) {
                 return Pair.of(0L, 0L);
             }
             long physicalTime = globalTimestamp.getPhysicalTimestamp();
@@ -502,7 +539,7 @@ public class TSOService extends MasterDaemon {
     }
 
     public long saveTSO(CountingDataOutputStream dos, long checksum) throws IOException {
-        if (!Config.enable_tso_checkpoint_module) {
+        if (!isTsoEnabled()) {
             return checksum;
         }
         long currentWindowEnd = windowEndTSO.get();
@@ -522,5 +559,12 @@ public class TSOService extends MasterDaemon {
         long newChecksum = checksum ^ tsoTimestamp.getPhysicalTimestamp();
         LOG.info("Finished replay TSO windowEndTSO {} from image", windowEndTSO.get());
         return newChecksum;
+    }
+
+    /**
+     * Returns whether TSO is globally enabled by the binlog feature switch.
+     */
+    private boolean isTsoEnabled() {
+        return Config.enable_feature_binlog;
     }
 }

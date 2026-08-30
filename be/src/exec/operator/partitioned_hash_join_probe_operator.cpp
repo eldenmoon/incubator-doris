@@ -172,13 +172,15 @@ Status PartitionedHashJoinProbeLocalState::open(RuntimeState* state) {
     _fanout_partitioner =
             std::make_unique<SpillRePartitionerType>(static_cast<int>(p._partition_count));
     RETURN_IF_ERROR(_fanout_partitioner->init(p._probe_exprs));
-    RETURN_IF_ERROR(_fanout_partitioner->prepare(state, p._child->row_desc()));
+    RETURN_IF_ERROR(
+            _fanout_partitioner->prepare(state, p._child->operator_row_desc_after_projection()));
     RETURN_IF_ERROR(_fanout_partitioner->open(state));
 
     _build_fanout_partitioner =
             std::make_unique<SpillRePartitionerType>(static_cast<int>(p._partition_count));
     RETURN_IF_ERROR(_build_fanout_partitioner->init(p._build_exprs));
-    RETURN_IF_ERROR(_build_fanout_partitioner->prepare(state, p._build_side_child->row_desc()));
+    RETURN_IF_ERROR(_build_fanout_partitioner->prepare(
+            state, p._build_side_child->operator_row_desc_after_projection()));
     RETURN_IF_ERROR(_build_fanout_partitioner->open(state));
 
     return Status::OK();
@@ -531,8 +533,6 @@ PartitionedHashJoinProbeOperatorX::PartitionedHashJoinProbeOperatorX(ObjectPool*
                                                                      int operator_id,
                                                                      const DescriptorTbl& descs)
         : JoinProbeOperatorX<PartitionedHashJoinProbeLocalState>(pool, tnode, operator_id, descs),
-          _join_distribution(tnode.hash_join_node.__isset.dist_type ? tnode.hash_join_node.dist_type
-                                                                    : TJoinDistributionType::NONE),
           _distribution_partition_exprs(tnode.__isset.distribute_expr_lists
                                                 ? tnode.distribute_expr_lists[0]
                                                 : std::vector<TExpr> {}),
@@ -575,7 +575,7 @@ Status PartitionedHashJoinProbeOperatorX::prepare(RuntimeState* state) {
     RETURN_IF_ERROR(_inner_probe_operator->prepare(state));
     RETURN_IF_ERROR(_inner_sink_operator->prepare(state));
     _child = std::move(child);
-    RETURN_IF_ERROR(_partitioner->prepare(state, _child->row_desc()));
+    RETURN_IF_ERROR(_partitioner->prepare(state, _child->operator_row_desc_after_projection()));
     RETURN_IF_ERROR(_partitioner->open(state));
     return Status::OK();
 }

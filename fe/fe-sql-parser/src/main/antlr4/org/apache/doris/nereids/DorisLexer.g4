@@ -108,6 +108,7 @@ BITMAP_UNION: 'BITMAP_UNION';
 BITOR: 'BITOR';
 BITXOR: 'BITXOR';
 BLOB: 'BLOB';
+BLOOMFILTER: 'BLOOMFILTER';
 BOOLEAN: 'BOOLEAN';
 BOTH: 'BOTH';
 BRANCH: 'BRANCH';
@@ -299,6 +300,7 @@ IMMEDIATE: 'IMMEDIATE';
 IN: 'IN';
 INCREMENTAL: 'INCREMENTAL';
 INTEGRATION: 'INTEGRATION';
+INCLUDE: 'INCLUDE';
 INDEX: 'INDEX';
 INDEXES: 'INDEXES';
 INFILE: 'INFILE';
@@ -436,7 +438,6 @@ PHYSICAL: 'PHYSICAL';
 PI: 'PI';
 PLACEHOLDER: '?';
 PLAN: 'PLAN';
-PLAY: 'PLAY';
 PRIVILEGES: 'PRIVILEGES';
 PROCESS: 'PROCESS';
 PYTHON: 'PYTHON';
@@ -522,7 +523,6 @@ SESSION: 'SESSION';
 SESSION_USER: 'SESSION_USER';
 SET: 'SET';
 SETS: 'SETS';
-SET_SESSION_VARIABLE: 'SET_SESSION_VARIABLE';
 SHAPE: 'SHAPE';
 SHOW: 'SHOW';
 SIGNED: 'SIGNED';
@@ -664,8 +664,14 @@ ATSIGN: '@';
 DOUBLEATSIGN: '@@';
 
 STRING_LITERAL
-    :  '\'' ( {!isNoBackslashEscapes}? '\\'. | '\'\'' | {!isNoBackslashEscapes}? ~('\'' | '\\') | {isNoBackslashEscapes}? ~('\''))* '\''
-    | '"' ( {!isNoBackslashEscapes}? '\\'. | '""' | {!isNoBackslashEscapes}? ~('"'| '\\') | {isNoBackslashEscapes}? ~('"'))* '"'
+    : '\'' (
+          {!isNoBackslashEscapes}? ('\\' . | '\'\'' | ~('\'' | '\\'))*
+        | {isNoBackslashEscapes}? ('\'\'' | ~('\''))*
+      ) '\''
+    | '"' (
+          {!isNoBackslashEscapes}? ('\\' . | '""' | ~('"' | '\\'))*
+        | {isNoBackslashEscapes}? ('""' | ~('"'))*
+      ) '"'
     ;
 
 VARBINARY_LITERAL

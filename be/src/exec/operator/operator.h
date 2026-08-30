@@ -25,6 +25,7 @@
 #include <functional>
 #include <limits>
 #include <memory>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -100,8 +101,6 @@ public:
     virtual bool is_sink() const { return false; }
 
     virtual bool is_source() const { return false; }
-
-    [[nodiscard]] virtual const RowDescriptor& row_desc() const;
 
     [[nodiscard]] virtual Status init(const TDataSink& tsink) { return Status::OK(); }
 
@@ -188,7 +187,6 @@ public:
             RuntimeState* /*state*/) const;
 
 protected:
-    [[nodiscard]] static bool is_hash_shuffle(ExchangeType exchange_type);
     [[nodiscard]] bool child_breaks_local_key_distribution(RuntimeState* state) const;
 
     OperatorPtr _child = nullptr;
@@ -417,8 +415,6 @@ public:
 
         _spill_file_current_size = ADD_COUNTER_WITH_LEVEL(
                 Base::custom_profile(), profile::SPILL_WRITE_FILE_CURRENT_BYTES, TUnit::BYTES, 1);
-        _spill_file_current_count = ADD_COUNTER_WITH_LEVEL(
-                Base::custom_profile(), profile::SPILL_WRITE_FILE_CURRENT_COUNT, TUnit::UNIT, 1);
     }
 
     // Total time of spill, including spill task scheduling time,
@@ -441,9 +437,6 @@ public:
     // Total bytes of spill data written to disk file(after serialized)
     RuntimeProfile::Counter* _spill_write_file_total_size = nullptr;
     RuntimeProfile::Counter* _spill_file_total_count = nullptr;
-    RuntimeProfile::Counter* _spill_file_current_count = nullptr;
-    // Spilled file total size
-    RuntimeProfile::Counter* _spill_file_total_size = nullptr;
     // Current spilled file size
     RuntimeProfile::Counter* _spill_file_current_size = nullptr;
 
@@ -604,8 +597,8 @@ public:
     virtual bool reset_to_rerun(RuntimeState* state, OperatorXBase* root) const { return false; }
 
     Status init(const TDataSink& tsink) override;
-    [[nodiscard]] virtual Status init(RuntimeState* state, ExchangeType type, const int num_buckets,
-                                      const bool use_global_hash_shuffle,
+    [[nodiscard]] virtual Status init(RuntimeState* state, TLocalPartitionType::type type,
+                                      const int num_buckets,
                                       const std::map<int, int>& shuffle_idx_to_instance_idx) {
         return Status::InternalError("init() is only implemented in local exchange!");
     }
@@ -621,6 +614,8 @@ public:
     }
 
     [[nodiscard]] Status sink(RuntimeState* state, Block* block, bool eos) {
+        RETURN_IF_ERROR(block->check_column_and_type_not_null());
+        RETURN_IF_ERROR(block->check_no_column_string64());
         RETURN_IF_ERROR(block->check_type_and_column());
         return sink_impl(state, block, eos);
     }
@@ -634,6 +629,10 @@ public:
     // execution round (sink only — pipeline task sums all operators + sink).
     [[nodiscard]] virtual size_t get_reserve_mem_size(RuntimeState* state, bool eos) {
         return state->minimum_operator_memory_required_bytes();
+    }
+    [[nodiscard]] virtual size_t get_reserve_mem_size(RuntimeState* state, bool eos,
+                                                      const Block* block) {
+        return get_reserve_mem_size(state, eos);
     }
     bool is_blockable(RuntimeState* state) const override {
         return state->get_sink_local_state()->is_blockable();
@@ -806,14 +805,27 @@ public:
     RuntimeProfile::Counter*& _spill_write_rows_count = _write_counters.spill_write_rows_count;
 
     // Sink-only counters
-    // Spilled file total size
-    RuntimeProfile::Counter* _spill_file_total_size = nullptr;
     // Total bytes written to spill files (required by SpillFileWriter)
     RuntimeProfile::Counter* _spill_write_file_total_size = nullptr;
     // Total number of spill files created (required by SpillFileWriter)
     RuntimeProfile::Counter* _spill_file_total_count = nullptr;
     RuntimeProfile::Counter* _spill_max_rows_of_partition = nullptr;
     RuntimeProfile::Counter* _spill_min_rows_of_partition = nullptr;
+};
+
+// The projection belongs to this operator and transforms its original output into the final
+// output consumed by downstream operators. Most operators execute it after get_block(), while
+// Scan executes it in Scanner before the block enters ScannerContext's queue.
+struct OperatorProjection {
+    OperatorProjection(const DescriptorTbl& descs, TTupleId output_tuple_id)
+            : output_row_descriptor(descs, std::vector {output_tuple_id}) {}
+    explicit OperatorProjection(RowDescriptor output_row_desc)
+            : output_row_descriptor(std::move(output_row_desc)) {}
+
+    VExprContextSPtrs projections;
+    std::vector<VExprContextSPtrs> intermediate_projections;
+    RowDescriptor output_row_descriptor;
+    std::vector<RowDescriptor> intermediate_output_row_descriptors;
 };
 
 class OperatorXBase : public OperatorBase {
@@ -825,20 +837,20 @@ public:
               _node_id(tnode.node_id),
               _type(tnode.node_type),
               _pool(pool),
-              _tuple_ids(tnode.row_tuples),
               _row_descriptor(descs, tnode.row_tuples),
               _resource_profile(tnode.resource_profile),
               _limit(tnode.limit) {
-        if (tnode.__isset.output_tuple_id) {
-            _output_row_descriptor =
-                    std::make_unique<RowDescriptor>(descs, std::vector {tnode.output_tuple_id});
+        if (tnode.__isset.projections) {
+            DCHECK(tnode.__isset.output_tuple_id);
+            _projection.emplace(descs, tnode.output_tuple_id);
         }
         if (!tnode.intermediate_output_tuple_id_list.empty()) {
             // common subexpression elimination
-            _intermediate_output_row_descriptor.reserve(
+            DCHECK(_projection.has_value());
+            _projection->intermediate_output_row_descriptors.reserve(
                     tnode.intermediate_output_tuple_id_list.size());
             for (auto output_tuple_id : tnode.intermediate_output_tuple_id_list) {
-                _intermediate_output_row_descriptor.push_back(
+                _projection->intermediate_output_row_descriptors.push_back(
                         RowDescriptor(descs, std::vector {output_tuple_id}));
             }
         }
@@ -858,7 +870,7 @@ public:
     Status init(const TDataSink& tsink) override {
         throw Exception(Status::FatalError("should not reach here!"));
     }
-    virtual Status init(ExchangeType type) {
+    virtual Status init(TLocalPartitionType::type type) {
         throw Exception(Status::FatalError("should not reach here!"));
     }
     [[noreturn]] virtual const std::vector<TRuntimeFilterDesc>& runtime_filter_descs() {
@@ -884,6 +896,8 @@ public:
     Status terminate(RuntimeState* state) override;
     [[nodiscard]] Status get_block(RuntimeState* state, Block* block, bool* eos) {
         RETURN_IF_ERROR(get_block_impl(state, block, eos));
+        RETURN_IF_ERROR(block->check_column_and_type_not_null());
+        RETURN_IF_ERROR(block->check_no_column_string64());
         RETURN_IF_ERROR(block->check_type_and_column());
         return Status::OK();
     }
@@ -891,26 +905,6 @@ public:
     [[nodiscard]] virtual Status get_block_impl(RuntimeState* state, Block* block, bool* eos) = 0;
 
     Status close(RuntimeState* state) override;
-
-    [[nodiscard]] virtual const RowDescriptor& intermediate_row_desc() const {
-        return _row_descriptor;
-    }
-
-    [[nodiscard]] const RowDescriptor& intermediate_row_desc(int idx) {
-        if (idx == 0) {
-            return intermediate_row_desc();
-        }
-        DCHECK((idx - 1) < _intermediate_output_row_descriptor.size());
-        return _intermediate_output_row_descriptor[idx - 1];
-    }
-
-    [[nodiscard]] const RowDescriptor& projections_row_desc() const {
-        if (_intermediate_output_row_descriptor.empty()) {
-            return intermediate_row_desc();
-        } else {
-            return _intermediate_output_row_descriptor.back();
-        }
-    }
 
     // Returns the memory this single operator expects to allocate in the next
     // execution round.  Each operator reports only its OWN requirement — the
@@ -947,8 +941,12 @@ public:
     [[nodiscard]] OperatorPtr get_child() { return _child; }
 
     [[nodiscard]] VExprContextSPtrs& conjuncts() { return _conjuncts; }
-    [[nodiscard]] VExprContextSPtrs& projections() { return _projections; }
-    [[nodiscard]] virtual RowDescriptor& row_descriptor() { return _row_descriptor; }
+    // Describes the operator's original output before its optional projection. For most operators
+    // this is the block returned by get_block(); Scan uses it to describe Scanner's unprojected
+    // block because Scan executes the projection before ScanOperatorX::get_block_impl().
+    [[nodiscard]] const RowDescriptor& operator_row_desc_before_projection() const {
+        return _row_descriptor;
+    }
 
     [[nodiscard]] int operator_id() const { return _operator_id; }
     [[nodiscard]] int node_id() const override { return _node_id; }
@@ -956,20 +954,29 @@ public:
 
     [[nodiscard]] int64_t limit() const { return _limit; }
 
-    [[nodiscard]] const RowDescriptor& row_desc() const override {
-        return _output_row_descriptor ? *_output_row_descriptor : _row_descriptor;
+    // Describes the final block returned by get_block_after_projects() to downstream operators.
+    // Without a projection, the original and final row descriptors are the same.
+    [[nodiscard]] const RowDescriptor& operator_row_desc_after_projection() const {
+        return has_projection() ? _projection->output_row_descriptor
+                                : operator_row_desc_before_projection();
     }
 
-    [[nodiscard]] const RowDescriptor* output_row_descriptor() {
-        return _output_row_descriptor.get();
+    [[nodiscard]] bool has_projection() const { return _projection.has_value(); }
+
+    [[nodiscard]] bool has_intermediate_projection() const {
+        return has_projection() && !_projection->intermediate_projections.empty();
     }
 
-    bool has_output_row_desc() const { return _output_row_descriptor != nullptr; }
+#ifdef BE_TEST
+    OperatorProjection& set_projection_for_test(RowDescriptor output_row_desc) {
+        return _projection.emplace(std::move(output_row_desc));
+    }
+#endif
 
     [[nodiscard]] virtual Status get_block_after_projects(RuntimeState* state, Block* block,
                                                           bool* eos);
 
-    /// Only use in vectorized exec engine try to do projections to trans _row_desc -> _output_row_desc
+    // Apply the optional projection to the block produced by the operator implementation.
     Status do_projections(RuntimeState* state, Block* origin_block, Block* output_block) const;
     void set_parallel_tasks(int parallel_tasks) { _parallel_tasks = parallel_tasks; }
     int parallel_tasks() const { return _parallel_tasks; }
@@ -992,20 +999,15 @@ protected:
     int _nereids_id = -1;
     TPlanNodeType::type _type;
     ObjectPool* _pool = nullptr;
-    std::vector<TupleId> _tuple_ids;
 
 private:
     // The expr of operator set to private permissions, as cannot be executed concurrently,
     // should use local state's expr.
     VExprContextSPtrs _conjuncts;
-    VExprContextSPtrs _projections;
-    // Used in common subexpression elimination to compute intermediate results.
-    std::vector<VExprContextSPtrs> _intermediate_projections;
+    std::optional<OperatorProjection> _projection;
 
 protected:
     RowDescriptor _row_descriptor;
-    std::unique_ptr<RowDescriptor> _output_row_descriptor = nullptr;
-    std::vector<RowDescriptor> _intermediate_output_row_descriptor;
 
     /// Resource information sent from the frontend.
     const TBackendResourceProfile _resource_profile;
@@ -1017,10 +1019,6 @@ protected:
 
     std::string _op_name;
     int _parallel_tasks = 0;
-
-    //_keep_origin is used to avoid copying during projection,
-    // currently set to false only in the nestloop join.
-    bool _keep_origin = true;
 
     // _blockable is true if the operator contains expressions that may block execution
     bool _blockable = false;
@@ -1264,6 +1262,46 @@ private:
     bool _disable_reserve_mem = false;
     bool _revoke_called = false;
 };
+#endif
+
+/// Instantiated once in operator.cpp; suppresses per-TU implicit instantiation.
+extern template class PipelineXSinkLocalState<HashJoinSharedState>;
+extern template class PipelineXSinkLocalState<PartitionedHashJoinSharedState>;
+extern template class PipelineXSinkLocalState<SortSharedState>;
+extern template class PipelineXSinkLocalState<SpillSortSharedState>;
+extern template class PipelineXSinkLocalState<NestedLoopJoinSharedState>;
+extern template class PipelineXSinkLocalState<AnalyticSharedState>;
+extern template class PipelineXSinkLocalState<AggSharedState>;
+extern template class PipelineXSinkLocalState<BucketedAggSharedState>;
+extern template class PipelineXSinkLocalState<PartitionedAggSharedState>;
+extern template class PipelineXSinkLocalState<FakeSharedState>;
+extern template class PipelineXSinkLocalState<UnionSharedState>;
+extern template class PipelineXSinkLocalState<PartitionSortNodeSharedState>;
+extern template class PipelineXSinkLocalState<MultiCastSharedState>;
+extern template class PipelineXSinkLocalState<SetSharedState>;
+extern template class PipelineXSinkLocalState<LocalExchangeSharedState>;
+extern template class PipelineXSinkLocalState<BasicSharedState>;
+extern template class PipelineXSinkLocalState<DataQueueSharedState>;
+extern template class PipelineXLocalState<HashJoinSharedState>;
+extern template class PipelineXLocalState<PartitionedHashJoinSharedState>;
+extern template class PipelineXLocalState<SortSharedState>;
+extern template class PipelineXLocalState<SpillSortSharedState>;
+extern template class PipelineXLocalState<NestedLoopJoinSharedState>;
+extern template class PipelineXLocalState<AnalyticSharedState>;
+extern template class PipelineXLocalState<AggSharedState>;
+extern template class PipelineXLocalState<BucketedAggSharedState>;
+extern template class PipelineXLocalState<PartitionedAggSharedState>;
+extern template class PipelineXLocalState<FakeSharedState>;
+extern template class PipelineXLocalState<UnionSharedState>;
+extern template class PipelineXLocalState<DataQueueSharedState>;
+extern template class PipelineXLocalState<MultiCastSharedState>;
+extern template class PipelineXLocalState<PartitionSortNodeSharedState>;
+extern template class PipelineXLocalState<SetSharedState>;
+extern template class PipelineXLocalState<LocalExchangeSharedState>;
+extern template class PipelineXLocalState<BasicSharedState>;
+#ifdef BE_TEST
+extern template class OperatorX<DummyOperatorLocalState>;
+extern template class DataSinkOperatorX<DummySinkLocalState>;
 #endif
 
 } // namespace doris

@@ -28,9 +28,11 @@ import org.apache.doris.cdcclient.utils.ConfigUtil;
 import org.apache.doris.cdcclient.utils.SmallFileMgr;
 import org.apache.doris.job.cdc.DataSourceConfigKeys;
 import org.apache.doris.job.cdc.request.CompareOffsetRequest;
+import org.apache.doris.job.cdc.request.FetchEndOffsetRequest;
 import org.apache.doris.job.cdc.request.FetchTableSplitsRequest;
 import org.apache.doris.job.cdc.request.JobBaseConfig;
 import org.apache.doris.job.cdc.request.JobBaseRecordRequest;
+import org.apache.doris.job.cdc.response.FetchEndOffsetResult;
 import org.apache.doris.job.cdc.split.AbstractSourceSplit;
 import org.apache.doris.job.cdc.split.BinlogSplit;
 import org.apache.doris.job.cdc.split.SnapshotSplit;
@@ -92,6 +94,7 @@ import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
+import static io.debezium.connector.mysql.MySqlStreamingChangeEventSource.EXCLUDE_HEARTBEAT_FROM_EVENT_COUNT;
 import static org.apache.doris.cdcclient.common.Constants.DEBEZIUM_HEARTBEAT_INTERVAL_MS;
 import static org.apache.doris.cdcclient.utils.ConfigUtil.is13Timestamp;
 import static org.apache.doris.cdcclient.utils.ConfigUtil.isJson;
@@ -102,6 +105,7 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.github.shyiko.mysql.binlog.BinaryLogClient;
 import com.mysql.cj.conf.ConnectionUrl;
+import com.mysql.cj.conf.PropertyKey;
 import io.debezium.connector.mysql.MySqlConnection;
 import io.debezium.connector.mysql.MySqlConnectorConfig;
 import io.debezium.connector.mysql.MySqlPartition;
@@ -127,7 +131,7 @@ public class MySqlSourceReader extends AbstractCdcSourceReader {
     private Set<String> completedSplitIds = ConcurrentHashMap.newKeySet();
 
     // Parallel polling support
-    private ExecutorService pollExecutor;
+    private ExecutorService snapshotPollExecutor;
     private volatile List<CompletableFuture<PollResult>> activePollFutures;
 
     // Binlog reader (single reader for binlog split)
@@ -140,6 +144,11 @@ public class MySqlSourceReader extends AbstractCdcSourceReader {
         this.snapshotReaderContexts = new CopyOnWriteArrayList<>();
     }
 
+    /** Whether server heartbeat events should be excluded from the restart event count. */
+    protected boolean excludeHeartbeatFromEventCount() {
+        return false;
+    }
+
     @Override
     public void initialize(String jobId, DataSource dataSource, Map<String, String> config) {
         this.serializer.init(config);
@@ -149,7 +158,7 @@ public class MySqlSourceReader extends AbstractCdcSourceReader {
                         config.getOrDefault(
                                 DataSourceConfigKeys.SNAPSHOT_PARALLELISM,
                                 DataSourceConfigKeys.SNAPSHOT_PARALLELISM_DEFAULT));
-        this.pollExecutor =
+        this.snapshotPollExecutor =
                 Executors.newFixedThreadPool(
                         parallelism,
                         r -> {
@@ -404,7 +413,7 @@ public class MySqlSourceReader extends AbstractCdcSourceReader {
                                         split.splitId(),
                                         split.getTableId().identifier());
                             },
-                            pollExecutor));
+                            snapshotPollExecutor));
         }
 
         CompletableFuture.allOf(futures.toArray(new CompletableFuture[0])).join();
@@ -434,7 +443,37 @@ public class MySqlSourceReader extends AbstractCdcSourceReader {
         // Load tableSchemas from FE if available (avoids re-discover on restart)
         tryLoadTableSchemasFromRequest(baseReq);
         Tuple2<MySqlSplit, Boolean> splitFlag = createBinlogSplit(offsetMeta, baseReq);
-        this.binlogSplit = (MySqlBinlogSplit) splitFlag.f0;
+        MySqlBinlogSplit newBinlogSplit = (MySqlBinlogSplit) splitFlag.f0;
+
+        // offset guard: reuse the live binlog reader only when the request start offset equals the
+        // reader's real consumed position, so steady-state rounds skip reconnect + binlog
+        // re-position.
+        if (this.binlogReader != null && this.binlogSplitState != null) {
+            BinlogOffset requestStart = newBinlogSplit.getStartingOffset();
+            BinlogOffset readerPos = this.binlogSplitState.getStartingOffset();
+            if (requestStart != null
+                    && readerPos != null
+                    && requestStart.compareTo(readerPos) == 0) {
+                LOG.info(
+                        "Reuse live binlog reader for job {} at offset {}",
+                        baseReq.getJobId(),
+                        requestStart);
+                this.binlogSplit = newBinlogSplit;
+                SplitReadResult reuseResult = new SplitReadResult();
+                reuseResult.setSplits(Collections.singletonList(this.binlogSplit));
+                Map<String, Object> reuseStates = new HashMap<>();
+                reuseStates.put(this.binlogSplit.splitId(), this.binlogSplitState);
+                reuseResult.setSplitStates(reuseStates);
+                return reuseResult;
+            }
+            LOG.info(
+                    "Rebuild binlog reader for job {}: requestStart={}, readerPos={}",
+                    baseReq.getJobId(),
+                    requestStart,
+                    readerPos);
+        }
+
+        this.binlogSplit = newBinlogSplit;
 
         // Close previous binlog reader to release resources before creating a new one.
         // This prevents connection leaks when a cancelled task's reader is still active
@@ -568,7 +607,7 @@ public class MySqlSourceReader extends AbstractCdcSourceReader {
                                 }
                                 return null;
                             },
-                            pollExecutor);
+                            snapshotPollExecutor);
 
             activePollFutures.add(future);
         }
@@ -713,7 +752,7 @@ public class MySqlSourceReader extends AbstractCdcSourceReader {
                         splitStart,
                         splitEnd,
                         null,
-                        tableSchemas);
+                        Collections.singletonMap(tableId, tableChange));
         return split;
     }
 
@@ -894,9 +933,10 @@ public class MySqlSourceReader extends AbstractCdcSourceReader {
         configFactory.serverTimeZone(
                 ConfigUtil.getTimeZoneFromProps(cu.getOriginalProperties()).toString());
 
-        // Schema change handling for MySQL is not yet implemented; keep disabled to avoid
-        // unnecessary processing overhead until DDL support is added.
-        configFactory.includeSchemaChanges(false);
+        boolean schemaChangeEnabled =
+                Boolean.parseBoolean(
+                        cdcConfig.getOrDefault(DataSourceConfigKeys.SCHEMA_CHANGE_ENABLED, "true"));
+        configFactory.includeSchemaChanges(schemaChangeEnabled);
 
         // Set table list
         String[] tableList = ConfigUtil.getTableList(databaseName, cdcConfig);
@@ -927,20 +967,23 @@ public class MySqlSourceReader extends AbstractCdcSourceReader {
             if (MapUtils.isEmpty(offsetMap)) {
                 throw new RuntimeException("Incorrect offset " + startupMode);
             }
-            if (offsetMap.containsKey(BinlogOffset.BINLOG_FILENAME_OFFSET_KEY)
-                    && offsetMap.containsKey(BinlogOffset.BINLOG_POSITION_OFFSET_KEY)) {
-                BinlogOffset binlogOffset =
-                        BinlogOffset.builder()
-                                .setBinlogFilePosition(
-                                        offsetMap.get(BinlogOffset.BINLOG_FILENAME_OFFSET_KEY),
-                                        Long.parseLong(
-                                                offsetMap.get(
-                                                        BinlogOffset.BINLOG_POSITION_OFFSET_KEY)))
-                                .build();
-                configFactory.startupOptions(StartupOptions.specificOffset(binlogOffset));
+            boolean hasFilePosition =
+                    offsetMap.containsKey(BinlogOffset.BINLOG_FILENAME_OFFSET_KEY)
+                            && offsetMap.containsKey(BinlogOffset.BINLOG_POSITION_OFFSET_KEY);
+            boolean hasGtids = offsetMap.containsKey(BinlogOffset.GTID_SET_KEY);
+            BinlogOffset binlogOffset;
+            if (hasFilePosition) {
+                // Keep the full map so gtids and other fields survive; supplement kind.
+                offsetMap.putIfAbsent(
+                        BinlogOffset.OFFSET_KIND_KEY, BinlogOffsetKind.SPECIFIC.name());
+                binlogOffset = new BinlogOffset(offsetMap);
+            } else if (hasGtids) {
+                // ofGtidSet seeds placeholder file/pos and kind, like Flink CDC.
+                binlogOffset = BinlogOffset.ofGtidSet(offsetMap.get(BinlogOffset.GTID_SET_KEY));
             } else {
                 throw new RuntimeException("Incorrect offset " + startupMode);
             }
+            configFactory.startupOptions(StartupOptions.specificOffset(binlogOffset));
         } else if (is13Timestamp(startupMode)) {
             // start from timestamp
             Long ts = Long.parseLong(startupMode);
@@ -957,9 +1000,11 @@ public class MySqlSourceReader extends AbstractCdcSourceReader {
         configFactory.jdbcProperties(jdbcProperteis);
 
         Properties dbzProps = ConfigUtil.getDefaultDebeziumProps();
+        // Do not override KEEP_ALIVE_INTERVAL_MS: connection liveness is independent from CDC
+        // progress heartbeats.
         dbzProps.setProperty(
-                MySqlConnectorConfig.KEEP_ALIVE_INTERVAL_MS.name(),
-                DEBEZIUM_HEARTBEAT_INTERVAL_MS + "");
+                EXCLUDE_HEARTBEAT_FROM_EVENT_COUNT,
+                Boolean.toString(excludeHeartbeatFromEventCount()));
 
         if (cdcConfig.containsKey(DataSourceConfigKeys.SSL_MODE)) {
             String normalized =
@@ -982,13 +1027,24 @@ public class MySqlSourceReader extends AbstractCdcSourceReader {
                     "trustCertificateKeyStorePassword", SmallFileMgr.TRUSTSTORE_PASSWORD);
         }
 
+        // Keep genuinely ancient (<100) DATE/DATETIME years; MySQL already completes 2-digit years.
+        dbzProps.setProperty("enable.time.adjuster", "false");
+        // The converter is valid only when snapshot JDBC exposes YEAR values as numbers.
+        if ("false"
+                .equalsIgnoreCase(
+                        jdbcProperteis.getProperty(PropertyKey.yearIsDateType.getKeyName()))) {
+            dbzProps.setProperty("converters", "dorisYear");
+            dbzProps.setProperty("dorisYear.type", MySqlYearConverter.class.getName());
+        }
+
         configFactory.debeziumProperties(dbzProps);
         configFactory.heartbeatInterval(Duration.ofMillis(DEBEZIUM_HEARTBEAT_INTERVAL_MS));
 
-        if (cdcConfig.containsKey(DataSourceConfigKeys.SNAPSHOT_SPLIT_SIZE)) {
-            configFactory.splitSize(
-                    Integer.parseInt(cdcConfig.get(DataSourceConfigKeys.SNAPSHOT_SPLIT_SIZE)));
-        }
+        configFactory.splitSize(
+                Integer.parseInt(
+                        cdcConfig.getOrDefault(
+                                DataSourceConfigKeys.SNAPSHOT_SPLIT_SIZE,
+                                DataSourceConfigKeys.SNAPSHOT_SPLIT_SIZE_DEFAULT)));
 
         // todo: Currently, only one split key is supported; future will require multiple split
         // keys.
@@ -1120,13 +1176,62 @@ public class MySqlSourceReader extends AbstractCdcSourceReader {
     }
 
     @Override
-    public Map<String, String> getEndOffset(JobBaseConfig jobConfig) {
-        MySqlSourceConfig sourceConfig = getSourceConfig(jobConfig);
+    public FetchEndOffsetResult fetchEndOffset(FetchEndOffsetRequest request) {
+        MySqlSourceConfig sourceConfig = getSourceConfig(request);
         try (MySqlConnection jdbc = DebeziumUtils.createMySqlConnection(sourceConfig)) {
-            BinlogOffset binlogOffset = DebeziumUtils.currentBinlogOffset(jdbc);
-            return binlogOffset.getOffset();
-        } catch (SQLException ex) {
-            throw new RuntimeException(ex);
+            Map<String, String> endOffset = DebeziumUtils.currentBinlogOffset(jdbc).getOffset();
+            long lagBytes;
+            try {
+                lagBytes = calculateLagBytes(request, endOffset, jdbc);
+            } catch (Exception exception) {
+                lagBytes = -1;
+                LOG.warn(
+                        "Failed to calculate source log lag for job {}",
+                        request.getJobId(),
+                        exception);
+            }
+            return new FetchEndOffsetResult(endOffset, lagBytes);
+        } catch (SQLException exception) {
+            throw new RuntimeException(exception);
+        }
+    }
+
+    private long calculateLagBytes(
+            FetchEndOffsetRequest request, Map<String, String> endOffset, MySqlConnection jdbc)
+            throws SQLException {
+        if (MapUtils.isEmpty(request.getReferenceOffset())) {
+            return -1;
+        }
+        try (Statement statement = jdbc.connection().createStatement();
+                ResultSet resultSet = statement.executeQuery("SHOW BINARY LOGS")) {
+            List<MySqlBinlogLagCalculator.BinlogFile> binlogFiles = new ArrayList<>();
+            while (resultSet.next()) {
+                binlogFiles.add(
+                        new MySqlBinlogLagCalculator.BinlogFile(
+                                resultSet.getString(1), resultSet.getLong(2)));
+            }
+            String referenceFile = request.getReferenceOffset().get("file");
+            String endFile = endOffset.get("file");
+            if (referenceFile != null && endFile != null) {
+                boolean referenceFileExists =
+                        binlogFiles.stream().anyMatch(file -> file.name().equals(referenceFile));
+                boolean endFileExists =
+                        binlogFiles.stream().anyMatch(file -> file.name().equals(endFile));
+                if (!referenceFileExists || !endFileExists) {
+                    LOG.warn(
+                            "Cannot calculate source log lag because a binlog file is unavailable,"
+                                    + " jobId={}, referenceFile={} (available={}),"
+                                    + " endFile={} (available={})",
+                            request.getJobId(),
+                            referenceFile,
+                            referenceFileExists,
+                            endFile,
+                            endFileExists);
+                    return -1;
+                }
+            }
+            return MySqlBinlogLagCalculator.calculate(
+                    request.getReferenceOffset(), endOffset, binlogFiles);
         }
     }
 
@@ -1192,9 +1297,17 @@ public class MySqlSourceReader extends AbstractCdcSourceReader {
     public synchronized void close(JobBaseConfig jobConfig) {
         LOG.info("Close source reader for job {}", jobConfig.getJobId());
         finishSplitRecords();
+        shutdownSnapshotPollExecutor();
         if (tableSchemas != null) {
             tableSchemas.clear();
             tableSchemas = null;
+        }
+    }
+
+    @Override
+    protected void shutdownSnapshotPollExecutor() {
+        if (snapshotPollExecutor != null) {
+            snapshotPollExecutor.shutdownNow();
         }
     }
 
@@ -1266,6 +1379,13 @@ public class MySqlSourceReader extends AbstractCdcSourceReader {
                     }
                 } else if (RecordUtils.isHeartbeatEvent(element)) {
                     LOG.debug("Receive heartbeat event: {}", element);
+                    if (splitState.isBinlogSplitState()) {
+                        BinlogOffset position = RecordUtils.getBinlogPosition(element);
+                        splitState.asBinlogSplitState().setStartingOffset(position);
+                    }
+                    nextRecord = element;
+                    return true;
+                } else if (RecordUtils.isSchemaChangeEvent(element)) {
                     if (splitState.isBinlogSplitState()) {
                         BinlogOffset position = RecordUtils.getBinlogPosition(element);
                         splitState.asBinlogSplitState().setStartingOffset(position);

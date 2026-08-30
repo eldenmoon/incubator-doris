@@ -31,6 +31,7 @@ import org.apache.doris.mtmv.EnvInfo;
 import org.apache.doris.mtmv.MTMVCache;
 import org.apache.doris.mtmv.MTMVJobInfo;
 import org.apache.doris.mtmv.MTMVJobManager;
+import org.apache.doris.mtmv.MTMVPartitionExpander;
 import org.apache.doris.mtmv.MTMVPartitionInfo;
 import org.apache.doris.mtmv.MTMVPartitionInfo.MTMVPartitionType;
 import org.apache.doris.mtmv.MTMVPartitionUtil;
@@ -56,6 +57,7 @@ import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
 import java.io.IOException;
+import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
 import java.util.Optional;
@@ -280,7 +282,21 @@ public class MTMV extends OlapTable {
     public Map<String, String> alterMvProperties(Map<String, String> mvProperties) {
         writeMvLock();
         try {
+            boolean containsExcludedTriggerTables = mvProperties.containsKey(
+                    PropertyAnalyzer.PROPERTIES_EXCLUDED_TRIGGER_TABLES);
+            Set<TableNameInfo> oldExcludedTriggerTables = containsExcludedTriggerTables
+                    ? parseExcludedTriggerTables()
+                    : Sets.newHashSet();
             this.mvProperties.putAll(mvProperties);
+            if (containsExcludedTriggerTables) {
+                Set<TableNameInfo> newExcludedTriggerTables = parseExcludedTriggerTables();
+                if (!oldExcludedTriggerTables.equals(newExcludedTriggerTables)) {
+                    // excluded_trigger_tables changes the refresh baseline semantics. Invalidate the old
+                    // snapshots so the next AUTO refresh rebuilds a complete baseline with the new rules.
+                    this.schemaChangeVersion++;
+                    this.refreshSnapshot = new MTMVRefreshSnapshot();
+                }
+            }
             return this.mvProperties;
         } finally {
             writeMvUnlock();
@@ -341,20 +357,24 @@ public class MTMV extends OlapTable {
     }
 
     public Set<TableNameInfo> getExcludedTriggerTables() {
-        Set<TableNameInfo> res = Sets.newHashSet();
         readMvLock();
         try {
-            if (StringUtils.isEmpty(mvProperties.get(PropertyAnalyzer.PROPERTIES_EXCLUDED_TRIGGER_TABLES))) {
-                return res;
-            }
-            String[] split = mvProperties.get(PropertyAnalyzer.PROPERTIES_EXCLUDED_TRIGGER_TABLES).split(",");
-            for (String alias : split) {
-                res.add(new TableNameInfo(alias));
-            }
-            return res;
+            return parseExcludedTriggerTables();
         } finally {
             readMvUnlock();
         }
+    }
+
+    private Set<TableNameInfo> parseExcludedTriggerTables() {
+        Set<TableNameInfo> res = Sets.newHashSet();
+        if (StringUtils.isEmpty(mvProperties.get(PropertyAnalyzer.PROPERTIES_EXCLUDED_TRIGGER_TABLES))) {
+            return res;
+        }
+        String[] split = mvProperties.get(PropertyAnalyzer.PROPERTIES_EXCLUDED_TRIGGER_TABLES).split(",");
+        for (String alias : split) {
+            res.add(new TableNameInfo(alias));
+        }
+        return res;
     }
 
     public Set<TableNameInfo> getQueryRewriteConsistencyRelaxedTables() {
@@ -448,6 +468,17 @@ public class MTMV extends OlapTable {
         return refreshSnapshot;
     }
 
+    public boolean hasCompleteRefreshSnapshot() {
+        Set<String> partitionNames = getPartitionNames();
+        readMvLock();
+        try {
+            // A refresh baseline is complete only when every current MV partition has a snapshot.
+            return refreshSnapshot.getPartitionSnapshots().keySet().containsAll(partitionNames);
+        } finally {
+            readMvUnlock();
+        }
+    }
+
     public long getSchemaChangeVersion() {
         readMvLock();
         try {
@@ -494,6 +525,27 @@ public class MTMV extends OlapTable {
     }
 
     /**
+     * Normalize query-used base table partitions to the effective filter consumed by
+     * partition-mapping generation.
+     */
+    public Map<List<String>, Set<String>> getEffectiveQueryUsedBaseTablePartitionMap(
+            Map<List<String>, Set<String>> queryUsedBaseTablePartitionMap) throws AnalysisException {
+        return getEffectiveQueryUsedBaseTablePartitionMap(queryUsedBaseTablePartitionMap, null);
+    }
+
+    private Map<List<String>, Set<String>> getEffectiveQueryUsedBaseTablePartitionMap(
+            Map<List<String>, Set<String>> queryUsedBaseTablePartitionMap,
+            Map<String, PartitionItem> mvPartitionItems) throws AnalysisException {
+        if (queryUsedBaseTablePartitionMap.isEmpty()
+                || mvPartitionInfo.getPartitionType() != MTMVPartitionType.EXPR) {
+            return queryUsedBaseTablePartitionMap;
+        }
+        return MTMVPartitionExpander.expandToMvPartitionGranularity(queryUsedBaseTablePartitionMap,
+                mvPartitionItems != null ? mvPartitionItems : getAndCopyPartitionItems(),
+                mvPartitionInfo.getPctTables());
+    }
+
+    /**
      * Calculate the partition and associated partition mapping relationship of the MTMV
      * It is the result of real-time comparison calculation, so there may be some costs,
      * so it should be called with caution
@@ -501,15 +553,25 @@ public class MTMV extends OlapTable {
      * @return mvPartitionName ==> pctTable ==> pctPartitionName
      * @throws AnalysisException
      */
-    public Map<String, Map<MTMVRelatedTableIf, Set<String>>> calculatePartitionMappings() throws AnalysisException {
+    public Map<String, Map<MTMVRelatedTableIf, Set<String>>> calculatePartitionMappings(
+            Map<List<String>, Set<String>> queryUsedBaseTablePartitionMap) throws AnalysisException {
         if (mvPartitionInfo.getPartitionType() == MTMVPartitionType.SELF_MANAGE) {
             return Maps.newHashMap();
         }
         long start = System.currentTimeMillis();
+        // For EXPR-type partitions with RANGE base tables, expand the query-used partition
+        // filter to MV partition granularity. This ensures complete partition mappings per
+        // MV partition (needed for isSyncWithPartitions correctness) while skipping
+        // irrelevant MV partitions entirely (the performance optimization).
+        // For nested MVs where pctTable is not in the filter, the expanded map is empty,
+        // so the pipeline runs without filtering (full computation) — correct behavior.
+        Map<String, PartitionItem> mvPartitionItems = getAndCopyPartitionItems();
+        Map<List<String>, Set<String>> effectiveFilter
+                = getEffectiveQueryUsedBaseTablePartitionMap(queryUsedBaseTablePartitionMap, mvPartitionItems);
         Map<String, Map<MTMVRelatedTableIf, Set<String>>> res = Maps.newHashMap();
         Map<PartitionKeyDesc, Map<MTMVRelatedTableIf, Set<String>>> pctPartitionDescs = MTMVPartitionUtil
-                .generateRelatedPartitionDescs(mvPartitionInfo, mvProperties, getPartitionColumns());
-        Map<String, PartitionItem> mvPartitionItems = getAndCopyPartitionItems();
+                .generateRelatedPartitionDescs(mvPartitionInfo, mvProperties, getPartitionColumns(),
+                        effectiveFilter);
         for (Entry<String, PartitionItem> entry : mvPartitionItems.entrySet()) {
             res.put(entry.getKey(),
                     pctPartitionDescs.getOrDefault(entry.getValue().toPartitionKeyDesc(), Maps.newHashMap()));
