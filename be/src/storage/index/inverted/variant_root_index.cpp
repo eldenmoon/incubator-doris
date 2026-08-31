@@ -405,11 +405,14 @@ std::shared_ptr<TabletIndex> make_query_index(const TabletIndex& root_index,
                                               std::string_view relative_path,
                                               PrimitiveType path_type) {
     const std::string_view family = query_value_family(path_type);
-    DORIS_CHECK(!family.empty());
+    DORIS_CHECK(!family.empty() ||
+                (path_type == PrimitiveType::TYPE_VARIANT && is_all_values_index(root_index)));
     TabletIndexPB index_pb;
     root_index.to_schema_pb(&index_pb);
     (*index_pb.mutable_properties())[std::string(VARIANT_ROOT_QUERY_PATH_KEY)] = relative_path;
-    (*index_pb.mutable_properties())[std::string(VARIANT_ROOT_QUERY_VALUE_FAMILY_KEY)] = family;
+    if (!family.empty()) {
+        (*index_pb.mutable_properties())[std::string(VARIANT_ROOT_QUERY_VALUE_FAMILY_KEY)] = family;
+    }
     auto result = std::make_shared<TabletIndex>();
     result->init_from_pb(index_pb);
     return result;

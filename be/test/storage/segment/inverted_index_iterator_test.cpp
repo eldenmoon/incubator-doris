@@ -62,6 +62,13 @@ public:
                  const Field& query_value, InvertedIndexQueryType query_type,
                  std::shared_ptr<roaring::Roaring>& roaring,
                  const InvertedIndexAnalyzerCtx* analyzer_ctx = nullptr) override {
+        _count_fastpath_requested = context->count_on_index_fastpath;
+        if (_count_fastpath_requested) {
+            context->count_on_index_fastpath_hit = true;
+            roaring->add(0);
+        } else {
+            roaring->add(7);
+        }
         return Status::OK();
     }
 
@@ -74,6 +81,8 @@ public:
 
     Status new_iterator(std::unique_ptr<IndexIterator>* iterator) override { return Status::OK(); }
 
+    bool count_fastpath_requested() const { return _count_fastpath_requested; }
+
 private:
     MockInvertedIndexReader(std::shared_ptr<TabletIndex> index,
                             const std::map<std::string, std::string>& properties)
@@ -84,6 +93,7 @@ private:
     std::shared_ptr<TabletIndex> _mock_index; // Keep index alive
     std::map<std::string, std::string> _properties;
     InvertedIndexReaderType _type = InvertedIndexReaderType::FULLTEXT;
+    bool _count_fastpath_requested = false;
 };
 
 class InvertedIndexIteratorTest : public testing::Test {
@@ -220,6 +230,78 @@ TEST_F(InvertedIndexIteratorTest, DefaultRawReaderMatchesExplicitNone) {
     auto result_none = iterator.select_best_reader(INVERTED_INDEX_PARSER_NONE);
     EXPECT_TRUE(result_none.has_value());
     EXPECT_EQ(result_none.value(), raw_reader);
+}
+
+TEST_F(InvertedIndexIteratorTest, CandidateReaderDisablesCountOnlyFabrication) {
+    InvertedIndexIterator iterator;
+    auto root_reader = create_mock_root_reader("none", InvertedIndexReaderType::STRING_TYPE, 9);
+    iterator.add_reader(InvertedIndexReaderType::STRING_TYPE, root_reader);
+    auto context = std::make_shared<IndexQueryContext>();
+    context->count_on_index_fastpath = true;
+    iterator.set_context(context);
+
+    InvertedIndexParam param;
+    param.column_name = "payload.repo";
+    param.column_type = std::make_shared<DataTypeString>();
+    param.query_value = Field::create_field<TYPE_STRING>(std::string("apache/doris"));
+    param.query_type = InvertedIndexQueryType::EQUAL_QUERY;
+    param.num_rows = 10;
+    param.roaring = std::make_shared<roaring::Roaring>();
+
+    ASSERT_TRUE(iterator.read_from_index(IndexParam {&param}).ok());
+    EXPECT_TRUE(param.requires_recheck);
+    EXPECT_FALSE(root_reader->count_fastpath_requested());
+    EXPECT_FALSE(context->count_on_index_fastpath_hit);
+    EXPECT_TRUE(context->count_on_index_fastpath);
+    EXPECT_EQ(std::vector<uint32_t>(param.roaring->begin(), param.roaring->end()),
+              std::vector<uint32_t>({7}));
+}
+
+TEST_F(InvertedIndexIteratorTest, ExactChildReaderKeepsCountOnlyFabrication) {
+    InvertedIndexIterator iterator;
+    auto child_reader = create_mock_reader("none", InvertedIndexReaderType::STRING_TYPE, 10);
+    iterator.add_reader(InvertedIndexReaderType::STRING_TYPE, child_reader);
+    auto context = std::make_shared<IndexQueryContext>();
+    context->count_on_index_fastpath = true;
+    iterator.set_context(context);
+
+    InvertedIndexParam param;
+    param.column_name = "payload.repo";
+    param.column_type = std::make_shared<DataTypeString>();
+    param.query_value = Field::create_field<TYPE_STRING>(std::string("apache/doris"));
+    param.query_type = InvertedIndexQueryType::EQUAL_QUERY;
+    param.num_rows = 10;
+    param.roaring = std::make_shared<roaring::Roaring>();
+
+    ASSERT_TRUE(iterator.read_from_index(IndexParam {&param}).ok());
+    EXPECT_FALSE(param.requires_recheck);
+    EXPECT_TRUE(child_reader->count_fastpath_requested());
+    EXPECT_TRUE(context->count_on_index_fastpath_hit);
+    EXPECT_TRUE(context->count_on_index_fastpath);
+    EXPECT_EQ(std::vector<uint32_t>(param.roaring->begin(), param.roaring->end()),
+              std::vector<uint32_t>({0}));
+}
+
+TEST_F(InvertedIndexIteratorTest, CandidateReaderDoesNotPublishInexactScores) {
+    InvertedIndexIterator iterator;
+    auto root_reader = create_mock_root_reader("none", InvertedIndexReaderType::STRING_TYPE, 10);
+    iterator.add_reader(InvertedIndexReaderType::STRING_TYPE, root_reader);
+    auto context = std::make_shared<IndexQueryContext>();
+    context->collection_similarity = std::make_shared<CollectionSimilarity>();
+    iterator.set_context(context);
+
+    InvertedIndexParam param;
+    param.column_name = "payload.repo";
+    param.column_type = std::make_shared<DataTypeString>();
+    param.query_value = Field::create_field<TYPE_STRING>(std::string("apache/doris"));
+    param.query_type = InvertedIndexQueryType::EQUAL_QUERY;
+    param.num_rows = 10;
+    param.roaring = std::make_shared<roaring::Roaring>();
+
+    const Status status = iterator.read_from_index(IndexParam {&param});
+    EXPECT_TRUE(status.is<ErrorCode::INVERTED_INDEX_EVALUATE_SKIPPED>()) << status;
+    EXPECT_TRUE(param.requires_recheck);
+    EXPECT_TRUE(param.roaring->isEmpty());
 }
 
 // find_reader_candidates tests (via select_best_reader)

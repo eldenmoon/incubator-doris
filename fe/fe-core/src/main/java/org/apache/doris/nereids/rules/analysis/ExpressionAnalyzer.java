@@ -1022,23 +1022,7 @@ public class ExpressionAnalyzer extends SubExprAnalyzer<ExpressionRewriteContext
                     right.toSql(), match.toSql(), right.getDataType()));
         }
 
-        // Keep a bare VARIANT root as VARIANT so root MATCH can reach the V2 evaluator and the
-        // path-independent all-values index. Subcolumn expressions retain the historical STRING
-        // coercion because their scalar type is resolved later by Variant path pruning.
-        if (left.getDataType().isVariantType() && !isRootVariantSlotOrAlias(left)) {
-            left = new Cast(left, right.getDataType());
-        }
         return match.withChildren(left, right);
-    }
-
-    private boolean isRootVariantSlotOrAlias(Expression expression) {
-        Expression current = expression;
-        while (current instanceof Alias) {
-            current = current.child(0);
-        }
-        return current instanceof SlotReference
-                && current.getDataType().isVariantType()
-                && !((SlotReference) current).hasSubColPath();
     }
 
     @Override

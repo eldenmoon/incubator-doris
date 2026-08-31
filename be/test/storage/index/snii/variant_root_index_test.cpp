@@ -30,6 +30,7 @@
 #include "core/data_type_serde/data_type_variant_v2_serde.h"
 #include "core/value/variant/variant_field.h"
 #include "core/value/variant/variant_scalar.h"
+#include "exprs/function/parse/variant_string_parse.h"
 #include "io/fs/local_file_system.h"
 #include "storage/index/index_file_reader.h"
 #include "storage/index/index_file_writer.h"
@@ -295,10 +296,10 @@ TEST_F(VariantRootIndexWriterTest, FansOutOneTraversalToExactAndTokenIndexes) {
                                       std::move(file_writer));
     ::doris::segment_v2::VariantRootIndexWriter exact_writer(&index_file_writer, &exact_index,
                                                              /*is_direct_load=*/false,
-                                                             /*check_duplicate_json_path=*/false);
+                                                             /*check_duplicate_json_path=*/true);
     ::doris::segment_v2::VariantRootIndexWriter token_writer(&index_file_writer, &token_index,
                                                              /*is_direct_load=*/false,
-                                                             /*check_duplicate_json_path=*/false);
+                                                             /*check_duplicate_json_path=*/true);
     ASSERT_TRUE(exact_writer.init().ok());
     ASSERT_TRUE(token_writer.init().ok());
 
@@ -313,7 +314,11 @@ TEST_F(VariantRootIndexWriterTest, FansOutOneTraversalToExactAndTokenIndexes) {
         Slice slice(json.data(), json.size());
         ASSERT_TRUE(serde.deserialize_one_cell_from_json(*values, slice, format_options).ok());
     }
-    const std::vector<uint8_t> outer_nulls {0, 0, 0, 1};
+    JsonStringToVariantEncoder collision_encoder({.check_duplicate_json_path = true});
+    const std::string_view collision_json = R"({"dotted.path":"first","dotted":{"path":"second"}})";
+    collision_encoder.add_json({collision_json.data(), collision_json.size()});
+    values->insert_encoded_batch(collision_encoder.finish_batch());
+    const std::vector<uint8_t> outer_nulls {0, 0, 0, 0, 1};
     values->insert_default();
     std::array<::doris::segment_v2::VariantRootIndexWriter*, 2> writers = {&exact_writer,
                                                                            &token_writer};
@@ -333,8 +338,8 @@ TEST_F(VariantRootIndexWriterTest, FansOutOneTraversalToExactAndTokenIndexes) {
     auto token = index_file_reader.open_snii_index(&token_index);
     ASSERT_TRUE(token.has_value()) << token.error();
     for (const auto* reader : {exact->get(), token->get()}) {
-        EXPECT_EQ(reader->stats().doc_count, 4U);
-        EXPECT_EQ(reader->stats().indexed_doc_count, 3U);
+        EXPECT_EQ(reader->stats().doc_count, 5U);
+        EXPECT_EQ(reader->stats().indexed_doc_count, 4U);
         EXPECT_EQ(reader->stats().null_count, 1U);
     }
 
@@ -349,6 +354,8 @@ TEST_F(VariantRootIndexWriterTest, FansOutOneTraversalToExactAndTokenIndexes) {
     expect_term(**exact, encode_string_term("action", "opened"), {0});
     expect_term(**exact, encode_int64_term("number", 7), {1});
     expect_term(**exact, encode_double_term("number", 7.0), {});
+    expect_term(**exact, encode_string_term("dotted.path", "first"), {});
+    expect_term(**exact, encode_string_term("dotted.path", "second"), {3});
     expect_term(**exact, encode_token_term("nested.body", "root"), {});
 
     expect_term(**token, legacy_path_term("nullable"), {});
@@ -356,6 +363,7 @@ TEST_F(VariantRootIndexWriterTest, FansOutOneTraversalToExactAndTokenIndexes) {
     expect_term(**token, encode_int64_term("number", 7), {});
     expect_term(**token, encode_token_term("action", "opened"), {0});
     expect_term(**token, encode_token_term("nested.body", "root"), {0});
+    expect_term(**token, encode_token_term("dotted.path", "second"), {3});
 }
 
 // NOLINTNEXTLINE(readability-function-cognitive-complexity) -- Pins row-domain and term semantics.
@@ -403,7 +411,7 @@ TEST_F(VariantRootIndexWriterTest, AllValuesIndexesRootScalarsArraysAndCrossPath
     DataTypeVariantV2SerDe serde;
     DataTypeSerDe::FormatOptions format_options;
     for (const std::string_view json : {
-                 R"({"message":"Apache","repo":"Doris","number":123,"tags":["database","doris"]})",
+                 R"({"empty":"","message":"Apache","repo":"Doris","number":123,"tags":["database","doris"]})",
                  R"({"message":"Doris","other":"Apache"})",
                  R"("Apache Doris")",
                  R"(null)",
@@ -443,6 +451,7 @@ TEST_F(VariantRootIndexWriterTest, AllValuesIndexesRootScalarsArraysAndCrossPath
         ASSERT_TRUE(snii::query::term_query(reader, term, &docids).ok());
         EXPECT_EQ(docids, expected);
     };
+    expect_term(**exact, encode_all_value_term(""), {0});
     expect_term(**exact, encode_all_value_term("123"), {0});
     expect_term(**exact, encode_all_value_term("[\"database\",\"doris\"]"), {0});
     expect_term(**exact, encode_all_value_term("Apache Doris"), {2});

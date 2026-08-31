@@ -1793,11 +1793,14 @@ TEST_F(IndexCompactionTest, snii_native_merge_validates_rowids_once_and_matches_
                   (std::set<std::pair<int32_t, int64_t>> {{1, 11001}, {1, 11002}}));
         EXPECT_EQ(compaction._output_rowset->num_segments(), 2);
     };
+    constexpr int32_t output_segment_start_id = 10;
     RowsetSharedPtr native_merge;
-    Status status = IndexCompactionUtils::do_compaction(rowsets, _engine_ref, _tablet, true,
-                                                        native_merge, check_native_merge, 1000);
+    Status status =
+            IndexCompactionUtils::do_compaction(rowsets, _engine_ref, _tablet, true, native_merge,
+                                                check_native_merge, 1000, output_segment_start_id);
     ASSERT_TRUE(status.ok()) << status;
     ASSERT_NE(native_merge, nullptr);
+    EXPECT_EQ(native_merge->rowset_meta()->segment_id(0), output_segment_start_id);
     EXPECT_EQ(validation_count, 1);
     EXPECT_EQ(reader_init_count, rowsets.size());
     DebugPoints::instance()->remove(std::string(kValidationPoint));
@@ -1813,9 +1816,9 @@ TEST_F(IndexCompactionTest, snii_native_merge_validates_rowids_once_and_matches_
     ASSERT_TRUE(status.ok()) << status;
     ASSERT_NE(raw_rebuild, nullptr);
     ASSERT_EQ(native_merge->num_segments(), raw_rebuild->num_segments());
-    for (uint32_t segment_id = 0; segment_id < native_merge->num_segments(); ++segment_id) {
-        EXPECT_EQ(_read_index_file_bytes(native_merge, segment_id),
-                  _read_index_file_bytes(raw_rebuild, segment_id));
+    for (size_t segment_pos = 0; segment_pos < native_merge->num_segments(); ++segment_pos) {
+        EXPECT_EQ(_read_index_file_bytes(native_merge, native_merge->segment(segment_pos).id()),
+                  _read_index_file_bytes(raw_rebuild, raw_rebuild->segment(segment_pos).id()));
     }
 }
 

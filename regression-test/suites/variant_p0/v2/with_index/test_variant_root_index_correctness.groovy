@@ -15,6 +15,8 @@
 // specific language governing permissions and limitations
 // under the License.
 
+import org.apache.doris.regression.action.ProfileAction
+
 suite("test_variant_root_index_correctness", "p0,nonConcurrent") {
     setFeConfigTemporary([enable_variant_v2: true]) {
         def rootNone = "variant_root_index_none"
@@ -25,7 +27,7 @@ suite("test_variant_root_index_correctness", "p0,nonConcurrent") {
         def childBoth = "variant_child_indexes_both"
 
         sql "SET default_variant_enable_doc_mode = false"
-        sql "SET default_variant_max_subcolumns_count = 0"
+        sql "SET default_variant_max_subcolumns_count = 1"
         sql "SET default_variant_enable_typed_paths_to_sparse = false"
         sql "SET enable_sql_cache = false"
         sql "SET enable_query_cache = false"
@@ -41,7 +43,9 @@ suite("test_variant_root_index_correctness", "p0,nonConcurrent") {
         def createTable = { String tableName, boolean root, String parser ->
             def rootProperty = root ? ', "variant_index_mode" = "root"' : ''
             def supportPhraseProperty = root ? '' : ', "support_phrase" = "false"'
-            def maxSubcolumns = root ? 0 : 10_000
+            // Root tables keep only the hottest dynamic path materialized. Existing action,
+            // number, and comment predicates therefore exercise sparse-path lookup.
+            def maxSubcolumns = root ? 1 : 10_000
             sql """
                 CREATE TABLE ${tableName} (
                     id BIGINT NOT NULL,
@@ -68,7 +72,7 @@ suite("test_variant_root_index_correctness", "p0,nonConcurrent") {
         def createBothTable = { String tableName, boolean root ->
             def rootProperty = root ? ', "variant_index_mode" = "root"' : ''
             def supportPhraseProperty = root ? '' : ', "support_phrase" = "false"'
-            def maxSubcolumns = root ? 0 : 10_000
+            def maxSubcolumns = root ? 1 : 10_000
             sql """
                 CREATE TABLE ${tableName} (
                     id BIGINT NOT NULL,
@@ -141,7 +145,9 @@ suite("test_variant_root_index_correctness", "p0,nonConcurrent") {
             (9, parse_to_variant('{"action":"opened","repo":{"name":"apache/doris"},"number":99,"numeric_boundary":9007199254740993,"score":1.5,"active":true,"comment":{"body":"Variant root search benchmark"},"labels":["correctness","storage"]}')),
             (10, parse_to_variant('{"numeric_boundary":9007199254740992}')),
             (11, parse_to_variant('{"numeric_boundary":9223372036854775807}')),
-            (12, parse_to_variant('{"numeric_boundary":-9223372036854775808}'))
+            (12, parse_to_variant('{"numeric_boundary":-9223372036854775808}')),
+            (13, parse_to_variant('{"shape":{"leaf":"objectneedle"},"complex":[{"leaf":"jsonbneedle"}]}')),
+            (14, parse_to_variant('{"shape":"objectneedle","complex":"jsonbneedle"}'))
         """
         [rootNone, childNone, rootEnglish, childEnglish, rootBoth, childBoth].each { tableName ->
             sql "INSERT INTO ${tableName} VALUES ${firstValues}"
@@ -149,8 +155,8 @@ suite("test_variant_root_index_correctness", "p0,nonConcurrent") {
 
         // A cast-wrapped VARIANT predicate keeps a scalar residual even after index application,
         // so the zero-residual debug point cannot prove index participation. Instead pin the
-        // exact rows filtered by the root bitmap. The first five rows form one segment, avoiding
-        // the scan-stat counter's intermediate values when several segments share one query.
+        // exact rows filtered by the root bitmap. repo.name is the sole materialized path in the
+        // first segment; action, number, and comment remain sparse and are checked below.
         def assertRootIndexFilteredRows = { String query, int expectedFilteredRows ->
             def checkpoint = "segment_iterator.inverted_index.filtered_rows"
             try {
@@ -165,24 +171,41 @@ suite("test_variant_root_index_correctness", "p0,nonConcurrent") {
         }
         assertRootIndexFilteredRows("""
                 SELECT id FROM ${rootNone}
-                WHERE CAST(v['action'] AS STRING) = 'opened'
-                ORDER BY id
-            """, 3)
-        assertRootIndexFilteredRows("""
-                SELECT id FROM ${rootNone}
-                WHERE CAST(v['number'] AS BIGINT) IN (42, -8)
+                WHERE CAST(v['repo']['name'] AS STRING) = 'apache/doris'
                 ORDER BY id
             """, 2)
         assertRootIndexFilteredRows("""
                 SELECT id FROM ${rootEnglish}
-                WHERE CAST(v['comment']['body'] AS STRING) MATCH_ALL 'variant search'
+                WHERE CAST(v['repo']['name'] AS STRING) MATCH_ANY 'doris'
                 ORDER BY id
-            """, 4)
+            """, 2)
         // Add a second source rowset and pin representative scan-oracle fingerprints before
         // compaction. The same fingerprints are checked again after compacting both layouts.
         [rootNone, childNone, rootEnglish, childEnglish, rootBoth, childBoth].each { tableName ->
             sql "INSERT INTO ${tableName} VALUES ${secondValues}"
         }
+        sql "SET enable_profile = true"
+        sql "SET profile_level = 2"
+        def sparseProfileTag = "variant_root_sparse_action_profile_${System.nanoTime()}"
+        sql """
+            /* ${sparseProfileTag} */
+            SELECT /*+ SET_VAR(enable_inverted_index_query=false) */ id
+            FROM ${rootNone}
+            WHERE CAST(v['action'] AS STRING) = 'opened'
+            ORDER BY id
+        """
+        def sparseProfile = new ProfileAction(context).getProfileBySql(
+                sparseProfileTag, ["VariantSubtreeSparseIterCount"])
+        def sparseIterMatcher = sparseProfile =~
+                /VariantSubtreeSparseIterCount:(?:&nbsp;|\s)*(\d+)/
+        def sparseIterCount = 0
+        while (sparseIterMatcher.find()) {
+            sparseIterCount += sparseIterMatcher.group(1).toInteger()
+        }
+        assertTrue(sparseIterCount > 0,
+                "action must be read from a sparse bucket: ${sparseProfile}")
+        sql "SET enable_profile = false"
+
         def fingerprint = { String tableName, String predicate, boolean enableIndex ->
             def hint = enableIndex ? "" : "/*+ SET_VAR(enable_inverted_index_query=false) */"
             def result = sql """
@@ -214,6 +237,17 @@ suite("test_variant_root_index_correctness", "p0,nonConcurrent") {
                 "CAST(v['numeric_boundary'] AS DOUBLE) = 9007199254740992.0"
         def englishPredicate =
                 "CAST(v['comment']['body'] AS STRING) MATCH_ALL 'variant search'"
+        // shape is an object-valued logical path reconstructed from a child in one row. The
+        // array/scalar values under complex exercise the JSONB fallback domain. Root eligibility
+        // must not use scalar terms for either unsupported value domain.
+        def objectEqualPredicate =
+                "CAST(v['shape'] AS STRING) = '{\"leaf\":\"objectneedle\"}'"
+        def objectMatchPredicate =
+                "CAST(v['shape'] AS STRING) MATCH_ANY 'objectneedle'"
+        def jsonbEqualPredicate =
+                "CAST(v['complex'] AS STRING) = '[{\"leaf\":\"jsonbneedle\"}]'"
+        def jsonbMatchPredicate =
+                "CAST(v['complex'] AS STRING) MATCH_ANY 'jsonbneedle'"
         def bothPredicate = "CAST(v['repo']['name'] AS STRING) = 'apache/doris' " +
                 "AND CAST(v['comment']['body'] AS STRING) MATCH_ANY 'root variant'"
         def noneStringBefore =
@@ -228,6 +262,14 @@ suite("test_variant_root_index_correctness", "p0,nonConcurrent") {
                 captureBeforeCompaction(rootNone, childNone, boundaryDoublePredicate)
         def englishBefore =
                 captureBeforeCompaction(rootEnglish, childEnglish, englishPredicate)
+        def objectEqualBefore =
+                captureBeforeCompaction(rootNone, childNone, objectEqualPredicate)
+        def objectMatchBefore =
+                captureBeforeCompaction(rootEnglish, childEnglish, objectMatchPredicate)
+        def jsonbEqualBefore =
+                captureBeforeCompaction(rootNone, childNone, jsonbEqualPredicate)
+        def jsonbMatchBefore =
+                captureBeforeCompaction(rootEnglish, childEnglish, jsonbMatchPredicate)
         def bothBefore = captureBeforeCompaction(rootBoth, childBoth, bothPredicate)
 
         [rootNone, childNone, rootEnglish, childEnglish, rootBoth, childBoth].each { tableName ->
@@ -264,6 +306,10 @@ suite("test_variant_root_index_correctness", "p0,nonConcurrent") {
         checkAfterCompaction(rootNone, childNone, boundaryIntegerPredicate, boundaryIntegerBefore)
         checkAfterCompaction(rootNone, childNone, boundaryDoublePredicate, boundaryDoubleBefore)
         checkAfterCompaction(rootEnglish, childEnglish, englishPredicate, englishBefore)
+        checkAfterCompaction(rootNone, childNone, objectEqualPredicate, objectEqualBefore)
+        checkAfterCompaction(rootEnglish, childEnglish, objectMatchPredicate, objectMatchBefore)
+        checkAfterCompaction(rootNone, childNone, jsonbEqualPredicate, jsonbEqualBefore)
+        checkAfterCompaction(rootEnglish, childEnglish, jsonbMatchPredicate, jsonbMatchBefore)
         checkAfterCompaction(rootBoth, childBoth, bothPredicate, bothBefore)
 
         // Each result appears three times: the root index, the ordinary all-child index, and an
@@ -324,6 +370,14 @@ suite("test_variant_root_index_correctness", "p0,nonConcurrent") {
                 "ARRAY_CONTAINS(CAST(v['labels'] AS ARRAY<TEXT>), 'bug')")
         order_qt_root_json_and_sql_null_fallback compareSources(rootNone, childNone,
                 "CAST(v['nullable'] AS STRING) IS NULL")
+        order_qt_root_object_equal_fallback compareSources(rootNone, childNone,
+                objectEqualPredicate)
+        order_qt_root_object_match_fallback compareSources(rootEnglish, childEnglish,
+                objectMatchPredicate)
+        order_qt_root_jsonb_equal_fallback compareSources(rootNone, childNone,
+                jsonbEqualPredicate)
+        order_qt_root_jsonb_match_fallback compareSources(rootEnglish, childEnglish,
+                jsonbMatchPredicate)
         order_qt_root_not_equal_fallback compareSources(rootNone, childNone,
                 "CAST(v['action'] AS STRING) != 'opened'")
         order_qt_root_mixed_residual compareSources(rootNone, childNone,
@@ -353,6 +407,17 @@ suite("test_variant_root_index_correctness", "p0,nonConcurrent") {
         order_qt_root_both_exact_or_match compareSources(rootBoth, childBoth,
                 "CAST(v['number'] AS BIGINT) = 42 "
                 + "OR CAST(v['comment']['body'] AS STRING) MATCH_ALL 'query engine'")
+
+        def rootCacheProbe = """
+            SELECT id FROM ${rootEnglish}
+            WHERE CAST(v['comment']['body'] AS STRING) MATCH_ANY 'root'
+            ORDER BY id
+        """
+        order_qt_root_query_cache_off rootCacheProbe
+        sql "SET enable_inverted_index_query_cache = true"
+        order_qt_root_query_cache_cold rootCacheProbe
+        order_qt_root_query_cache_warm rootCacheProbe
+        sql "SET enable_inverted_index_query_cache = false"
 
         // Populate an all-false condition-cache entry with the exact analyzer, then execute the
         // same MATCH expression with English. Analyzer semantics must be part of the cache key.

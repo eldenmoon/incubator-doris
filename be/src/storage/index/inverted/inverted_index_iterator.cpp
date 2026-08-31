@@ -27,6 +27,7 @@
 #include "storage/index/inverted/inverted_index_reader.h"
 #include "storage/index/inverted/variant_root_index.h"
 #include "storage/utils.h"
+#include "util/defer_op.h"
 
 namespace doris::segment_v2 {
 
@@ -83,6 +84,20 @@ Status InvertedIndexIterator::read_from_index(const IndexParam& param) {
             (variant_root_index::is_all_values_mode_properties(selected_properties) &&
              selected_properties.contains(
                      std::string(variant_root_index::VARIANT_ROOT_QUERY_PATH_KEY)));
+    if (i_param->requires_recheck && _context->collection_similarity != nullptr) {
+        return Status::Error<ErrorCode::INVERTED_INDEX_EVALUATE_SKIPPED>(
+                "candidate-only inverted index reader cannot provide exact scores");
+    }
+    // A reader that returns candidates rather than an exact result must preserve real row ids for
+    // the residual expression. The count fast path fabricates row ids from a term df, which is
+    // only sound when no recheck follows. Keep this at the selected-reader boundary: callers
+    // already use requires_recheck for residual handling, so duplicating index-mode knowledge in
+    // the planner or each reader would make the two decisions drift.
+    const bool count_on_index_fastpath = _context->count_on_index_fastpath;
+    if (i_param->requires_recheck) {
+        _context->count_on_index_fastpath = false;
+    }
+    DEFER({ _context->count_on_index_fastpath = count_on_index_fastpath; });
     auto* runtime_state = _context->runtime_state;
     if (!i_param->skip_try && reader->type() == InvertedIndexReaderType::BKD) {
         if (runtime_state != nullptr &&

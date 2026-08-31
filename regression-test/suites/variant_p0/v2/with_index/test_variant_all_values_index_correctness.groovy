@@ -15,6 +15,8 @@
 // specific language governing permissions and limitations
 // under the License.
 
+import org.apache.doris.regression.action.ProfileAction
+
 suite("test_variant_all_values_index_correctness", "p0,nonConcurrent") {
     setFeConfigTemporary([enable_variant_v2: true]) {
         def tokenTable = "variant_all_values_token"
@@ -27,7 +29,7 @@ suite("test_variant_all_values_index_correctness", "p0,nonConcurrent") {
                 pathRootTable]
 
         sql "SET default_variant_enable_doc_mode = false"
-        sql "SET default_variant_max_subcolumns_count = 0"
+        sql "SET default_variant_max_subcolumns_count = 1"
         sql "SET default_variant_enable_typed_paths_to_sparse = false"
         sql "SET enable_sql_cache = false"
         sql "SET enable_query_cache = false"
@@ -63,13 +65,16 @@ suite("test_variant_all_values_index_correctness", "p0,nonConcurrent") {
             """
         }
 
-        createTable(tokenTable, "all_values", "english", 0, true)
+        // Keep only the hottest dynamic path materialized. In firstRows, n has eight non-null
+        // values while repo has six, so repo and the lower-frequency paths are deterministically
+        // written into the sparse bucket.
+        createTable(tokenTable, "all_values", "english", 1, true)
         // Omitting variant_index_mode retains the ordinary per-materialized-child layout.
         createTable(tokenChildren, null, "english", 10_000, true)
-        createTable(tokenOracle, null, "english", 0, false)
-        createTable(exactTable, "all_values", "none", 0, true)
+        createTable(tokenOracle, null, "english", 1, false)
+        createTable(exactTable, "all_values", "none", 1, true)
         createTable(exactChildren, null, "none", 10_000, true)
-        createTable(pathRootTable, "root", "english", 0, true)
+        createTable(pathRootTable, "root", "english", 1, true)
 
         def longMessage = ("x" * 300) + " needle"
         def firstRows = """
@@ -100,7 +105,7 @@ suite("test_variant_all_values_index_correctness", "p0,nonConcurrent") {
                         checkpoint, [filtered_rows: "${expectedFilteredRows}"])
                 def result = sql """
                     SELECT id FROM ${tableName}
-                    WHERE CAST(payload['repo'] AS STRING) MATCH_ANY 'doris'
+                    WHERE payload['repo'] MATCH_ANY 'doris'
                     ORDER BY id
                 """
                 assertEquals([1L], result.collect { it[0] })
@@ -113,40 +118,58 @@ suite("test_variant_all_values_index_correctness", "p0,nonConcurrent") {
 
         sql "SET enable_profile = true"
         sql "SET profile_level = 2"
-        def profileTag = "variant_all_values_candidate_profile"
-        profile(profileTag) {
-            run {
-                sql """
-                    /* ${profileTag} */ SELECT id FROM ${tokenTable}
-                    WHERE CAST(payload['repo'] AS STRING) MATCH_ANY 'doris'
-                    ORDER BY id
-                """
-            }
-            check { profileString, exception ->
-                if (exception != null) {
-                    throw exception
-                }
-                def matcher = profileString =~ /RowsInvertedIndexFiltered:(?:&nbsp;|\s)*(\d+)/
-                def filteredRows = 0
-                while (matcher.find()) {
-                    filteredRows += matcher.group(1).toInteger()
-                }
-                assertEquals(8, filteredRows)
-                assertTrue(profileString.contains("InvertedIndexQueryTime"))
-            }
+        def profileTag = "variant_all_values_candidate_profile_${System.nanoTime()}"
+        sql """
+            /* ${profileTag} */ SELECT id FROM ${tokenTable}
+            WHERE payload['repo'] MATCH_ANY 'doris'
+            ORDER BY id
+        """
+        def candidateProfile = new ProfileAction(context).getProfileBySql(
+                profileTag, ["RowsInvertedIndexFiltered", "InvertedIndexQueryTime"])
+        def filteredRowsMatcher = candidateProfile =~
+                /RowsInvertedIndexFiltered:(?:&nbsp;|\s)*(\d+)/
+        def filteredRows = 0
+        while (filteredRowsMatcher.find()) {
+            filteredRows += filteredRowsMatcher.group(1).toInteger()
         }
+        assertEquals(8, filteredRows)
 
-        // A second rowset covers empty/root-null, non-object root values, and a nested path
-        // collision. The scalar roots exercise the dedicated all-values root-value writer path.
+        // A second rowset covers empty/root-null, non-object root values, a nested path collision,
+        // an object-valued logical path, and an array/scalar path that exercises JSONB fallback.
+        // A hot path in the object rows wins the second rowset's sole materialized slot, so
+        // nested/ambiguous/complex remain sparse there as well.
         def secondRows = """
             (14, parse_to_variant('{}')),
             (15, parse_to_variant('null')),
             (16, parse_to_variant('"apache/doris"')),
             (17, parse_to_variant('123')),
-            (18, parse_to_variant('{"nested":{"repo":"apache/doris"}}'))
+            (18, parse_to_variant('{"hot":"sentinel","nested":{"repo":"apache/doris"}}')),
+            (19, parse_to_variant('{"hot":"sentinel","ambiguous":{"leaf":"objectneedle"},"complex":[{"leaf":"jsonbneedle"}]}')),
+            (20, parse_to_variant('{"hot":"sentinel","ambiguous":"objectneedle","complex":"jsonbneedle"}'))
         """
         tables.each { sql "INSERT INTO ${it} VALUES ${secondRows}" }
         sql "SYNC"
+
+        def sparseProfileTag = "variant_all_values_sparse_repo_profile_${System.nanoTime()}"
+        sql """
+            /* ${sparseProfileTag} */
+            SELECT /*+ SET_VAR(enable_inverted_index_query=false,
+                              enable_match_without_inverted_index=true) */ id
+            FROM ${tokenTable}
+            WHERE payload['repo'] MATCH_ANY 'doris'
+            ORDER BY id
+        """
+        def sparseProfile = new ProfileAction(context).getProfileBySql(
+                sparseProfileTag, ["VariantSubtreeSparseIterCount"])
+        def sparseIterMatcher = sparseProfile =~
+                /VariantSubtreeSparseIterCount:(?:&nbsp;|\s)*(\d+)/
+        def sparseIterCount = 0
+        while (sparseIterMatcher.find()) {
+            sparseIterCount += sparseIterMatcher.group(1).toInteger()
+        }
+        assertTrue(sparseIterCount > 0,
+                "repo must be read from a sparse bucket: ${sparseProfile}")
+        sql "SET enable_profile = false"
 
         def ids = { String tableName, String predicate, boolean enableIndex ->
             def hint = enableIndex ? "" :
@@ -216,6 +239,8 @@ suite("test_variant_all_values_index_correctness", "p0,nonConcurrent") {
         def tokenPathPredicates = [
                 "CAST(payload['repo'] AS STRING) MATCH_ANY 'doris'",
                 "CAST(payload['nested']['repo'] AS STRING) MATCH_ANY 'doris'",
+                "CAST(payload['ambiguous'] AS STRING) MATCH_ANY 'objectneedle'",
+                "CAST(payload['complex'] AS STRING) MATCH_ANY 'jsonbneedle'",
                 "CAST(payload['message'] AS STRING) MATCH_ALL 'security fix'",
                 "CAST(payload['repo'] AS STRING) = 'apache/doris'",
                 "CAST(payload['n'] AS BIGINT) = 123",
@@ -251,12 +276,15 @@ suite("test_variant_all_values_index_correctness", "p0,nonConcurrent") {
         assertEquals([8L], tokenPathBefore[
                 "CAST(payload['tags'] AS ARRAY<TEXT>) MATCH_ANY 'doris'"].collect { it[0] })
 
-        def countPredicate = "CAST(payload['repo'] AS STRING) MATCH_ANY 'doris'"
+        // The all-values posting admits seven candidates, but the path residual keeps only id 1.
+        // COUNT_ON_INDEX must consume the selected reader's requires_recheck contract rather than
+        // have FE infer correctness from which index modes happen to exist on the table.
+        def countPredicate = "payload['repo'] MATCH_ANY 'doris'"
         def countBefore = assertCountParity(tokenTable, tokenChildren, countPredicate)
-        assertEquals(1L, countBefore[0][0])
+        qt_all_values_count_on_index "SELECT COUNT(*) FROM ${tokenTable} WHERE ${countPredicate}"
         explain {
             sql("SELECT COUNT(*) FROM ${tokenTable} WHERE ${countPredicate}")
-            notContains "pushAggOp=COUNT_ON_INDEX"
+            contains "pushAggOp=COUNT_ON_INDEX"
         }
 
         test {
@@ -270,6 +298,8 @@ suite("test_variant_all_values_index_correctness", "p0,nonConcurrent") {
         ]
         def exactPathPredicates = [
                 "CAST(payload['repo'] AS STRING) MATCH_ANY 'apache/doris'",
+                "CAST(payload['ambiguous'] AS STRING) = '{\"leaf\":\"objectneedle\"}'",
+                "CAST(payload['complex'] AS STRING) = '[{\"leaf\":\"jsonbneedle\"}]'",
                 "CAST(payload['repo'] AS STRING) = 'apache/doris'",
                 "CAST(payload['repo'] AS STRING) IN ('apache/doris', 'other/repo')",
                 "CAST(payload['n'] AS BIGINT) = 123",
@@ -326,10 +356,10 @@ suite("test_variant_all_values_index_correctness", "p0,nonConcurrent") {
         compactedTables.each { assertFullCompactionSucceeded(it) }
 
         // Result parity can still pass if compaction drops an index and falls back to row
-        // execution. Re-prove both physical layouts on the compacted 18-row segment: the
+        // execution. Re-prove both physical layouts on the compacted 20-row segment: the
         // pathless all-values candidates contain seven rows, while the repo child contains one.
-        assertIndexFilteredRows(tokenTable, 11)
-        assertIndexFilteredRows(tokenChildren, 17)
+        assertIndexFilteredRows(tokenTable, 13)
+        assertIndexFilteredRows(tokenChildren, 19)
         sql "SET enable_match_without_inverted_index = false"
         try {
             assertEquals(rootTokenBefore["payload MATCH_ANY 'doris'"],
@@ -386,9 +416,17 @@ suite("test_variant_all_values_index_correctness", "p0,nonConcurrent") {
             """
         }
         order_qt_all_values_children_match_any compareSources(tokenTable, tokenChildren,
-                "CAST(payload['repo'] AS STRING) MATCH_ANY 'doris'")
+                "payload['repo'] MATCH_ANY 'doris'")
         order_qt_all_values_children_match_all compareSources(tokenTable, tokenChildren,
                 "CAST(payload['message'] AS STRING) MATCH_ALL 'security fix'")
+        order_qt_all_values_children_jsonb_match compareSources(tokenTable, tokenChildren,
+                "CAST(payload['complex'] AS STRING) MATCH_ANY 'jsonbneedle'")
+        order_qt_all_values_children_jsonb_equal compareSources(exactTable, exactChildren,
+                "CAST(payload['complex'] AS STRING) = '[{\"leaf\":\"jsonbneedle\"}]'")
+        order_qt_all_values_children_object_match compareSources(tokenTable, tokenChildren,
+                "CAST(payload['ambiguous'] AS STRING) MATCH_ANY 'objectneedle'")
+        order_qt_all_values_children_object_equal compareSources(exactTable, exactChildren,
+                "CAST(payload['ambiguous'] AS STRING) = '{\"leaf\":\"objectneedle\"}'")
         order_qt_all_values_children_numeric_in compareSources(exactTable, exactChildren,
                 "CAST(payload['n'] AS BIGINT) IN (7, 123)")
         order_qt_all_values_children_null_fallback compareSources(exactTable, exactChildren,

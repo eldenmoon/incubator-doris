@@ -215,9 +215,10 @@ public:
     int64_t get_metadata_size() const override;
 
     // Return shared_ptr to ensure the lifetime of TabletIndex objects
-    TabletIndexes find_subcolumn_tablet_indexes(const TabletColumn& target_column,
-                                                const DataTypePtr& data_type,
-                                                OlapReaderStatistics* stats = nullptr);
+    TabletIndexes find_subcolumn_tablet_indexes(
+            const TabletColumn& target_column, const DataTypePtr& data_type,
+            const ColumnIterator* selected_path_reader = nullptr,
+            OlapReaderStatistics* stats = nullptr);
 
     bool exist_in_sparse_column(const PathInData& path) const;
 

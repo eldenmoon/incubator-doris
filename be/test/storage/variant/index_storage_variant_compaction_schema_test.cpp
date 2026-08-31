@@ -252,4 +252,62 @@ TEST_F(IndexStorageVariantCompactionSchemaTest,
     EXPECT_FALSE(schema_has_extracted_variant_path(*compaction_schema, 2, "gamma"));
 }
 
+TEST_F(IndexStorageVariantCompactionSchemaTest,
+       RootIndexedVariantUsesExtractedSchemaOnlyWhenEverySiblingDirectMerges) {
+    const auto root_properties = [](std::string parser) {
+        return std::map<std::string, std::string> {
+                {"parser", std::move(parser)},
+                {std::string(segment_v2::variant_root_index::VARIANT_INDEX_MODE_KEY),
+                 std::string(segment_v2::variant_root_index::VARIANT_INDEX_MODE_ROOT)},
+                {std::string(segment_v2::variant_root_index::VARIANT_ROOT_FORMAT_VERSION_KEY),
+                 std::string(segment_v2::variant_root_index::VARIANT_ROOT_FORMAT_VERSION_V1)}};
+    };
+
+    VariantColumnSpec variant;
+    variant.unique_id = 2;
+    variant.name = "v";
+    variant.max_subcolumns_count = 1;
+
+    IndexTabletOptions options;
+    options.tablet_id = 110056;
+    options.index_storage_format = InvertedIndexStorageFormatPB::SNII;
+    options.variant_columns = {std::move(variant)};
+    options.inverted_indexes = {
+            IndexSpec::column_index(10056, "idx_v_root_exact", 2, root_properties("none")),
+            IndexSpec::column_index(10057, "idx_v_root_english", 2, root_properties("english"))};
+    ASSERT_TRUE(create_tablet(options).ok());
+
+    auto values = ColumnVariantV2::create();
+    DataTypeVariantV2SerDe serde;
+    DataTypeSerDe::FormatOptions format_options;
+    for (const std::string_view json :
+         {R"({"hot":"h0","payload":{"repo":"r0","nested":{"v":1}}})", R"({"hot":"h1","cold":"c1"})",
+          R"({"hot":"h2","other":[1,2]})"}) {
+        Slice slice(json.data(), json.size());
+        ASSERT_TRUE(serde.deserialize_one_cell_from_json(*values, slice, format_options).ok());
+    }
+    IndexRowsetSpec rowset;
+    rowset.version = 0;
+    rowset.batches.push_back(IndexBatch::single_variant_column(values->get_ptr(), 0));
+    auto rowset_result = write_rowset(rowset);
+    ASSERT_TRUE(rowset_result.has_value()) << rowset_result.error();
+
+    auto partially_merged_schema = std::make_shared<TabletSchema>(*tablet_schema());
+    auto status = variant_util::VariantCompactionUtil::get_extended_compaction_schema(
+            {rowset_result.value()}, partially_merged_schema, {{2, 10056}});
+    ASSERT_TRUE(status.ok()) << status.to_string();
+    EXPECT_FALSE(schema_has_extracted_variant_path(*partially_merged_schema, 2, "hot"));
+    EXPECT_FALSE(schema_has_extracted_variant_path(*partially_merged_schema, 2, "payload"));
+
+    auto fully_merged_schema = std::make_shared<TabletSchema>(*tablet_schema());
+    status = variant_util::VariantCompactionUtil::get_extended_compaction_schema(
+            {rowset_result.value()}, fully_merged_schema, {{2, 10056}, {2, 10057}});
+    ASSERT_TRUE(status.ok()) << status.to_string();
+    EXPECT_TRUE(schema_has_extracted_variant_path(*fully_merged_schema, 2, "hot"));
+    EXPECT_FALSE(schema_has_extracted_variant_path(*fully_merged_schema, 2, "payload"));
+    const auto* path_set_info = fully_merged_schema->try_path_set_info(2);
+    ASSERT_NE(path_set_info, nullptr);
+    EXPECT_TRUE(path_set_info->sparse_path_set.contains(StringRef("payload.repo")));
+}
+
 } // namespace doris::index_storage_test

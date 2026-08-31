@@ -22,6 +22,7 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <unordered_set>
 #include <utility>
 
 #include "common/cast_set.h"
@@ -35,14 +36,59 @@
 #include "core/data_type/data_type_factory.hpp"
 #include "core/data_type/data_type_nullable.h"
 #include "exec/common/variant_util.h"
+#include "storage/index/index_file_writer.h"
 #include "storage/index/indexed_column_writer.h"
+#include "storage/index/inverted/inverted_index_parser.h"
+#include "storage/index/inverted/variant_root_index.h"
 #include "storage/iterator/olap_data_convertor.h"
 #include "storage/rowset/rowset_writer_context.h"
 #include "storage/segment/encoding_info.h"
+#include "storage/segment/variant/v2/variant_root_index_writer.h"
 #include "storage/segment/variant/v2/variant_shredder.h"
 #include "storage/types.h"
 
 namespace doris::segment_v2::variant_writer_helpers {
+
+Status init_variant_root_index_writers(
+        const ColumnWriterOptions& opts, const TabletColumn& parent_column,
+        std::span<const TabletIndex* const> parent_indexes,
+        std::vector<std::unique_ptr<VariantRootIndexWriter>>* root_index_writers,
+        std::vector<VariantRootIndexWriter*>* root_index_writer_ptrs) {
+    DORIS_CHECK(root_index_writers != nullptr);
+    DORIS_CHECK(root_index_writer_ptrs != nullptr);
+    DORIS_CHECK(root_index_writers->empty());
+    DORIS_CHECK(root_index_writer_ptrs->empty());
+
+    std::unordered_set<std::string> analyzer_keys;
+    for (const TabletIndex* index : parent_indexes) {
+        DORIS_CHECK(index != nullptr);
+        if (!variant_root_index::is_root_index(*index)) {
+            continue;
+        }
+        const std::string analyzer_key = build_analyzer_key_from_properties(index->properties());
+        if (!analyzer_keys.emplace(analyzer_key).second) {
+            return Status::InvalidArgument(
+                    "VARIANT column {} has duplicate root index analyzer identity {}",
+                    parent_column.name(), analyzer_key);
+        }
+        if (opts.rowset_ctx->snii_indexes_to_do_compaction.contains(
+                    {parent_column.unique_id(), index->index_id()})) {
+            continue;
+        }
+        if (opts.index_file_writer == nullptr ||
+            opts.index_file_writer->get_storage_format() != InvertedIndexStorageFormatPB::SNII) {
+            return Status::Error<ErrorCode::INVERTED_INDEX_NOT_SUPPORTED>(
+                    "VARIANT root index requires SNII storage format");
+        }
+        auto writer = std::make_unique<VariantRootIndexWriter>(
+                opts.index_file_writer, index, opts.is_direct_load,
+                config::variant_enable_duplicate_json_path_check);
+        RETURN_IF_ERROR(writer->init());
+        root_index_writer_ptrs->push_back(writer.get());
+        root_index_writers->push_back(std::move(writer));
+    }
+    return Status::OK();
+}
 
 bool has_extracted_variant_columns(const TabletSchema& tablet_schema, int parent_column_unique_id) {
     return std::ranges::any_of(tablet_schema.columns(),

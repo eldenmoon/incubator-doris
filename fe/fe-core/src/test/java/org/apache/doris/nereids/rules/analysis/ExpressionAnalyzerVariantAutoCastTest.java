@@ -111,7 +111,7 @@ public class ExpressionAnalyzerVariantAutoCastTest {
     }
 
     @Test
-    public void testMatchKeepsRootVariantButCastsSubcolumn() {
+    public void testMatchKeepsVariantOperands() {
         VariantType variantType = buildVariantType();
         SlotReference slot = buildVariantSlot(variantType);
         Scope scope = new Scope(ImmutableList.of(slot));
@@ -122,11 +122,30 @@ public class ExpressionAnalyzerVariantAutoCastTest {
         Assertions.assertTrue(rootResult.child(0).getDataType().isVariantType());
         Assertions.assertFalse(rootResult.child(0) instanceof Cast);
 
-        ElementAt elementAt = new ElementAt(slot, new StringLiteral("str_name"));
-        MatchAny pathMatch = new MatchAny(elementAt, new StringLiteral("doris"));
-        Expression pathResult = analyze(pathMatch, scope, true);
-        Assertions.assertTrue(pathResult instanceof MatchAny);
-        assertCastElementAt(pathResult.child(0));
+        MatchAny aliasedRootMatch = new MatchAny(new Alias(slot, "data_alias"),
+                new StringLiteral("doris"));
+        Expression aliasedRootResult = analyze(aliasedRootMatch, scope, true);
+        Assertions.assertTrue(aliasedRootResult.child(0) instanceof Alias);
+        Assertions.assertTrue(aliasedRootResult.child(0).getDataType().isVariantType());
+
+        MatchAny nestedAliasedRootMatch = new MatchAny(
+                new Alias(new Alias(slot, "inner_alias"), "outer_alias"),
+                new StringLiteral("doris"));
+        Expression nestedAliasedRootResult = analyze(nestedAliasedRootMatch, scope, true);
+        Assertions.assertTrue(nestedAliasedRootResult.child(0) instanceof Alias);
+        Assertions.assertTrue(nestedAliasedRootResult.child(0).getDataType().isVariantType());
+
+        ElementAt sparsePath = new ElementAt(slot, new StringLiteral("repo"));
+        MatchAny sparsePathMatch = new MatchAny(sparsePath, new StringLiteral("doris"));
+        Expression sparsePathResult = analyze(sparsePathMatch, scope, true);
+        Assertions.assertTrue(sparsePathResult instanceof MatchAny);
+        Assertions.assertTrue(sparsePathResult.child(0) instanceof ElementAt);
+        Assertions.assertTrue(sparsePathResult.child(0).getDataType().isVariantType());
+
+        ElementAt typedPath = new ElementAt(slot, new StringLiteral("str_name"));
+        MatchAny typedPathMatch = new MatchAny(typedPath, new StringLiteral("doris"));
+        Expression typedPathResult = analyze(typedPathMatch, scope, true);
+        assertCastElementAt(typedPathResult.child(0));
     }
 
     @Test

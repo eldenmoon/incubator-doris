@@ -1477,9 +1477,9 @@ Status VariantColumnReader::load_external_meta_once(OlapReaderStatistics* stats,
                                            source_io_ctx);
 }
 
-TabletIndexes VariantColumnReader::find_subcolumn_tablet_indexes(const TabletColumn& column,
-                                                                 const DataTypePtr& data_type,
-                                                                 OlapReaderStatistics* stats) {
+TabletIndexes VariantColumnReader::find_subcolumn_tablet_indexes(
+        const TabletColumn& column, const DataTypePtr& data_type,
+        const ColumnIterator* selected_path_reader, OlapReaderStatistics* stats) {
     TabletSchema::SubColumnInfo sub_column_info;
     const auto& parent_index = _tablet_schema->inverted_indexs(column.parent_unique_id());
     auto relative_path = column.path_info_ptr()->copy_pop_front();
@@ -1540,10 +1540,13 @@ TabletIndexes VariantColumnReader::find_subcolumn_tablet_indexes(const TabletCol
             }
             const bool analyzed =
                     inverted_index::InvertedIndexAnalyzer::should_analyzer(index->properties());
-            if ((analyzed &&
-                 (is_string_type(path_type) ||
-                  (variant_root_index::is_all_values_index(*index) && root_exact_supported))) ||
-                (!analyzed && root_exact_supported)) {
+            const bool all_values_supported =
+                    variant_root_index::is_all_values_index(*index) &&
+                    (root_exact_supported || (path_type == PrimitiveType::TYPE_VARIANT &&
+                                              dynamic_cast<const BinaryColumnExtractIterator*>(
+                                                      selected_path_reader) != nullptr));
+            if ((analyzed && (is_string_type(path_type) || all_values_supported)) ||
+                (!analyzed && (root_exact_supported || all_values_supported))) {
                 sub_column_info.indexes.push_back(
                         variant_root_index::make_query_index(*index, relative_path_str, path_type));
             }

@@ -166,10 +166,10 @@ struct VariantShredder::Impl {
             return Status::OK();
         }
         path_state.last_row_marker = row_marker;
-        for (VariantRootIndexWriter* writer : options.root_index_writers) {
-            DORIS_CHECK(writer != nullptr);
-            RETURN_IF_ERROR(writer->add_leaf(path_state.path.get_path(), value,
-                                             /*is_root_value=*/false));
+        if (!options.root_index_writers.empty()) {
+            RETURN_IF_ERROR(append_variant_root_index_leaf(options.root_index_writers,
+                                                           path_state.path.get_path(), value,
+                                                           /*is_root_value=*/false));
         }
         if (value.is_null()) {
             return Status::OK();
@@ -729,12 +729,11 @@ Status VariantShredder::append(const ColumnVariantV2::ReadView& view, size_t beg
                 if (!status.ok()) {
                     return _impl->fail(std::move(status));
                 }
-            } else {
-                for (VariantRootIndexWriter* writer : _impl->options.root_index_writers) {
-                    status = writer->add_leaf({}, value, /*is_root_value=*/true);
-                    if (!status.ok()) {
-                        return _impl->fail(std::move(status));
-                    }
+            } else if (!_impl->options.root_index_writers.empty()) {
+                status = append_variant_root_index_leaf(_impl->options.root_index_writers, {},
+                                                        value, /*is_root_value=*/true);
+                if (!status.ok()) {
+                    return _impl->fail(std::move(status));
                 }
             }
             for (VariantRootIndexWriter* writer : _impl->options.root_index_writers) {

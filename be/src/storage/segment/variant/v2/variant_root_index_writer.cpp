@@ -17,8 +17,8 @@
 
 #include "storage/segment/variant/v2/variant_root_index_writer.h"
 
-#include <array>
 #include <limits>
+#include <unordered_set>
 
 #include "common/cast_set.h"
 #include "common/exception.h"
@@ -73,50 +73,15 @@ Status VariantRootIndexWriter::begin_document(bool sql_null) {
     _exact_terms.clear();
     _analyzed_values.clear();
     _owned_analyzed_values.clear();
-    _seen_paths.clear();
     return Status::OK();
 }
 
-Status VariantRootIndexWriter::_mark_leaf(std::string_view relative_path, bool* inserted) {
+Status VariantRootIndexWriter::add_path_value(std::string_view relative_path,
+                                              const VariantRef& value, bool is_root_value) {
     DORIS_CHECK(_document_open);
     DORIS_CHECK(!_sql_null);
-    DORIS_CHECK(inserted != nullptr);
-    const auto [unused, was_inserted] = _seen_paths.emplace(relative_path);
-    static_cast<void>(unused);
-    *inserted = was_inserted;
-    if (!was_inserted) {
-        if (_check_duplicate_json_path) {
-            return Status::OK();
-        }
-        return Status::InvalidArgument("may contains duplicated entry : {}", relative_path);
-    }
-    return Status::OK();
-}
-
-Status VariantRootIndexWriter::add_leaf(std::string_view relative_path, const VariantRef& value,
-                                        bool is_root_value) {
-    if (is_root_value && !_all_values) {
-        return Status::OK();
-    }
-    bool inserted = false;
-    RETURN_IF_ERROR(_mark_leaf(relative_path, &inserted));
-    if (!inserted) {
-        return Status::OK();
-    }
-
-    if (_all_values) {
-        if (value.is_null()) {
-            return Status::OK();
-        }
-        std::string serialized;
-        RETURN_IF_ERROR(variant_root_index::serialize_all_value(value, &serialized));
-        if (_should_analyze) {
-            _owned_analyzed_values.push_back(
-                    {.prefix = variant_root_index::encode_all_value_token_term(""),
-                     .value = std::move(serialized)});
-        } else if (serialized.size() <= _ignore_above) {
-            _exact_terms.push_back(variant_root_index::encode_all_value_term(serialized));
-        }
+    DORIS_CHECK(!_all_values);
+    if (is_root_value) {
         return Status::OK();
     }
 
@@ -132,6 +97,20 @@ Status VariantRootIndexWriter::add_leaf(std::string_view relative_path, const Va
         _analyzed_values.push_back(
                 {.prefix = variant_root_index::encode_token_term(relative_path, ""),
                  .value = Slice(string.data, string.size)});
+    }
+    return Status::OK();
+}
+
+Status VariantRootIndexWriter::add_serialized_all_value(std::string_view serialized) {
+    DORIS_CHECK(_document_open);
+    DORIS_CHECK(!_sql_null);
+    DORIS_CHECK(_all_values);
+    if (_should_analyze) {
+        _owned_analyzed_values.push_back(
+                {.prefix = variant_root_index::encode_all_value_token_term(""),
+                 .value = std::string(serialized)});
+    } else if (serialized.size() <= _ignore_above) {
+        _exact_terms.push_back(variant_root_index::encode_all_value_term(serialized));
     }
     return Status::OK();
 }
@@ -159,14 +138,22 @@ Status VariantRootIndexWriter::end_document() {
 namespace {
 
 Status visit_root_index_writers(std::span<VariantRootIndexWriter*> writers, const VariantRef& value,
-                                const PathInData& relative_path) {
+                                const PathInData& relative_path,
+                                std::unordered_set<std::string>* seen_paths,
+                                bool check_duplicate_json_path) {
+    DORIS_CHECK(seen_paths != nullptr);
     if (value.basic_type() != VariantBasicType::OBJECT) {
-        const bool is_root_value = relative_path.empty();
-        for (VariantRootIndexWriter* writer : writers) {
-            DORIS_CHECK(writer != nullptr);
-            RETURN_IF_ERROR(writer->add_leaf(relative_path.get_path(), value, is_root_value));
+        const auto [unused, inserted] = seen_paths->emplace(relative_path.get_path());
+        static_cast<void>(unused);
+        if (!inserted) {
+            if (check_duplicate_json_path) {
+                return Status::OK();
+            }
+            return Status::InvalidArgument("may contains duplicated entry : {}",
+                                           relative_path.get_path());
         }
-        return Status::OK();
+        return append_variant_root_index_leaf(writers, relative_path.get_path(), value,
+                                              relative_path.empty());
     }
     const VariantRef::ObjectView object = value.object_view();
     for (uint32_t index = 0; index < object.size(); ++index) {
@@ -179,16 +166,43 @@ Status visit_root_index_writers(std::span<VariantRootIndexWriter*> writers, cons
         PathInData child_path =
                 builder.append(value.metadata.key_at(field).to_string_view(), false).build();
         child_path = PathInData(child_path.get_path());
-        RETURN_IF_ERROR(visit_root_index_writers(writers, child, child_path));
+        RETURN_IF_ERROR(visit_root_index_writers(writers, child, child_path, seen_paths,
+                                                 check_duplicate_json_path));
     }
     return Status::OK();
 }
 
 } // namespace
 
+Status append_variant_root_index_leaf(std::span<VariantRootIndexWriter*> writers,
+                                      std::string_view relative_path, const VariantRef& value,
+                                      bool is_root_value) {
+    std::string serialized_all_value;
+    bool serialized = false;
+    for (VariantRootIndexWriter* writer : writers) {
+        DORIS_CHECK(writer != nullptr);
+        if (!writer->is_all_values()) {
+            RETURN_IF_ERROR(writer->add_path_value(relative_path, value, is_root_value));
+            continue;
+        }
+        if (value.is_null()) {
+            continue;
+        }
+        if (!serialized) {
+            RETURN_IF_ERROR(variant_root_index::serialize_all_value(value, &serialized_all_value));
+            serialized = true;
+        }
+        RETURN_IF_ERROR(writer->add_serialized_all_value(serialized_all_value));
+    }
+    return Status::OK();
+}
+
 Status append_variant_root_indexes(std::span<VariantRootIndexWriter*> writers,
                                    const ColumnVariantV2::ReadView& view, size_t begin,
                                    size_t length, std::span<const uint8_t> outer_nulls) {
+    DORIS_CHECK(!writers.empty());
+    DORIS_CHECK(writers.front() != nullptr);
+    const bool check_duplicate_json_path = writers.front()->check_duplicate_json_path();
     if (view.is_typed()) {
         return Status::InvalidArgument(
                 "VARIANT root index requires encoded E-state input; caller must ensure_encoded");
@@ -204,16 +218,19 @@ Status append_variant_root_indexes(std::span<VariantRootIndexWriter*> writers,
     }
     for (VariantRootIndexWriter* writer : writers) {
         DORIS_CHECK(writer != nullptr);
+        DORIS_CHECK_EQ(writer->check_duplicate_json_path(), check_duplicate_json_path);
     }
     try {
+        std::unordered_set<std::string> seen_paths;
         for (size_t offset = 0; offset < length; ++offset) {
             const bool outer_null = !outer_nulls.empty() && outer_nulls[offset] != 0;
             for (VariantRootIndexWriter* writer : writers) {
                 RETURN_IF_ERROR(writer->begin_document(outer_null));
             }
             if (!outer_null) {
-                RETURN_IF_ERROR(
-                        visit_root_index_writers(writers, view.value_at(begin + offset), {}));
+                seen_paths.clear();
+                RETURN_IF_ERROR(visit_root_index_writers(writers, view.value_at(begin + offset), {},
+                                                         &seen_paths, check_duplicate_json_path));
             }
             for (VariantRootIndexWriter* writer : writers) {
                 RETURN_IF_ERROR(writer->end_document());
@@ -228,6 +245,7 @@ Status append_variant_root_indexes(std::span<VariantRootIndexWriter*> writers,
 Status append_variant_root_indexes(std::span<VariantRootIndexWriter*> writers,
                                    const ColumnVariant& column, size_t begin, size_t length,
                                    std::span<const uint8_t> outer_nulls) {
+    DORIS_CHECK(!writers.empty());
     if (begin > column.size() || length > column.size() - begin) {
         return Status::InvalidArgument("VARIANT root index range [{}, {}) exceeds input size {}",
                                        begin, begin + length, column.size());
@@ -277,12 +295,6 @@ Status finish_variant_root_indexes(std::span<VariantRootIndexWriter*> writers) {
     return Status::OK();
 }
 
-Status VariantRootIndexWriter::append(const ColumnVariantV2::ReadView& view, size_t begin,
-                                      size_t length, std::span<const uint8_t> outer_nulls) {
-    std::array<VariantRootIndexWriter*, 1> writers = {this};
-    return append_variant_root_indexes(writers, view, begin, length, outer_nulls);
-}
-
 Status VariantRootIndexWriter::finish() {
     DORIS_CHECK(_writer != nullptr);
     DORIS_CHECK(!_document_open);
@@ -306,9 +318,6 @@ size_t VariantRootIndexWriter::size() const {
     for (const OwnedAnalyzedValue& value : _owned_analyzed_values) {
         result += value.prefix.capacity();
         result += value.value.capacity();
-    }
-    for (const std::string& path : _seen_paths) {
-        result += path.capacity();
     }
     return result;
 }

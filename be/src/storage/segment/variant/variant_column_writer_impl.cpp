@@ -25,7 +25,6 @@
 #include <span>
 #include <string_view>
 #include <unordered_map>
-#include <unordered_set>
 #include <variant>
 
 #include "common/cast_set.h"
@@ -54,8 +53,6 @@
 #include "exprs/function_context.h"
 #include "runtime/runtime_state.h"
 #include "storage/index/indexed_column_writer.h"
-#include "storage/index/inverted/inverted_index_parser.h"
-#include "storage/index/inverted/variant_root_index.h"
 #include "storage/iterator/olap_data_convertor.h"
 #include "storage/olap_common.h"
 #include "storage/olap_define.h"
@@ -1327,33 +1324,9 @@ bool VariantV1ColumnWriter::_can_use_nested_group_streaming_compaction() const {
 }
 
 Status VariantV1ColumnWriter::init() {
-    std::unordered_set<std::string> root_analyzer_keys;
-    for (const TabletIndex* index : _opts.inverted_indexes) {
-        if (!variant_root_index::is_root_index(*index)) {
-            continue;
-        }
-        const std::string analyzer_key = build_analyzer_key_from_properties(index->properties());
-        if (!root_analyzer_keys.emplace(analyzer_key).second) {
-            return Status::InvalidArgument(
-                    "VARIANT column {} has duplicate root index analyzer identity {}",
-                    _tablet_column->name(), analyzer_key);
-        }
-        if (_opts.rowset_ctx->snii_indexes_to_do_compaction.contains(
-                    {_tablet_column->unique_id(), index->index_id()})) {
-            continue;
-        }
-        if (_opts.index_file_writer == nullptr ||
-            _opts.index_file_writer->get_storage_format() != InvertedIndexStorageFormatPB::SNII) {
-            return Status::Error<ErrorCode::INVERTED_INDEX_NOT_SUPPORTED>(
-                    "VARIANT root index requires SNII storage format");
-        }
-        auto writer = std::make_unique<VariantRootIndexWriter>(
-                _opts.index_file_writer, index, _opts.is_direct_load,
-                config::variant_enable_duplicate_json_path_check);
-        RETURN_IF_ERROR(writer->init());
-        _root_index_writer_ptrs.push_back(writer.get());
-        _root_index_writers.push_back(std::move(writer));
-    }
+    RETURN_IF_ERROR(variant_writer_helpers::init_variant_root_index_writers(
+            _opts, *_tablet_column, _opts.inverted_indexes, &_root_index_writers,
+            &_root_index_writer_ptrs));
 
     const bool can_use_streaming =
             _root_index_writers.empty() && _can_use_nested_group_streaming_compaction();

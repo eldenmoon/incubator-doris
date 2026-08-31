@@ -36,7 +36,6 @@ import org.apache.doris.nereids.trees.expressions.Cast;
 import org.apache.doris.nereids.trees.expressions.ExprId;
 import org.apache.doris.nereids.trees.expressions.Expression;
 import org.apache.doris.nereids.trees.expressions.IsNull;
-import org.apache.doris.nereids.trees.expressions.Match;
 import org.apache.doris.nereids.trees.expressions.Or;
 import org.apache.doris.nereids.trees.expressions.Slot;
 import org.apache.doris.nereids.trees.expressions.SlotReference;
@@ -410,8 +409,7 @@ public class AggregateStrategies implements ImplementationRuleFactory {
 
         List<Expression> argumentsOfAggregateFunction = normalizeArguments(agg.getAggregateFunctions(), project);
 
-        if (!onlyContainsSlotOrLiteral(argumentsOfAggregateFunction)
-                || requiresVariantAllValuesIndexRecheck(filter, olapScan.getTable())) {
+        if (!onlyContainsSlotOrLiteral(argumentsOfAggregateFunction)) {
             return agg;
         }
 
@@ -425,34 +423,6 @@ public class AggregateStrategies implements ImplementationRuleFactory {
                                 new PhysicalStorageLayerAggregate(
                                         physicalOlapScan, PushDownAggOp.COUNT_ON_MATCH)))
         ));
-    }
-
-    private boolean requiresVariantAllValuesIndexRecheck(LogicalFilter<? extends Plan> filter, OlapTable table) {
-        return filter.getConjuncts().stream()
-                .anyMatch(expression -> requiresVariantAllValuesIndexRecheck(expression, table, null));
-    }
-
-    private boolean requiresVariantAllValuesIndexRecheck(Expression expression, OlapTable table,
-            @Nullable String analyzer) {
-        String effectiveAnalyzer = expression instanceof Match
-                ? ((Match) expression).getAnalyzer().orElse(null) : analyzer;
-        if (expression instanceof SlotReference) {
-            SlotReference slot = (SlotReference) expression;
-            if (!slot.hasSubColPath()) {
-                return false;
-            }
-            Column column = slot.getOriginalColumn().orElse(null);
-            if (column == null || !column.getType().isVariantType()) {
-                return false;
-            }
-            return table.getVariantAllValuesIndex(column, effectiveAnalyzer) != null;
-        }
-        for (Expression child : expression.children()) {
-            if (requiresVariantAllValuesIndexRecheck(child, table, effectiveAnalyzer)) {
-                return true;
-            }
-        }
-        return false;
     }
 
     private List<Expression> normalizeArguments(Set<AggregateFunction> aggregateFunctions,

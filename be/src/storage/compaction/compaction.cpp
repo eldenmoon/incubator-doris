@@ -179,6 +179,12 @@ TsoRange commit_tso_range(const std::vector<RowsetSharedPtr>& rowsets) {
     return range;
 }
 
+bool has_variant_root_index(const TabletSchema& schema) {
+    return std::ranges::any_of(schema.inverted_indexes(), [](const TabletIndex* index) {
+        return segment_v2::variant_root_index::is_root_index(*index);
+    });
+}
+
 } // namespace
 
 Compaction::Compaction(BaseTabletSPtr tablet, const std::string& label)
@@ -299,6 +305,16 @@ Status Compaction::merge_input_rowsets() {
     // Propagate input rowset readers into the rowset writer context before the writer is created.
     // Variant nested-group compaction uses this metadata to enable the streaming writer path.
     ctx.input_rs_readers = input_rs_readers;
+    construct_index_compaction_columns(ctx);
+    if (_enable_vertical_compact_variant_subcolumns &&
+        has_variant_root_index(*_cur_tablet_schema)) {
+        RETURN_IF_ERROR(variant_util::VariantCompactionUtil::get_extended_compaction_schema(
+                _input_rowsets, _cur_tablet_schema, ctx.snii_indexes_to_do_compaction));
+        // The extended schema may expose additional indexable columns. Reuse the same context;
+        // already-selected SNII indexes are skipped below, so successful Root preflight is not
+        // repeated.
+        construct_index_compaction_columns(ctx);
+    }
     RETURN_IF_ERROR(construct_output_rowset_writer(ctx));
 
     // write merged rows to output rowset
@@ -460,6 +476,7 @@ Tablet* CompactionMixin::tablet() {
 Status CompactionMixin::do_compact_ordered_rowsets() {
     RETURN_IF_ERROR(build_basic_info(true));
     RowsetWriterContext ctx;
+    construct_index_compaction_columns(ctx);
     RETURN_IF_ERROR(construct_output_rowset_writer(ctx));
     const auto& output_rowset_dir = tablet()->tablet_path();
 
@@ -557,10 +574,11 @@ Status CompactionMixin::build_basic_info(bool is_ordered_compaction) {
                    [](const RowsetSharedPtr& rowset) { return rowset->rowset_meta(); });
     _cur_tablet_schema = _tablet->tablet_schema_with_merged_max_schema_version(rowset_metas);
 
-    // if enable_vertical_compact_variant_subcolumns is true, we need to compact the variant subcolumns in seperate column groups
-    // so get_extended_compaction_schema will extended the schema for variant columns
+    // Root indexes need per-index eligibility before choosing the data layout, so their schema is
+    // extended in merge_input_rowsets(). Other Variant columns keep the existing early path.
     // for ordered compaction, we don't need to extend the schema for variant columns
-    if (_enable_vertical_compact_variant_subcolumns && !is_ordered_compaction) {
+    if (_enable_vertical_compact_variant_subcolumns && !is_ordered_compaction &&
+        !has_variant_root_index(*_cur_tablet_schema)) {
         RETURN_IF_ERROR(variant_util::VariantCompactionUtil::get_extended_compaction_schema(
                 _input_rowsets, _cur_tablet_schema));
     }
@@ -1210,9 +1228,10 @@ Status Compaction::do_inverted_index_compaction() {
                         if (!merge_status.ok()) {
                             break;
                         }
+                        const auto destination_segment_id =
+                                dest_segment_ids.at(destination_ordinal);
                         auto* destination_writer =
-                                inverted_index_file_writers[cast_set<int>(destination_ordinal)]
-                                        .get();
+                                inverted_index_file_writers.at(destination_segment_id).get();
                         if (merge_eligibility.kind ==
                             snii::compaction::SniiStreamedMergeKind::kCommonGramsT3) {
                             merge_status = destination_writer->add_snii_index_streamed(
@@ -1474,6 +1493,11 @@ static bool check_rowset_has_inverted_index(const RowsetSharedPtr& src_rs, int32
 }
 
 void Compaction::construct_index_compaction_columns(RowsetWriterContext& ctx) {
+    if (!_enable_inverted_index_compaction || !((_tablet->keys_type() == KeysType::UNIQUE_KEYS &&
+                                                 _tablet->enable_unique_key_merge_on_write()) ||
+                                                _tablet->keys_type() == KeysType::DUP_KEYS)) {
+        return;
+    }
     if (_cur_tablet_schema->get_inverted_index_storage_format() ==
         InvertedIndexStorageFormatPB::SNII) {
         std::map<std::string, std::unique_ptr<IndexFileReader>> source_file_readers;
@@ -1486,6 +1510,10 @@ void Compaction::construct_index_compaction_columns(RowsetWriterContext& ctx) {
                 continue;
             }
             const int32_t col_unique_id = col_unique_ids[0];
+            const auto index_key = std::pair {col_unique_id, destination_index->index_id()};
+            if (ctx.snii_indexes_to_do_compaction.contains(index_key)) {
+                continue;
+            }
             if (!_cur_tablet_schema->has_column_unique_id(col_unique_id)) {
                 continue;
             }
@@ -1614,8 +1642,7 @@ void Compaction::construct_index_compaction_columns(RowsetWriterContext& ctx) {
             // raw column -- eligibility is a property of the logical index, not
             // of the column.
             if (eligible) {
-                ctx.snii_indexes_to_do_compaction.emplace(col_unique_id,
-                                                          destination_index->index_id());
+                ctx.snii_indexes_to_do_compaction.emplace(index_key);
             } else {
                 LOG(INFO) << "tablet[" << _tablet->tablet_id() << "] index["
                           << destination_index->index_id()
@@ -1636,6 +1663,9 @@ void Compaction::construct_index_compaction_columns(RowsetWriterContext& ctx) {
             continue;
         }
         auto col_unique_id = col_unique_ids[0];
+        if (ctx.columns_to_do_index_compaction.contains(col_unique_id)) {
+            continue;
+        }
         if (!_cur_tablet_schema->has_column_unique_id(col_unique_id)) {
             LOG(WARNING) << "tablet[" << _tablet->tablet_id() << "] column_unique_id["
                          << col_unique_id << "] not found, will skip index compaction";
@@ -1780,12 +1810,6 @@ void CompactionMixin::find_longest_consecutive_version(std::vector<RowsetSharedP
 }
 
 Status CompactionMixin::construct_output_rowset_writer(RowsetWriterContext& ctx) {
-    // only do index compaction for dup_keys and unique_keys with mow enabled
-    if (_enable_inverted_index_compaction && (((_tablet->keys_type() == KeysType::UNIQUE_KEYS &&
-                                                _tablet->enable_unique_key_merge_on_write()) ||
-                                               _tablet->keys_type() == KeysType::DUP_KEYS))) {
-        construct_index_compaction_columns(ctx);
-    }
     if (_tablet->is_row_binlog_tablet()) {
         ctx.write_binlog_opt().enable = true;
     }
@@ -2095,9 +2119,10 @@ Status CloudCompactionMixin::build_basic_info() {
         _cur_tablet_schema = _tablet->tablet_schema_with_merged_max_schema_version(rowset_metas);
     }
 
-    // if enable_vertical_compact_variant_subcolumns is true, we need to compact the variant subcolumns in seperate column groups
-    // so get_extended_compaction_schema will extended the schema for variant columns
-    if (_enable_vertical_compact_variant_subcolumns) {
+    // Root indexes need per-index eligibility before choosing the data layout, so their schema is
+    // extended in merge_input_rowsets(). Other Variant columns keep the existing early path.
+    if (_enable_vertical_compact_variant_subcolumns &&
+        !has_variant_root_index(*_cur_tablet_schema)) {
         RETURN_IF_ERROR(variant_util::VariantCompactionUtil::get_extended_compaction_schema(
                 _input_rowsets, _cur_tablet_schema));
     }
@@ -2352,13 +2377,6 @@ Status CloudCompactionMixin::set_storage_resource_from_input_rowsets(RowsetWrite
 }
 
 Status CloudCompactionMixin::construct_output_rowset_writer(RowsetWriterContext& ctx) {
-    // only do index compaction for dup_keys and unique_keys with mow enabled
-    if (_enable_inverted_index_compaction && (((_tablet->keys_type() == KeysType::UNIQUE_KEYS &&
-                                                _tablet->enable_unique_key_merge_on_write()) ||
-                                               _tablet->keys_type() == KeysType::DUP_KEYS))) {
-        construct_index_compaction_columns(ctx);
-    }
-
     // Use the storage resource of the previous rowset.
     RETURN_IF_ERROR(set_storage_resource_from_input_rowsets(ctx));
 

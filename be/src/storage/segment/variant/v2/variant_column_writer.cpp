@@ -19,7 +19,6 @@
 
 #include <algorithm>
 #include <limits>
-#include <unordered_set>
 #include <utility>
 
 #include "common/cast_set.h"
@@ -29,8 +28,6 @@
 #include "core/column/column_string.h"
 #include "core/column/variant_v2/column_variant_v2.h"
 #include "exprs/function/parse/variant_jsonb_parse.h"
-#include "storage/index/inverted/inverted_index_parser.h"
-#include "storage/index/inverted/variant_root_index.h"
 #include "storage/iterator/olap_data_convertor.h"
 #include "storage/rowset/rowset_writer_context.h"
 #include "storage/segment/variant/v2/variant_root_index_writer.h"
@@ -118,34 +115,9 @@ Status VariantV2ColumnWriter::init() {
             *_opts.rowset_ctx->tablet_schema, _tablet_column->unique_id());
     const auto parent_indexes =
             _opts.rowset_ctx->tablet_schema->inverted_indexs(_tablet_column->unique_id());
-    std::unordered_set<std::string> root_analyzer_keys;
-    for (const TabletIndex* index : parent_indexes) {
-        if (!variant_root_index::is_root_index(*index)) {
-            continue;
-        }
-        const std::string analyzer_key = build_analyzer_key_from_properties(index->properties());
-        if (!root_analyzer_keys.emplace(analyzer_key).second) {
-            return Status::InvalidArgument(
-                    "VARIANT column {} has duplicate root index analyzer identity {}",
-                    _tablet_column->name(), analyzer_key);
-        }
-        const bool merged_by_compaction = _opts.rowset_ctx->snii_indexes_to_do_compaction.contains(
-                {_tablet_column->unique_id(), index->index_id()});
-        if (merged_by_compaction) {
-            continue;
-        }
-        if (_opts.index_file_writer == nullptr ||
-            _opts.index_file_writer->get_storage_format() != InvertedIndexStorageFormatPB::SNII) {
-            return Status::Error<ErrorCode::INVERTED_INDEX_NOT_SUPPORTED>(
-                    "VARIANT root index requires SNII storage format");
-        }
-        auto writer = std::make_unique<VariantRootIndexWriter>(
-                _opts.index_file_writer, index, _opts.is_direct_load,
-                config::variant_enable_duplicate_json_path_check);
-        RETURN_IF_ERROR(writer->init());
-        _root_index_writer_ptrs.push_back(writer.get());
-        _root_index_writers.push_back(std::move(writer));
-    }
+    RETURN_IF_ERROR(variant_writer_helpers::init_variant_root_index_writers(
+            _opts, *_tablet_column, parent_indexes, &_root_index_writers,
+            &_root_index_writer_ptrs));
     if (_root_only) {
         _root_jsonb = ColumnString::create();
         return Status::OK();

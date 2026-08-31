@@ -300,9 +300,8 @@ Status SniiIndexColumnWriter::_add_value_tokens(const Slice& value, uint32_t doc
                     previous_logical_term_size = event.logical_term.size();
                 }
             } else {
-                std::unique_ptr<lucene::analysis::TokenStream> owned_token_stream(
-                        _analyzer->tokenStream(L"", _char_string_reader));
-                auto* token_stream = owned_token_stream.get();
+                auto* token_stream = _analyzer->reusableTokenStream(L"", _char_string_reader);
+                token_stream->reset();
                 // EXACT InvertedIndexAnalyzer::get_analyse_result semantics,
                 // including the subtle one: an empty token's position increment is
                 // dropped WITH the token (not accumulated into the next).
@@ -316,7 +315,6 @@ Status SniiIndexColumnWriter::_add_value_tokens(const Slice& value, uint32_t doc
                         consume_token(term, position, _has_positions);
                     }
                 }
-                token_stream->close();
             }
         } catch (const CLuceneError& e) {
             return _latch_analysis_failure(Status::Error<ErrorCode::INVERTED_INDEX_ANALYZER_ERROR>(
