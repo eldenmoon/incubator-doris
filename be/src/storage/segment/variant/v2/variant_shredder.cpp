@@ -34,6 +34,7 @@
 #include "exec/common/hash_table/phmap_fwd_decl.h"
 #include "exec/common/variant_util.h"
 #include "exprs/function/parse/variant_jsonb_parse.h"
+#include "storage/segment/variant/v2/variant_root_index_writer.h"
 #include "storage/tablet/tablet_schema.h"
 #include "util/json/path_in_data.h"
 #include "util/jsonb_writer.h"
@@ -165,6 +166,11 @@ struct VariantShredder::Impl {
             return Status::OK();
         }
         path_state.last_row_marker = row_marker;
+        if (!options.root_index_writers.empty()) {
+            RETURN_IF_ERROR(append_variant_root_index_leaf(options.root_index_writers,
+                                                           path_state.path.get_path(), value,
+                                                           /*is_root_value=*/false));
+        }
         if (value.is_null()) {
             return Status::OK();
         }
@@ -211,8 +217,9 @@ struct VariantShredder::Impl {
     Status visit(VariantRef value, MetadataPathCache& metadata_cache, PathIndex path_index,
                  size_t row) {
         if (value.is_null()) {
-            return options.check_duplicate_json_path ? append_leaf(value, path_index, row)
-                                                     : Status::OK();
+            return options.check_duplicate_json_path || !options.root_index_writers.empty()
+                           ? append_leaf(value, path_index, row)
+                           : Status::OK();
         }
         if (value.basic_type() != VariantBasicType::OBJECT) {
             return append_leaf(value, path_index, row);
@@ -693,8 +700,15 @@ Status VariantShredder::append(const ColumnVariantV2::ReadView& view, size_t beg
 
         for (size_t offset = 0; offset < length; ++offset) {
             const bool outer_null = !outer_nulls.empty() && outer_nulls[offset] != 0;
+            for (VariantRootIndexWriter* writer : _impl->options.root_index_writers) {
+                DORIS_CHECK(writer != nullptr);
+                RETURN_IF_ERROR(writer->begin_document(outer_null));
+            }
             if (outer_null) {
                 _impl->append_default_root();
+                for (VariantRootIndexWriter* writer : _impl->options.root_index_writers) {
+                    RETURN_IF_ERROR(writer->end_document());
+                }
                 ++_impl->rows;
                 continue;
             }
@@ -712,6 +726,18 @@ Status VariantShredder::append(const ColumnVariantV2::ReadView& view, size_t beg
             }
             if (value.basic_type() == VariantBasicType::OBJECT) {
                 status = _impl->visit(value, metadata_caches[metadata_index], 0, _impl->rows);
+                if (!status.ok()) {
+                    return _impl->fail(std::move(status));
+                }
+            } else if (!_impl->options.root_index_writers.empty()) {
+                status = append_variant_root_index_leaf(_impl->options.root_index_writers, {},
+                                                        value, /*is_root_value=*/true);
+                if (!status.ok()) {
+                    return _impl->fail(std::move(status));
+                }
+            }
+            for (VariantRootIndexWriter* writer : _impl->options.root_index_writers) {
+                status = writer->end_document();
                 if (!status.ok()) {
                     return _impl->fail(std::move(status));
                 }

@@ -1022,9 +1022,6 @@ public class ExpressionAnalyzer extends SubExprAnalyzer<ExpressionRewriteContext
                     right.toSql(), match.toSql(), right.getDataType()));
         }
 
-        if (left.getDataType().isVariantType()) {
-            left = new Cast(left, right.getDataType());
-        }
         return match.withChildren(left, right);
     }
 

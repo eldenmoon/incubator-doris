@@ -41,6 +41,8 @@
 #include "exec/common/variant_util.h"
 #include "io/fs/file_reader.h"
 #include "runtime/descriptors.h"
+#include "storage/index/inverted/analyzer/analyzer.h"
+#include "storage/index/inverted/variant_root_index.h"
 #include "storage/key_coder.h"
 #include "storage/olap_common.h"
 #include "storage/segment/column_meta_accessor.h"
@@ -588,10 +590,16 @@ bool VariantColumnReader::_has_prefix_path_unlocked(const PathInData& relative_p
     return false;
 }
 
-bool VariantColumnReader::_need_read_flat_leaves(const StorageReadOptions* opts) {
+bool VariantColumnReader::_need_read_flat_leaves(const StorageReadOptions* opts,
+                                                 const TabletColumn& target_col) {
+    const int32_t parent_uid = target_col.is_extracted_column() ? target_col.parent_unique_id()
+                                                                : target_col.unique_id();
     return opts != nullptr && opts->tablet_schema != nullptr &&
            std::ranges::any_of(opts->tablet_schema->columns(),
-                               [](const auto& column) { return column->is_extracted_column(); }) &&
+                               [&](const auto& column) {
+                                   return column->is_extracted_column() &&
+                                          column->parent_unique_id() == parent_uid;
+                               }) &&
            is_compaction_or_checksum_reader(opts);
 }
 
@@ -778,7 +786,7 @@ bool VariantColumnReader::_try_build_nested_group_plan(ReadPlan* plan,
         return false;
     }
 
-    if (_need_read_flat_leaves(opt)) {
+    if (_need_read_flat_leaves(opt, target_col)) {
         return false;
     }
     return _try_fill_nested_group_plan(plan, target_col, opt, col_uid, relative_path);
@@ -851,7 +859,7 @@ Status VariantColumnReader::_build_read_plan(ReadPlan* plan, const TabletColumn&
     // get the correct data if has extracted columns.
     // Flat-leaf compaction/checksum mode: delegate to dedicated planner which handles locking
     // and external meta loading internally.
-    if (_need_read_flat_leaves(opt)) {
+    if (_need_read_flat_leaves(opt, target_col)) {
         return _build_read_plan_flat_leaves(plan, target_col, opt, column_reader_cache,
                                             binary_column_cache_ptr);
     }
@@ -1469,9 +1477,9 @@ Status VariantColumnReader::load_external_meta_once(OlapReaderStatistics* stats,
                                            source_io_ctx);
 }
 
-TabletIndexes VariantColumnReader::find_subcolumn_tablet_indexes(const TabletColumn& column,
-                                                                 const DataTypePtr& data_type,
-                                                                 OlapReaderStatistics* stats) {
+TabletIndexes VariantColumnReader::find_subcolumn_tablet_indexes(
+        const TabletColumn& column, const DataTypePtr& data_type,
+        const ColumnIterator* selected_path_reader, OlapReaderStatistics* stats) {
     TabletSchema::SubColumnInfo sub_column_info;
     const auto& parent_index = _tablet_schema->inverted_indexs(column.parent_unique_id());
     auto relative_path = column.path_info_ptr()->copy_pop_front();
@@ -1513,8 +1521,36 @@ TabletIndexes VariantColumnReader::find_subcolumn_tablet_indexes(const TabletCol
 
     // Otherwise, inherit index from the VARIANT parent column.
     if (!parent_index.empty() &&
-        index_data_type->get_primitive_type() != PrimitiveType::TYPE_VARIANT &&
         index_data_type->get_primitive_type() != PrimitiveType::TYPE_MAP /*SPARSE COLUMN*/) {
+        const PrimitiveType path_type = remove_nullable(index_data_type)->get_primitive_type();
+        const bool root_exact_supported =
+                is_string_type(path_type) || path_type == PrimitiveType::TYPE_BOOLEAN ||
+                path_type == PrimitiveType::TYPE_TINYINT ||
+                path_type == PrimitiveType::TYPE_SMALLINT || path_type == PrimitiveType::TYPE_INT ||
+                path_type == PrimitiveType::TYPE_BIGINT ||
+                path_type == PrimitiveType::TYPE_UINT32 ||
+                path_type == PrimitiveType::TYPE_UINT64 || path_type == PrimitiveType::TYPE_FLOAT ||
+                path_type == PrimitiveType::TYPE_DOUBLE;
+        for (const TabletIndex* index : parent_index) {
+            // Root indexes contain scalar leaves only. Array equality and membership predicates
+            // need the ordinary child index (when present) or a scalar residual; binding them to
+            // root terms would turn a safe fallback into a false empty result.
+            if (!variant_root_index::is_root_index(*index)) {
+                continue;
+            }
+            const bool analyzed =
+                    inverted_index::InvertedIndexAnalyzer::should_analyzer(index->properties());
+            const bool all_values_supported =
+                    variant_root_index::is_all_values_index(*index) &&
+                    (root_exact_supported || (path_type == PrimitiveType::TYPE_VARIANT &&
+                                              dynamic_cast<const BinaryColumnExtractIterator*>(
+                                                      selected_path_reader) != nullptr));
+            if ((analyzed && (is_string_type(path_type) || all_values_supported)) ||
+                (!analyzed && (root_exact_supported || all_values_supported))) {
+                sub_column_info.indexes.push_back(
+                        variant_root_index::make_query_index(*index, relative_path_str, path_type));
+            }
+        }
         // type in column maynot be real type, so use data_type to get the real type
         PathInData index_path {*column.path_info_ptr()};
         TabletColumn target_column =
@@ -1522,7 +1558,12 @@ TabletIndexes VariantColumnReader::find_subcolumn_tablet_indexes(const TabletCol
                                                  {.unique_id = -1,
                                                   .parent_unique_id = column.parent_unique_id(),
                                                   .path_info = index_path});
-        variant_util::inherit_index(parent_index, sub_column_info.indexes, target_column);
+        if (index_data_type->get_primitive_type() != PrimitiveType::TYPE_VARIANT) {
+            TabletIndexes inherited_indexes;
+            variant_util::inherit_index(parent_index, inherited_indexes, target_column);
+            sub_column_info.indexes.insert(sub_column_info.indexes.end(), inherited_indexes.begin(),
+                                           inherited_indexes.end());
+        }
         for (const auto& index : sub_column_info.indexes) {
             add_variant_search_binding_diagnostic(
                     stats,

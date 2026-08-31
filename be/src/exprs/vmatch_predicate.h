@@ -57,6 +57,7 @@ public:
     const std::string& expr_name() const override;
     const std::string& function_name() const;
     [[nodiscard]] const std::string& get_analyzer_key() const override;
+    uint64_t get_digest(uint64_t seed) const override;
     [[nodiscard]] const InvertedIndexAnalyzerCtx* query_analyzer_ctx() const override {
         return _analyzer_ctx.get();
     }
@@ -76,5 +77,6 @@ private:
 
     // Runtime context: holds raw pointer to analyzer and necessary runtime info
     InvertedIndexAnalyzerCtxSPtr _analyzer_ctx;
+    uint64_t _analyzer_semantics_digest = 0;
 };
 } // namespace doris

@@ -88,6 +88,7 @@
 #include "storage/index/index_reader_helper.h"
 #include "storage/index/indexed_column_reader.h"
 #include "storage/index/inverted/inverted_index_reader.h"
+#include "storage/index/inverted/variant_root_index.h"
 #include "storage/index/ordinal_page_index.h"
 #include "storage/index/primary_key_index.h"
 #include "storage/index/short_key_index.h"
@@ -851,7 +852,11 @@ Status SegmentIterator::_get_row_ranges_by_column_conditions() {
                             (*it)->root().get());
                     if (result != nullptr) {
                         _row_bitmap &= *result->get_data_bitmap();
-                        it = _common_expr_ctxs_push_down.erase(it);
+                        if (result->requires_recheck()) {
+                            ++it;
+                        } else {
+                            it = _common_expr_ctxs_push_down.erase(it);
+                        }
                     }
                 } else {
                     ++it;
@@ -1500,8 +1505,10 @@ Status SegmentIterator::_apply_inverted_index_on_column_predicate(
     if (!_check_apply_by_inverted_index(pred)) {
         remaining_predicates.emplace_back(pred);
     } else {
-        bool need_remaining_after_evaluate = _column_has_fulltext_index(pred->column_id()) &&
-                                             PredicateTypeTraits::is_equal_or_list(pred->type());
+        bool need_remaining_after_evaluate =
+                (_column_has_fulltext_index(pred->column_id()) &&
+                 PredicateTypeTraits::is_equal_or_list(pred->type())) ||
+                _index_iterators[pred->column_id()]->is_variant_root_index();
         Status res =
                 pred->evaluate(_storage_name_and_type[pred->column_id()],
                                _index_iterators[pred->column_id()].get(), num_rows(), &_row_bitmap);
@@ -1767,7 +1774,7 @@ Status SegmentIterator::_init_index_iterators() {
                     }
                 }
                 inverted_indexs_holder = variant_reader->find_subcolumn_tablet_indexes(
-                        column, data_type, _opts.stats);
+                        column, data_type, _column_iterators[cid].get(), _opts.stats);
                 // Extract raw pointers from shared_ptr for iteration
                 for (const auto& index_ptr : inverted_indexs_holder) {
                     inverted_indexs.push_back(index_ptr.get());
@@ -1775,7 +1782,17 @@ Status SegmentIterator::_init_index_iterators() {
             }
             // If the column is not an extracted column, we can directly get the inverted index metadata from the tablet schema.
             else {
-                inverted_indexs = _segment->_tablet_schema->inverted_indexs(column);
+                if (column.is_variant_type()) {
+                    const auto parent_indexes =
+                            _segment->_tablet_schema->inverted_indexs(column.unique_id());
+                    for (const TabletIndex* index : parent_indexes) {
+                        if (variant_root_index::is_root_index(*index)) {
+                            inverted_indexs.push_back(index);
+                        }
+                    }
+                } else {
+                    inverted_indexs = _segment->_tablet_schema->inverted_indexs(column);
+                }
             }
             if (column.is_extracted_column() && inverted_indexs.empty() && _opts.stats != nullptr) {
                 const auto relative_path = column.path_info_ptr()->copy_pop_front().get_path();
@@ -3190,6 +3207,9 @@ void SegmentIterator::_output_index_result_column(const VExprContextSPtrs& expr_
         for (auto& inverted_index_result_bitmap_for_expr : index_ctx->get_index_result_bitmap()) {
             const auto* expr = inverted_index_result_bitmap_for_expr.first;
             const auto& result_bitmap = inverted_index_result_bitmap_for_expr.second;
+            if (result_bitmap.requires_recheck()) {
+                continue;
+            }
             const auto& index_result_bitmap = result_bitmap.get_data_bitmap();
             auto index_result_column = ColumnUInt8::create();
             ColumnUInt8::Container& vec_match_pred = index_result_column->get_data();

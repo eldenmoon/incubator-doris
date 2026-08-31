@@ -55,6 +55,8 @@ public:
 
     virtual Status read_null_bitmap(InvertedIndexQueryCacheHandle* cache_handle) = 0;
     virtual Result<bool> has_null() = 0;
+    virtual bool is_variant_root_index() const { return false; }
+    virtual bool has_variant_all_values_reader(InvertedIndexReaderType) const { return false; }
 
     void set_context(const IndexQueryContextPtr& context) { _context = context; }
     IndexQueryContextPtr get_context() const { return _context; }

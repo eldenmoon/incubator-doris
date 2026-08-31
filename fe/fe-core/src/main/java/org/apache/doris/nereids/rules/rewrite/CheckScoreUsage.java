@@ -94,7 +94,7 @@ public class CheckScoreUsage implements RewriteRuleFactory {
                 }
                 SlotReference slot = (SlotReference) match.left();
                 Index selectedIndex = resolveSelectedInvertedIndex(
-                        slot, match.getAnalyzer().orElse(null));
+                        slot, match.getAnalyzer().orElse(null), true);
                 checkSelectedIndexPolicyAdmission(selectedIndex, scan, indexPolicyMgr);
             }
 
@@ -108,14 +108,15 @@ public class CheckScoreUsage implements RewriteRuleFactory {
                     SlotReference slot = (SlotReference) slotExpression;
                     // SEARCH has no explicit analyzer option. Mirror the implicit index selection in
                     // ExpressionTranslator.visitSearchExpression so admission checks the same index.
-                    Index selectedIndex = resolveSelectedInvertedIndex(slot, null);
+                    Index selectedIndex = resolveSelectedInvertedIndex(slot, null, false);
                     checkSelectedIndexPolicyAdmission(selectedIndex, scan, indexPolicyMgr);
                 }
             }
         }
     }
 
-    private static Index resolveSelectedInvertedIndex(SlotReference slot, String analyzer) {
+    private static Index resolveSelectedInvertedIndex(SlotReference slot, String analyzer,
+            boolean rootMatch) {
         Optional<OlapTable> originalTable = slot.getOriginalTable()
                 .filter(OlapTable.class::isInstance)
                 .map(OlapTable.class::cast);
@@ -124,8 +125,11 @@ public class CheckScoreUsage implements RewriteRuleFactory {
             // The BE remains the authoritative admission gate when rewrite metadata is lost.
             return null;
         }
-        return originalTable.get().getInvertedIndex(
-                originalColumn.get(), slot.getSubPath(), analyzer);
+        Column column = originalColumn.get();
+        if (rootMatch && column.getType().isVariantType() && !slot.hasSubColPath()) {
+            return originalTable.get().getVariantAllValuesIndex(column, analyzer);
+        }
+        return originalTable.get().getInvertedIndex(column, slot.getSubPath(), analyzer);
     }
 
     private static void checkSelectedIndexPolicyAdmission(Index selectedIndex,

@@ -146,13 +146,20 @@ public:
         auto data_type_with_name = data_type_with_names[0];
         std::shared_ptr<roaring::Roaring> roaring = std::make_shared<roaring::Roaring>();
         std::shared_ptr<roaring::Roaring> null_bitmap = std::make_shared<roaring::Roaring>();
+        bool requires_recheck = false;
 
         if (iter == nullptr) {
             return Status::OK();
         }
-        if (!segment_v2::IndexReaderHelper::has_string_or_bkd_index(iter)) {
+        if (!segment_v2::IndexReaderHelper::has_string_or_bkd_index(iter) &&
+            !iter->has_variant_all_values_reader(segment_v2::InvertedIndexReaderType::FULLTEXT)) {
             //NOT support in list when parser is FULLTEXT for expr inverted index evaluate.
             return Status::OK();
+        }
+        if constexpr (negative) {
+            if (iter->is_variant_root_index()) {
+                return Status::OK();
+            }
         }
         if (iter->has_null()) {
             segment_v2::InvertedIndexQueryCacheHandle null_bitmap_cache_handle;
@@ -181,8 +188,9 @@ public:
             param.analyzer_ctx = analyzer_ctx;
             RETURN_IF_ERROR(iter->read_from_index(segment_v2::IndexParam {&param}));
             *roaring |= *param.roaring;
+            requires_recheck = requires_recheck || param.requires_recheck;
         }
-        segment_v2::InvertedIndexResultBitmap result(roaring, null_bitmap);
+        segment_v2::InvertedIndexResultBitmap result(roaring, null_bitmap, requires_recheck);
         bitmap_result = result;
         bitmap_result.mask_out_null();
         if constexpr (negative) {

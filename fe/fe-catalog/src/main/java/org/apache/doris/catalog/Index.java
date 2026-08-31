@@ -82,7 +82,10 @@ public class Index implements Writable {
                     String supportPhraseKey = InvertedIndexProperties
                             .INVERTED_INDEX_SUPPORT_PHRASE_KEY;
                     if (!this.properties.containsKey(supportPhraseKey)) {
-                        this.properties.put(supportPhraseKey, "true");
+                        this.properties.put(supportPhraseKey,
+                                InvertedIndexProperties.isVariantRootIndexMode(
+                                        this.properties.get(InvertedIndexProperties.VARIANT_INDEX_MODE_KEY))
+                                        ? "false" : "true");
                     }
                 }
                 if (this.properties.containsKey(InvertedIndexProperties.INVERTED_INDEX_PARSER_KEY)
@@ -322,10 +325,15 @@ public class Index implements Writable {
      */
     public boolean isAnalyzedInvertedIndex() {
         return indexType == IndexType.INVERTED
+                && InvertedIndexProperties.isAnalyzed(properties);
+    }
+
+    public boolean isVariantAllValuesIndex() {
+        return indexType == IndexType.INVERTED
                 && properties != null
-                && (properties.containsKey(InvertedIndexProperties.INVERTED_INDEX_PARSER_KEY)
-                || properties.containsKey(InvertedIndexProperties.INVERTED_INDEX_PARSER_KEY_ALIAS)
-                || properties.containsKey(InvertedIndexProperties.INVERTED_INDEX_ANALYZER_NAME_KEY)
-                || properties.containsKey(InvertedIndexProperties.INVERTED_INDEX_NORMALIZER_NAME_KEY));
+                && InvertedIndexProperties.VARIANT_INDEX_MODE_ALL_VALUES.equals(
+                        properties.get(InvertedIndexProperties.VARIANT_INDEX_MODE_KEY))
+                && InvertedIndexProperties.VARIANT_ROOT_FORMAT_VERSION_V1.equals(
+                        properties.get(InvertedIndexProperties.VARIANT_ROOT_FORMAT_VERSION_KEY));
     }
 }

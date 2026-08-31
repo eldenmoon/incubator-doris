@@ -81,5 +81,31 @@ TEST(VMatchPredicateTest, ResolvesBuiltinAndFallbackExecutionModes) {
     }
 }
 
+TEST(VMatchPredicateTest, DigestIncludesAnalyzerSemantics) {
+    constexpr uint64_t seed = 0x5A17;
+    const auto digest = [&](const TExprNode& node) {
+        return VMatchPredicate::create_shared(node)->get_digest(seed);
+    };
+
+    const auto english = make_match_node("english", "english");
+    EXPECT_NE(digest(english), digest(make_match_node("none", "none")));
+
+    auto parser_mode = english;
+    parser_mode.match_predicate.__set_parser_mode("coarse_grained");
+    EXPECT_NE(digest(english), digest(parser_mode));
+
+    auto lower_case = english;
+    lower_case.match_predicate.__set_parser_lowercase(false);
+    EXPECT_NE(digest(english), digest(lower_case));
+
+    auto stopwords = english;
+    stopwords.match_predicate.__set_parser_stopwords("none");
+    EXPECT_NE(digest(english), digest(stopwords));
+
+    auto char_filter = english;
+    char_filter.match_predicate.__set_char_filter_map({{"pattern", "[0-9]+"}});
+    EXPECT_NE(digest(english), digest(char_filter));
+}
+
 } // namespace
 } // namespace doris

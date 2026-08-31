@@ -42,6 +42,10 @@ PredicateType NullPredicate::type() const {
 Status NullPredicate::evaluate(const IndexFieldNameAndTypePair& name_with_type,
                                IndexIterator* iterator, uint32_t num_rows,
                                roaring::Roaring* bitmap) const {
+    if (iterator->is_variant_root_index()) {
+        return Status::Error<ErrorCode::INVERTED_INDEX_EVALUATE_SKIPPED>(
+                "VARIANT root index does not index path NULL semantics");
+    }
     if (iterator->has_null()) {
         InvertedIndexQueryCacheHandle null_bitmap_cache_handle;
         RETURN_IF_ERROR(iterator->read_null_bitmap(&null_bitmap_cache_handle));

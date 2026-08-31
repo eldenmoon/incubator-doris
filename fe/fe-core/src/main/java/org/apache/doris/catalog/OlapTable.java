@@ -4019,19 +4019,24 @@ public class OlapTable extends Table implements MTMVRelatedTableIf, GsonPostProc
         return getInvertedIndex(column, subPath, null);
     }
 
+    public Index getVariantAllValuesIndex(Column column, String analyzer) {
+        if (indexes == null) {
+            return null;
+        }
+        List<Index> candidates = getInvertedIndexes(column).stream()
+                .filter(Index::isVariantAllValuesIndex)
+                .collect(Collectors.toList());
+        List<Index> filteredCandidates = filterIndexesByAnalyzer(candidates, analyzer);
+        return filteredCandidates.size() == 1 ? filteredCandidates.get(0)
+                : filteredCandidates.stream().filter(Index::isAnalyzedInvertedIndex)
+                        .findFirst().orElse(null);
+    }
+
     public Index getInvertedIndex(Column column, List<String> subPath, String analyzer) {
         if (indexes == null) {
             return null;
         }
-        List<Index> invertedIndexes = new ArrayList<>();
-        for (Index index : indexes.getIndexes()) {
-            if (index.getIndexType() == IndexType.INVERTED) {
-                List<String> columns = index.getColumns();
-                if (columns != null && !columns.isEmpty() && column.getName().equals(columns.get(0))) {
-                    invertedIndexes.add(index);
-                }
-            }
-        }
+        List<Index> invertedIndexes = getInvertedIndexes(column);
 
         List<Index> filteredInvertedIndexes = filterIndexesByAnalyzer(invertedIndexes, analyzer);
 
@@ -4082,6 +4087,19 @@ public class OlapTable extends Table implements MTMVRelatedTableIf, GsonPostProc
                                         : filteredFieldPatternIndexes.stream()
                                         .filter(Index::isAnalyzedInvertedIndex).findFirst().orElse(null);
         }
+    }
+
+    private List<Index> getInvertedIndexes(Column column) {
+        List<Index> invertedIndexes = new ArrayList<>();
+        for (Index index : indexes.getIndexes()) {
+            if (index.getIndexType() == IndexType.INVERTED) {
+                List<String> columns = index.getColumns();
+                if (columns != null && !columns.isEmpty() && column.getName().equals(columns.get(0))) {
+                    invertedIndexes.add(index);
+                }
+            }
+        }
+        return invertedIndexes;
     }
 
     /**

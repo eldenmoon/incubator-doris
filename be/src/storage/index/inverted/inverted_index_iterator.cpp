@@ -18,13 +18,16 @@
 #include "storage/index/inverted/inverted_index_iterator.h"
 
 #include <memory>
+#include <ranges>
 
 #include "common/cast_set.h"
 #include "common/logging.h"
 #include "storage/index/inverted/inverted_index_cache.h"
 #include "storage/index/inverted/inverted_index_parser.h"
 #include "storage/index/inverted/inverted_index_reader.h"
+#include "storage/index/inverted/variant_root_index.h"
 #include "storage/utils.h"
+#include "util/defer_op.h"
 
 namespace doris::segment_v2 {
 
@@ -75,6 +78,26 @@ Status InvertedIndexIterator::read_from_index(const IndexParam& param) {
         return Status::Error<ErrorCode::INVERTED_INDEX_CLUCENE_ERROR>(
                 "inverted index reader is null");
     }
+    const auto& selected_properties = reader->get_index_properties();
+    i_param->requires_recheck =
+            variant_root_index::is_path_root_mode_properties(selected_properties) ||
+            (variant_root_index::is_all_values_mode_properties(selected_properties) &&
+             selected_properties.contains(
+                     std::string(variant_root_index::VARIANT_ROOT_QUERY_PATH_KEY)));
+    if (i_param->requires_recheck && _context->collection_similarity != nullptr) {
+        return Status::Error<ErrorCode::INVERTED_INDEX_EVALUATE_SKIPPED>(
+                "candidate-only inverted index reader cannot provide exact scores");
+    }
+    // A reader that returns candidates rather than an exact result must preserve real row ids for
+    // the residual expression. The count fast path fabricates row ids from a term df, which is
+    // only sound when no recheck follows. Keep this at the selected-reader boundary: callers
+    // already use requires_recheck for residual handling, so duplicating index-mode knowledge in
+    // the planner or each reader would make the two decisions drift.
+    const bool count_on_index_fastpath = _context->count_on_index_fastpath;
+    if (i_param->requires_recheck) {
+        _context->count_on_index_fastpath = false;
+    }
+    DEFER({ _context->count_on_index_fastpath = count_on_index_fastpath; });
     auto* runtime_state = _context->runtime_state;
     if (!i_param->skip_try && reader->type() == InvertedIndexReaderType::BKD) {
         if (runtime_state != nullptr &&
@@ -132,6 +155,25 @@ Result<bool> InvertedIndexIterator::has_null() {
     return reader->has_null();
 }
 
+bool InvertedIndexIterator::is_variant_root_index() const {
+    return std::ranges::any_of(_readers, [](const InvertedIndexReaderPtr& reader) {
+        return variant_root_index::is_root_mode_properties(reader->get_index_properties());
+    });
+}
+
+bool InvertedIndexIterator::has_variant_all_values_reader(InvertedIndexReaderType type) const {
+    for (size_t i = 0; i < _selection_candidates.size(); ++i) {
+        if (_selection_candidates[i].reader_type == type) {
+            DORIS_CHECK(i < _readers.size());
+            if (variant_root_index::is_all_values_mode_properties(
+                        _readers[i]->get_index_properties())) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
 Status InvertedIndexIterator::try_read_from_inverted_index(const InvertedIndexReaderPtr& reader,
                                                            const std::string& column_name,
                                                            const Field& query_value,
@@ -150,7 +192,7 @@ Status InvertedIndexIterator::try_read_from_inverted_index(const InvertedIndexRe
 
 Result<InvertedIndexReaderPtr> InvertedIndexIterator::select_best_reader(
         const DataTypePtr& column_type, InvertedIndexQueryType query_type,
-        const std::string& analyzer_key) {
+        const std::string& analyzer_key) const {
     const std::string normalized_key = ensure_normalized_key(analyzer_key);
     // The column type only disambiguates between several indexes on the same field; with a
     // single candidate the selection is already determined. Callers that have no runtime type
@@ -162,7 +204,8 @@ Result<InvertedIndexReaderPtr> InvertedIndexIterator::select_best_reader(
                     "column_type is required to select among {} inverted indexes",
                     _selection_candidates.size()));
         }
-        field_type = get_inverted_index_leaf_field_type(column_type);
+        field_type = is_variant_root_index() ? FieldType::OLAP_FIELD_TYPE_STRING
+                                             : get_inverted_index_leaf_field_type(column_type);
     }
     auto selection = select_best_inverted_index_candidate(_selection_candidates, _key_to_entries,
                                                           field_type, query_type, normalized_key);

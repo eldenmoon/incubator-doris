@@ -89,6 +89,18 @@ public class InvertedIndexUtil {
 
     public static String INVERTED_INDEX_PARSER_FIELD_PATTERN_KEY =
             InvertedIndexProperties.INVERTED_INDEX_PARSER_FIELD_PATTERN_KEY;
+    public static final String VARIANT_INDEX_MODE_KEY = InvertedIndexProperties.VARIANT_INDEX_MODE_KEY;
+    public static final String VARIANT_INDEX_MODE_ROOT = InvertedIndexProperties.VARIANT_INDEX_MODE_ROOT;
+    public static final String VARIANT_INDEX_MODE_ALL_VALUES =
+            InvertedIndexProperties.VARIANT_INDEX_MODE_ALL_VALUES;
+    public static final String VARIANT_ROOT_FORMAT_VERSION_KEY =
+            InvertedIndexProperties.VARIANT_ROOT_FORMAT_VERSION_KEY;
+    public static final String VARIANT_ROOT_FORMAT_VERSION_V1 =
+            InvertedIndexProperties.VARIANT_ROOT_FORMAT_VERSION_V1;
+
+    public static boolean isVariantRootIndexMode(String mode) {
+        return InvertedIndexProperties.isVariantRootIndexMode(mode);
+    }
 
     public static String getInvertedIndexFieldPattern(Map<String, String> properties) {
         return InvertedIndexProperties.getInvertedIndexFieldPattern(properties);
@@ -210,7 +222,9 @@ public class InvertedIndexUtil {
                 INVERTED_INDEX_DICT_COMPRESSION_KEY,
                 INVERTED_INDEX_ANALYZER_NAME_KEY,
                 INVERTED_INDEX_NORMALIZER_NAME_KEY,
-                INVERTED_INDEX_PARSER_FIELD_PATTERN_KEY
+                INVERTED_INDEX_PARSER_FIELD_PATTERN_KEY,
+                VARIANT_INDEX_MODE_KEY,
+                VARIANT_ROOT_FORMAT_VERSION_KEY
         ));
 
         for (String key : properties.keySet()) {

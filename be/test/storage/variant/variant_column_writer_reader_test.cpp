@@ -50,6 +50,7 @@
 #include "runtime/runtime_profile.h"
 #include "storage/index/index_file_writer.h"
 #include "storage/index/inverted/inverted_index_desc.h"
+#include "storage/index/inverted/variant_root_index.h"
 #include "storage/rowset/beta_rowset.h"
 #include "storage/rowset/rowset_factory.h"
 #include "storage/segment/column_meta_accessor.h"
@@ -1081,6 +1082,7 @@ TEST(VariantShredderTest, ChunkedBinaryTransposeMatchesSingleChunkForOrdinaryAnd
                 .sparse_bucket_count = 2,
                 .doc_bucket_count = 2,
                 .doc_materialization_min_rows = sparse_masks.size() + 1,
+                .root_index_writers = {},
         };
         segment_v2::VariantShredder single_chunk(options);
         ASSERT_TRUE(single_chunk.append(values->read_view(), 0, values->size()).ok());
@@ -3083,6 +3085,7 @@ TEST_F(VariantColumnWriterReaderTest, v2_shredder_uses_only_rows_in_requested_ra
             .max_subcolumns_count = 1,
             .sparse_bucket_count = 1,
             .check_duplicate_json_path = config::variant_enable_duplicate_json_path_check,
+            .root_index_writers = {},
     });
     ASSERT_TRUE(shredder.append(combined->read_view(), 1, 1).ok());
     segment_v2::VariantShreddedColumns shredded;
@@ -3160,6 +3163,7 @@ TEST_F(VariantColumnWriterReaderTest, v2_shredder_drops_typed_cast_null_from_spa
             .typed_paths_to_sparse = true,
             .sparse_bucket_count = 1,
             .check_duplicate_json_path = config::variant_enable_duplicate_json_path_check,
+            .root_index_writers = {},
     });
     ASSERT_TRUE(shredder.append(source->read_view(), 0, source->size()).ok());
     segment_v2::VariantShreddedColumns shredded;
@@ -6852,6 +6856,61 @@ TEST_F(VariantColumnWriterReaderTest, test_find_subcolumn_tablet_indexes_branch_
         EXPECT_EQ(nested[0]->index_id(), 10002);
         EXPECT_EQ(nested[0]->get_index_suffix(), "v%2Earr%2Einner%2Ez");
         EXPECT_NE(nested[0]->get_index_suffix(), "arr%2Einner%2Ez");
+    }
+
+    TabletIndexPB all_values_index_pb;
+    construct_tablet_index(&all_values_index_pb, 10004, "idx_v_all_values",
+                           root_column.unique_id());
+    (*all_values_index_pb.mutable_properties())[std::string(
+            segment_v2::variant_root_index::VARIANT_INDEX_MODE_KEY)] =
+            segment_v2::variant_root_index::VARIANT_INDEX_MODE_ALL_VALUES;
+    (*all_values_index_pb.mutable_properties())[std::string(
+            segment_v2::variant_root_index::VARIANT_ROOT_FORMAT_VERSION_KEY)] =
+            segment_v2::variant_root_index::VARIANT_ROOT_FORMAT_VERSION_V1;
+    (*all_values_index_pb.mutable_properties())["parser"] = "english";
+    TabletIndex all_values_index;
+    all_values_index.init_from_pb(all_values_index_pb);
+    _tablet_schema->append_index(std::move(all_values_index));
+
+    std::shared_ptr<segment_v2::ColumnReader> all_values_column_reader;
+    st = create_variant_root_reader(footer, file_reader, _tablet_schema, &all_values_column_reader);
+    ASSERT_TRUE(st.ok()) << st.msg();
+    auto* all_values_variant_reader =
+            assert_cast<segment_v2::VariantColumnReader*>(all_values_column_reader.get());
+    ASSERT_NE(all_values_variant_reader, nullptr);
+    segment_v2::BinaryColumnExtractIterator selected_sparse_reader("sparse", nullptr, nullptr,
+                                                                   true);
+
+    {
+        auto sparse_logical_path = all_values_variant_reader->find_subcolumn_tablet_indexes(
+                make_subcolumn("v.sparse", FieldType::OLAP_FIELD_TYPE_VARIANT, "v.sparse",
+                               root_unique_id),
+                std::make_shared<DataTypeVariant>(10, false), &selected_sparse_reader);
+        ASSERT_EQ(sparse_logical_path.size(), 1);
+        EXPECT_EQ(sparse_logical_path[0]->index_id(), 10004);
+        EXPECT_EQ(sparse_logical_path[0]->properties().at(
+                          std::string(segment_v2::variant_root_index::VARIANT_ROOT_QUERY_PATH_KEY)),
+                  "sparse");
+        EXPECT_FALSE(sparse_logical_path[0]->properties().contains(
+                std::string(segment_v2::variant_root_index::VARIANT_ROOT_QUERY_VALUE_FAMILY_KEY)));
+    }
+
+    {
+        auto hierarchical_logical_path = all_values_variant_reader->find_subcolumn_tablet_indexes(
+                make_subcolumn("v.object", FieldType::OLAP_FIELD_TYPE_VARIANT, "v.object",
+                               root_unique_id),
+                std::make_shared<DataTypeVariant>(10, false));
+        EXPECT_TRUE(hierarchical_logical_path.empty());
+    }
+
+    {
+        auto physical_sparse_map = all_values_variant_reader->find_subcolumn_tablet_indexes(
+                make_subcolumn("v.__sparse", FieldType::OLAP_FIELD_TYPE_MAP, "v.__sparse",
+                               root_unique_id),
+                std::make_shared<DataTypeMap>(std::make_shared<DataTypeString>(),
+                                              std::make_shared<DataTypeString>()),
+                &selected_sparse_reader);
+        EXPECT_TRUE(physical_sparse_map.empty());
     }
 }
 

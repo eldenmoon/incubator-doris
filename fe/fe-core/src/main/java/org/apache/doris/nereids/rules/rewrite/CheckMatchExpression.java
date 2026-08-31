@@ -17,6 +17,8 @@
 
 package org.apache.doris.nereids.rules.rewrite;
 
+import org.apache.doris.analysis.MatchPredicate.Operator;
+import org.apache.doris.common.Config;
 import org.apache.doris.nereids.exceptions.AnalysisException;
 import org.apache.doris.nereids.rules.Rule;
 import org.apache.doris.nereids.rules.RuleType;
@@ -56,9 +58,21 @@ public class CheckMatchExpression extends OneRewriteRuleFactory {
                         + " right operand is Literal. But meet expression %s", matchExpression));
             }
             if (slotReference.getDataType().isVariantType() && !slotReference.hasSubColPath()) {
-                throw new AnalysisException(String.format("VARIANT root column does not support MATCH predicates. "
-                                + "Please query a subcolumn instead, for example %s['field'] MATCH 'xxx'",
-                        slotReference.getName()));
+                if (!Config.enable_variant_v2) {
+                    throw new AnalysisException("VARIANT root MATCH requires enable_variant_v2=true");
+                }
+                if (!matchExpression.left().getDataType().isVariantType()) {
+                    throw new AnalysisException(String.format(
+                            "VARIANT root MATCH must use the root column directly, but found %s",
+                            matchExpression.left()));
+                }
+                Operator operator = matchExpression.op();
+                if (operator != Operator.MATCH_ANY && operator != Operator.MATCH_ALL) {
+                    throw new AnalysisException(String.format(
+                            "VARIANT root column supports only MATCH, MATCH_ANY, and MATCH_ALL. "
+                                    + "Please query a subcolumn for %s",
+                            matchExpression));
+                }
             }
         }
         return filter;
