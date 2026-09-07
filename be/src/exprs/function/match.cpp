@@ -283,9 +283,25 @@ Status FunctionMatchBase::execute_impl(FunctionContext* context, Block& block,
     ColumnUInt8::Container& vec_res = res->get_data();
     // set default value to 0, and match functions only need to set 1/true
     vec_res.resize_fill(input_rows_count);
-    RETURN_IF_ERROR(execute_match(context, column_name, match_query_str, input_rows_count, values,
-                                  analyzer_ctx, (array_col ? &(array_col->get_offsets()) : nullptr),
-                                  vec_res));
+    const auto query_type = get_query_type_from_fn_name();
+    if (array_col && query_type != InvertedIndexQueryType::MATCH_ANY_QUERY &&
+        query_type != InvertedIndexQueryType::MATCH_ALL_QUERY) {
+        // Phrase and regexp predicates apply within each element. Reuse scalar execution so
+        // concatenating tokens cannot manufacture a phrase across array boundaries.
+        ColumnUInt8::Container element_matches(values->size(), 0);
+        RETURN_IF_ERROR(execute_match(context, column_name, match_query_str, values->size(), values,
+                                      analyzer_ctx, nullptr, element_matches));
+        size_t element = 0;
+        for (size_t row = 0; row < input_rows_count; ++row) {
+            for (const size_t end = array_col->get_offsets()[row]; element < end; ++element) {
+                vec_res[row] |= element_matches[element];
+            }
+        }
+    } else {
+        RETURN_IF_ERROR(execute_match(context, column_name, match_query_str, input_rows_count,
+                                      values, analyzer_ctx,
+                                      array_col ? &array_col->get_offsets() : nullptr, vec_res));
+    }
     block.replace_by_position(result, std::move(res));
 
     return Status::OK();

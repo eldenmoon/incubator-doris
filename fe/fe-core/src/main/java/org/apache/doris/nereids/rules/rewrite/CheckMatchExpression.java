@@ -61,17 +61,17 @@ public class CheckMatchExpression extends OneRewriteRuleFactory {
                 if (!Config.enable_variant_v2) {
                     throw new AnalysisException("VARIANT root MATCH requires enable_variant_v2=true");
                 }
-                if (!matchExpression.left().getDataType().isVariantType()) {
-                    throw new AnalysisException(String.format(
-                            "VARIANT root MATCH must use the root column directly, but found %s",
-                            matchExpression.left()));
-                }
                 Operator operator = matchExpression.op();
                 if (operator != Operator.MATCH_ANY && operator != Operator.MATCH_ALL) {
                     throw new AnalysisException(String.format(
                             "VARIANT root column supports only MATCH, MATCH_ANY, and MATCH_ALL. "
                                     + "Please query a subcolumn for %s",
                             matchExpression));
+                }
+                if (!matchExpression.left().getDataType().isVariantType()) {
+                    throw new AnalysisException(String.format(
+                            "VARIANT root MATCH must use the root column directly, but found %s",
+                            matchExpression.left()));
                 }
             }
         }

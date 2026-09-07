@@ -59,8 +59,8 @@ struct VariantShredderOptions {
     size_t doc_materialization_min_rows = 0;
     bool check_duplicate_json_path = false;
     // Optional observers owned by VariantV2ColumnWriter. Every writer receives the same canonical
-    // leaves while the shredder already walks them, so multiple root indexes add no second object
-    // traversal.
+    // leaves during shredding, or after storage conversion for ordinary typed paths. Doc indexes
+    // retain original values, matching whole-root reads.
     std::vector<VariantRootIndexWriter*> root_index_writers;
 };
 

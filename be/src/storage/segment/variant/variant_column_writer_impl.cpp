@@ -1053,6 +1053,9 @@ Status VariantDocWriter::init(const TabletColumn* parent_column, int bucket_num,
         const TabletColumn& bucket_column =
                 variant_util::create_doc_value_column(*parent_column, b);
         _doc_value_column_opts[b] = opts;
+        // Parent indexes belong to their dedicated writers, never to the doc storage map.
+        _doc_value_column_opts[b].need_inverted_index = false;
+        _doc_value_column_opts[b].inverted_indexes.clear();
         _doc_value_column_opts[b].meta = footer->add_columns();
         variant_writer_helpers::init_column_meta(_doc_value_column_opts[b].meta, column_id,
                                                  bucket_column, opts);
@@ -1549,15 +1552,6 @@ Status VariantV1ColumnWriter::finalize() {
 
     ptr->finalize(ColumnVariant::FinalizeMode::WRITE_MODE);
     const size_t num_rows = _column->size();
-    if (!_root_index_writers.empty()) {
-        const std::span<const uint8_t> outer_nulls =
-                _tablet_column->is_nullable()
-                        ? std::span<const uint8_t> {_null_column->get_data().data(),
-                                                    _null_column->size()}
-                        : std::span<const uint8_t> {};
-        RETURN_IF_ERROR(append_variant_root_indexes(_root_index_writer_ptrs, *ptr, 0, num_rows,
-                                                    outer_nulls));
-    }
 
     // convert each subcolumns to storage format and add data to sub columns writers buffer
     auto olap_data_convertor = std::make_unique<OlapBlockDataConvertor>();
@@ -1570,6 +1564,16 @@ Status VariantV1ColumnWriter::finalize() {
     RETURN_IF_ERROR(prepare_non_root_write_plan_before_write(
             non_root_write_plan, ptr, *_tablet_column, *_opts.rowset_ctx->tablet_schema,
             &_subcolumns_info));
+
+    if (!_root_index_writers.empty()) {
+        const std::span<const uint8_t> outer_nulls =
+                _tablet_column->is_nullable()
+                        ? std::span<const uint8_t> {_null_column->get_data().data(),
+                                                    _null_column->size()}
+                        : std::span<const uint8_t> {};
+        RETURN_IF_ERROR(append_variant_root_indexes(_root_index_writer_ptrs, *ptr, 0, num_rows,
+                                                    outer_nulls));
+    }
 
     // Root NG dedup is handled in _process_root_column() — see the
     // has_root_ng check there. We intentionally do NOT modify the in-memory

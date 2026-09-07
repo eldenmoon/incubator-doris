@@ -931,11 +931,6 @@ Status SniiIndexReader::_query_variant_root(const IndexQueryContextPtr& context,
             std::string serialized_query;
             RETURN_IF_ERROR(variant_root_index::serialize_all_values_query_value(
                     query_value, &serialized_query));
-            if (serialized_query.empty() &&
-                !(is_string_type(query_value.get_type()) && query_value.as_string_view().empty())) {
-                return Status::Error<ErrorCode::INVERTED_INDEX_EVALUATE_SKIPPED>(
-                        "VARIANT token all-values equality type is unsupported");
-            }
             RETURN_IF_ERROR(_parse_query_terms(context, std::move(serialized_query),
                                                InvertedIndexQueryType::MATCH_ALL_QUERY,
                                                analyzer_ctx, &query_info));

@@ -355,7 +355,8 @@ Status serialize_all_values_query_value(const Field& value, std::string* seriali
     case PrimitiveType::TYPE_UINT64: {
         const uint64_t unsigned_value = value.get<PrimitiveType::TYPE_UINT64>();
         if (unsigned_value > static_cast<uint64_t>(std::numeric_limits<int64_t>::max())) {
-            return Status::OK();
+            return Status::Error<ErrorCode::INVERTED_INDEX_EVALUATE_SKIPPED>(
+                    "VARIANT all-values query value cannot be represented exactly");
         }
         *serialized = formatted_scalar_to_string(
                 variant_json::format_json_int(static_cast<int64_t>(unsigned_value)));
@@ -364,7 +365,8 @@ Status serialize_all_values_query_value(const Field& value, std::string* seriali
     case PrimitiveType::TYPE_FLOAT: {
         const float float_value = value.get<PrimitiveType::TYPE_FLOAT>();
         if (!std::isfinite(float_value)) {
-            return Status::OK();
+            return Status::Error<ErrorCode::INVERTED_INDEX_EVALUATE_SKIPPED>(
+                    "VARIANT all-values query value cannot be represented exactly");
         }
         *serialized = formatted_scalar_to_string(variant_json::format_json_float(float_value));
         break;
@@ -372,7 +374,8 @@ Status serialize_all_values_query_value(const Field& value, std::string* seriali
     case PrimitiveType::TYPE_DOUBLE: {
         const double double_value = value.get<PrimitiveType::TYPE_DOUBLE>();
         if (!std::isfinite(double_value)) {
-            return Status::OK();
+            return Status::Error<ErrorCode::INVERTED_INDEX_EVALUATE_SKIPPED>(
+                    "VARIANT all-values query value cannot be represented exactly");
         }
         *serialized = formatted_scalar_to_string(variant_json::format_json_double(double_value));
         break;
@@ -383,7 +386,8 @@ Status serialize_all_values_query_value(const Field& value, std::string* seriali
         *serialized = std::string(value.as_string_view());
         break;
     default:
-        return Status::OK();
+        return Status::Error<ErrorCode::INVERTED_INDEX_EVALUATE_SKIPPED>(
+                "VARIANT all-values query value cannot be represented exactly");
     }
     return Status::OK();
 }
@@ -397,10 +401,7 @@ Status encode_all_values_query_value_terms(const Field& value, std::vector<std::
         return Status::Error<ErrorCode::INVERTED_INDEX_EVALUATE_SKIPPED>(
                 "VARIANT all-values equality value exceeds ignore_above");
     }
-    if (!serialized.empty() ||
-        (is_string_type(value.get_type()) && value.as_string_view().empty())) {
-        terms->push_back(encode_all_value_term(serialized));
-    }
+    terms->push_back(encode_all_value_term(serialized));
     return Status::OK();
 }
 

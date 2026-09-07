@@ -1503,9 +1503,9 @@ TabletIndexes VariantColumnReader::find_subcolumn_tablet_indexes(
     }
 
     // if subcolumn has index, add index to _variant_subcolumns_indexes
-    if (variant_util::generate_sub_column_info(*_tablet_schema, column.parent_unique_id(),
-                                               relative_path.get_path(), &sub_column_info) &&
-        !sub_column_info.indexes.empty()) {
+    const bool is_typed_path = variant_util::generate_sub_column_info(
+            *_tablet_schema, column.parent_unique_id(), relative_path.get_path(), &sub_column_info);
+    if (is_typed_path && !sub_column_info.indexes.empty()) {
         for (const auto& index : sub_column_info.indexes) {
             add_variant_search_binding_diagnostic(
                     stats,
@@ -1530,6 +1530,12 @@ TabletIndexes VariantColumnReader::find_subcolumn_tablet_indexes(
             // need the ordinary child index (when present) or a scalar residual; binding them to
             // root terms would turn a safe fallback into a false empty result.
             if (!variant_root_index::is_root_index(*index)) {
+                continue;
+            }
+            // Doc indexes describe original values, while declared paths can read converted
+            // materialized columns. Their terms cannot safely bound those typed predicates.
+            if (is_typed_path && _tablet_schema->column_by_uid(column.parent_unique_id())
+                                         .variant_enable_doc_mode()) {
                 continue;
             }
             const bool analyzed =

@@ -80,7 +80,8 @@ Status encode_query_value_terms(std::string_view path, const Field& value,
                                 std::vector<std::string>* terms);
 
 // Encodes the scalar query types whose textual representation is guaranteed to match
-// serialize_all_value(). An empty result means the caller must retain scalar evaluation.
+// serialize_all_value(). Unsupported values return INVERTED_INDEX_EVALUATE_SKIPPED;
+// a successful empty string is a valid value.
 Status serialize_all_values_query_value(const Field& value, std::string* serialized);
 Status encode_all_values_query_value_terms(const Field& value, std::vector<std::string>* terms,
                                            size_t ignore_above = std::string::npos);
