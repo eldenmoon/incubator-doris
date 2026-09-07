@@ -191,7 +191,7 @@ public class IndexDefinitionTest {
             allValues.checkColumn(new ColumnDefinition("col1", VariantType.INSTANCE, false,
                             AggregateType.NONE, true, null, "comment"), KeysType.DUP_KEYS, false,
                     TInvertedIndexFileStorageFormat.SNII);
-            Assertions.assertEquals("1",
+            Assertions.assertEquals("2",
                     allValues.getProperties().get("variant_root_format_version"));
             Assertions.assertEquals("false", allValues.getProperties().get("support_phrase"));
             Index catalogAllValues = new Index(2, "variant_all_values_index",

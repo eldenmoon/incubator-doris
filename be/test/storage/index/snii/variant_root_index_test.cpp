@@ -151,6 +151,10 @@ TEST(VariantRootIndexCodecTest, RootModeRecognitionRequiresSupportedFormat) {
             {{std::string(VARIANT_INDEX_MODE_KEY), std::string(VARIANT_INDEX_MODE_ALL_VALUES)},
              {std::string(VARIANT_ROOT_FORMAT_VERSION_KEY),
               std::string(VARIANT_ROOT_FORMAT_VERSION_V1)}}));
+    EXPECT_TRUE(is_all_values_mode_properties(
+            {{std::string(VARIANT_INDEX_MODE_KEY), std::string(VARIANT_INDEX_MODE_ALL_VALUES)},
+             {std::string(VARIANT_ROOT_FORMAT_VERSION_KEY),
+              std::string(VARIANT_ROOT_FORMAT_VERSION_V2)}}));
     EXPECT_FALSE(is_root_mode_properties({{std::string(VARIANT_INDEX_MODE_KEY), "children"}}));
     EXPECT_FALSE(is_root_mode_properties(
             {{std::string(VARIANT_INDEX_MODE_KEY), std::string(VARIANT_INDEX_MODE_ROOT)},
@@ -171,6 +175,18 @@ TEST(VariantRootIndexCodecTest, AllValuesTermsDropPathAndUseSerializedValueDomai
                         Field::create_field<TYPE_STRING>("apache/doris"), &terms)
                         .ok());
     EXPECT_EQ(terms, std::vector<std::string>({encode_all_value_term("apache/doris")}));
+}
+
+TEST(VariantRootIndexCodecTest, AllValuesIgnoredQueryValuesRequireFallback) {
+    for (const auto& value :
+         {Field::create_field<TYPE_BIGINT>(1234), Field::create_field<TYPE_STRING>("abcd")}) {
+        std::vector<std::string> terms;
+        auto status = encode_all_values_query_value_terms(value, &terms, 3);
+        EXPECT_TRUE(status.is<ErrorCode::INVERTED_INDEX_EVALUATE_SKIPPED>()) << status;
+        EXPECT_TRUE(terms.empty());
+        ASSERT_TRUE(encode_all_values_query_value_terms(value, &terms, 4).ok());
+        EXPECT_EQ(terms.size(), 1);
+    }
 }
 
 TEST(VariantRootIndexCodecTest, CandidateRecheckSurvivesBooleanCombination) {
@@ -376,7 +392,7 @@ TEST_F(VariantRootIndexWriterTest, AllValuesIndexesRootScalarsArraysAndCrossPath
     (*exact_pb.mutable_properties())[std::string(VARIANT_INDEX_MODE_KEY)] =
             VARIANT_INDEX_MODE_ALL_VALUES;
     (*exact_pb.mutable_properties())[std::string(VARIANT_ROOT_FORMAT_VERSION_KEY)] =
-            VARIANT_ROOT_FORMAT_VERSION_V1;
+            VARIANT_ROOT_FORMAT_VERSION_V2;
     (*exact_pb.mutable_properties())["parser"] = "none";
     (*exact_pb.mutable_properties())["support_phrase"] = "false";
     TabletIndex exact_index;
@@ -412,7 +428,7 @@ TEST_F(VariantRootIndexWriterTest, AllValuesIndexesRootScalarsArraysAndCrossPath
     DataTypeSerDe::FormatOptions format_options;
     for (const std::string_view json : {
                  R"({"empty":"","message":"Apache","repo":"Doris","number":123,"tags":["database","doris"]})",
-                 R"({"message":"Doris","other":"Apache"})",
+                 R"({"message":"Doris","other":"Apache","items":[{"secretkey":"leafvalue"}]})",
                  R"("Apache Doris")",
                  R"(null)",
                  R"({})",
@@ -453,7 +469,11 @@ TEST_F(VariantRootIndexWriterTest, AllValuesIndexesRootScalarsArraysAndCrossPath
     };
     expect_term(**exact, encode_all_value_term(""), {0});
     expect_term(**exact, encode_all_value_term("123"), {0});
-    expect_term(**exact, encode_all_value_term("[\"database\",\"doris\"]"), {0});
+    expect_term(**exact, encode_all_value_term("database"), {0});
+    expect_term(**exact, encode_all_value_term("doris"), {0});
+    expect_term(**exact, encode_all_value_term("leafvalue"), {1});
+    expect_term(**token, encode_all_value_token_term("secretkey"), {});
+    expect_term(**token, encode_all_value_token_term("leafvalue"), {1});
     expect_term(**exact, encode_all_value_term("Apache Doris"), {2});
     expect_term(**exact, encode_string_term("message", "Apache"), {});
     expect_term(**token, encode_all_value_token_term("apache"), {0, 1, 2});

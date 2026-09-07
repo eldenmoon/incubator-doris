@@ -479,7 +479,9 @@ TabletSchemaSPtr make_schema(IndexLayout layout, TextMode mode) {
                             : segment_v2::variant_root_index::VARIANT_INDEX_MODE_ALL_VALUES;
             (*index->mutable_properties())[std::string(
                     segment_v2::variant_root_index::VARIANT_ROOT_FORMAT_VERSION_KEY)] =
-                    segment_v2::variant_root_index::VARIANT_ROOT_FORMAT_VERSION_V1;
+                    layout == IndexLayout::ROOT
+                            ? segment_v2::variant_root_index::VARIANT_ROOT_FORMAT_VERSION_V1
+                            : segment_v2::variant_root_index::VARIANT_ROOT_FORMAT_VERSION_V2;
         }
     }
 

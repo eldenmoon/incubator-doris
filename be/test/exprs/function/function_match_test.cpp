@@ -626,7 +626,7 @@ TEST(FunctionMatchTest, VariantRootResidualMatchesAcrossPathsArraysAndScalars) {
     JsonStringToVariantEncoder encoder;
     for (const std::string_view json : {
                  R"({"message":"Apache","repo":"Doris"})",
-                 R"({"message":"Apache only"})",
+                 R"({"message":"Apache only","items":[{"secretkey":"leafvalue"}]})",
                  R"({"tags":["apache","doris"]})",
                  R"("Apache Doris")",
                  R"(null)",
@@ -664,18 +664,37 @@ TEST(FunctionMatchTest, VariantRootResidualMatchesAcrossPathsArraysAndScalars) {
     EXPECT_EQ(execute(match_all, "apache doris"), std::vector<uint8_t>({1, 0, 1, 1, 0}));
     FunctionMatchAny match_any;
     EXPECT_EQ(execute(match_any, "doris"), std::vector<uint8_t>({1, 0, 1, 1, 0}));
+    EXPECT_EQ(execute(match_any, "secretkey"), std::vector<uint8_t>({0, 0, 0, 0, 0}));
+    EXPECT_EQ(execute(match_any, "leafvalue"), std::vector<uint8_t>({0, 1, 0, 0, 0}));
+
+    auto exact_analyzer = create_inverted_index_ctx(InvertedIndexParserType::PARSER_NONE);
+    context->set_function_state(
+            FunctionContext::THREAD_LOCAL,
+            std::shared_ptr<InvertedIndexAnalyzerCtx>(std::move(exact_analyzer.ctx)));
+    EXPECT_EQ(execute(match_any, "doris"), std::vector<uint8_t>({0, 0, 1, 0, 0}));
 }
 
-// Test check function with different error conditions
-TEST(FunctionMatchTest, check_function_error_handling) {
-    FunctionMatchAny match_any;
-
-    // Note: The actual check function requires proper runtime state setup
-    // This test verifies the function exists and can be called
-    // In real scenarios, it would test enable_match_without_inverted_index option
-
-    // Test that the check function is implemented
-    EXPECT_TRUE(true); // Placeholder - actual implementation would test error scenarios
+TEST(FunctionMatchTest, IndexRecheckDoesNotEnableUnindexedMatch) {
+    TQueryOptions query_options;
+    query_options.__set_enable_match_without_inverted_index(false);
+    RuntimeState runtime_state(query_options, TQueryGlobals {});
+    auto context = FunctionContext::create_context(&runtime_state, {}, {});
+    auto strings = ColumnString::create();
+    strings->insert_data("abc", 3);
+    ColumnUInt8::Container result(1, 0);
+    auto analyzer = create_inverted_index_ctx(InvertedIndexParserType::PARSER_NONE);
+    FunctionMatchAny function;
+    auto execute = [&]() {
+        return function.execute_match(context.get(), "s", "abc", 1, strings.get(),
+                                      analyzer.ctx.get(), nullptr, result);
+    };
+    EXPECT_TRUE(execute().is<ErrorCode::INVERTED_INDEX_NOT_SUPPORTED>());
+    context->set_is_index_recheck(true);
+    EXPECT_TRUE(execute().ok());
+    EXPECT_EQ(result[0], 1);
+    EXPECT_FALSE(context->clone()->is_index_recheck());
+    context->set_is_index_recheck(false);
+    EXPECT_TRUE(execute().is<ErrorCode::INVERTED_INDEX_NOT_SUPPORTED>());
 }
 
 // Test execute_impl basic structure

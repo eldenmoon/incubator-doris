@@ -99,8 +99,15 @@ public class OlapTableTest {
         Assert.assertSame(pathRoot,
                 table.getInvertedIndex(variantColumn, Lists.newArrayList(), "english"));
         Assert.assertSame(allValues, table.getVariantAllValuesIndex(variantColumn, "english"));
+        Map<String, String> recursiveProperties = Maps.newHashMap(allValuesProperties);
+        recursiveProperties.put(InvertedIndexProperties.VARIANT_ROOT_FORMAT_VERSION_KEY,
+                InvertedIndexProperties.VARIANT_ROOT_FORMAT_VERSION_V2);
+        Index recursive = new Index(4L, "v_all_values_v2", Lists.newArrayList("v"),
+                IndexType.INVERTED, recursiveProperties, "");
+        table.setIndexes(Lists.newArrayList(recursive));
+        Assert.assertSame(recursive, table.getVariantAllValuesIndex(variantColumn, "english"));
         Map<String, String> unsupportedProperties = Maps.newHashMap(allValuesProperties);
-        unsupportedProperties.put(InvertedIndexProperties.VARIANT_ROOT_FORMAT_VERSION_KEY, "2");
+        unsupportedProperties.put(InvertedIndexProperties.VARIANT_ROOT_FORMAT_VERSION_KEY, "99");
         Index unsupported = new Index(3L, "v_all_values_v2", Lists.newArrayList("v"),
                 IndexType.INVERTED, unsupportedProperties, "");
         table.setIndexes(Lists.newArrayList(unsupported));
