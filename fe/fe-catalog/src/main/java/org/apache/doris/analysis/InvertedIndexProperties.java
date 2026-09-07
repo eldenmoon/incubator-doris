@@ -67,6 +67,7 @@ public class InvertedIndexProperties {
     public static final String VARIANT_INDEX_MODE_ALL_VALUES = "all_values";
     public static final String VARIANT_ROOT_FORMAT_VERSION_KEY = "variant_root_format_version";
     public static final String VARIANT_ROOT_FORMAT_VERSION_V1 = "1";
+    public static final String VARIANT_ROOT_FORMAT_VERSION_V2 = "2";
 
     public static boolean isVariantRootIndexMode(String mode) {
         return VARIANT_INDEX_MODE_ROOT.equals(mode) || VARIANT_INDEX_MODE_ALL_VALUES.equals(mode);

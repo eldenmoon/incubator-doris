@@ -121,7 +121,9 @@ void append_floating_numeric_term(std::string_view path, double value,
     terms->push_back(encode_double_term(path, value));
 }
 
-std::string_view query_value_family_impl(PrimitiveType type) {
+} // namespace
+
+std::string_view query_value_family(PrimitiveType type) {
     if (is_string_type(type)) {
         return "string";
     }
@@ -144,12 +146,6 @@ std::string_view query_value_family_impl(PrimitiveType type) {
     }
 }
 
-} // namespace
-
-std::string_view query_value_family(PrimitiveType type) {
-    return query_value_family_impl(type);
-}
-
 bool is_root_mode_properties(const std::map<std::string, std::string>& properties) {
     return is_path_root_mode_properties(properties) || is_all_values_mode_properties(properties);
 }
@@ -165,7 +161,9 @@ bool is_all_values_mode_properties(const std::map<std::string, std::string>& pro
     const auto mode = properties.find(std::string(VARIANT_INDEX_MODE_KEY));
     const auto version = properties.find(std::string(VARIANT_ROOT_FORMAT_VERSION_KEY));
     return mode != properties.end() && mode->second == VARIANT_INDEX_MODE_ALL_VALUES &&
-           version != properties.end() && version->second == VARIANT_ROOT_FORMAT_VERSION_V1;
+           version != properties.end() &&
+           (version->second == VARIANT_ROOT_FORMAT_VERSION_V1 ||
+            version->second == VARIANT_ROOT_FORMAT_VERSION_V2);
 }
 
 bool is_root_index(const TabletIndex& index) {
@@ -390,10 +388,15 @@ Status serialize_all_values_query_value(const Field& value, std::string* seriali
     return Status::OK();
 }
 
-Status encode_all_values_query_value_terms(const Field& value, std::vector<std::string>* terms) {
+Status encode_all_values_query_value_terms(const Field& value, std::vector<std::string>* terms,
+                                           size_t ignore_above) {
     DORIS_CHECK(terms != nullptr);
     std::string serialized;
     RETURN_IF_ERROR(serialize_all_values_query_value(value, &serialized));
+    if (serialized.size() > ignore_above) {
+        return Status::Error<ErrorCode::INVERTED_INDEX_EVALUATE_SKIPPED>(
+                "VARIANT all-values equality value exceeds ignore_above");
+    }
     if (!serialized.empty() ||
         (is_string_type(value.get_type()) && value.as_string_view().empty())) {
         terms->push_back(encode_all_value_term(serialized));

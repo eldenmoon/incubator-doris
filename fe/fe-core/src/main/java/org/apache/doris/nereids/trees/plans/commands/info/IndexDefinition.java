@@ -111,7 +111,10 @@ public class IndexDefinition {
         if (InvertedIndexUtil.isVariantRootIndexMode(
                 this.properties.get(InvertedIndexUtil.VARIANT_INDEX_MODE_KEY))) {
             this.properties.putIfAbsent(InvertedIndexUtil.VARIANT_ROOT_FORMAT_VERSION_KEY,
-                    InvertedIndexUtil.VARIANT_ROOT_FORMAT_VERSION_V1);
+                    InvertedIndexUtil.VARIANT_INDEX_MODE_ALL_VALUES.equals(
+                            this.properties.get(InvertedIndexUtil.VARIANT_INDEX_MODE_KEY))
+                            ? InvertedIndexUtil.VARIANT_ROOT_FORMAT_VERSION_V2
+                            : InvertedIndexUtil.VARIANT_ROOT_FORMAT_VERSION_V1);
             this.properties.putIfAbsent(InvertedIndexUtil.INVERTED_INDEX_SUPPORT_PHRASE_KEY,
                     "false");
         }
@@ -576,7 +579,9 @@ public class IndexDefinition {
         if (invertedIndexFileStorageFormat != TInvertedIndexFileStorageFormat.SNII) {
             throw new AnalysisException("VARIANT root index requires inverted_index_storage_format=SNII");
         }
-        if (!InvertedIndexUtil.VARIANT_ROOT_FORMAT_VERSION_V1.equals(formatVersion)) {
+        if (!InvertedIndexUtil.VARIANT_ROOT_FORMAT_VERSION_V1.equals(formatVersion)
+                && !(InvertedIndexUtil.VARIANT_INDEX_MODE_ALL_VALUES.equals(mode)
+                        && InvertedIndexUtil.VARIANT_ROOT_FORMAT_VERSION_V2.equals(formatVersion))) {
             throw new AnalysisException("unsupported variant_root_format_version: " + formatVersion);
         }
         if ("true".equals(properties.get(InvertedIndexUtil.INVERTED_INDEX_SUPPORT_PHRASE_KEY))) {

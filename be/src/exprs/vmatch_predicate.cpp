@@ -252,8 +252,15 @@ Status VMatchPredicate::execute_column_impl(VExprContext* context, const Block* 
     // prepare a column to save result
     temp_block.insert({nullptr, _data_type, _expr_name});
 
-    RETURN_IF_ERROR(_function->execute(context->fn_context(_fn_context_index), temp_block,
-                                       arguments, num_columns_without_result, temp_block.rows()));
+    auto* function_context = context->fn_context(_fn_context_index);
+    const auto* index_result =
+            context->get_index_context() == nullptr
+                    ? nullptr
+                    : context->get_index_context()->get_index_result_for_expr(this);
+    function_context->set_is_index_recheck(index_result != nullptr &&
+                                           index_result->requires_recheck());
+    RETURN_IF_ERROR(_function->execute(function_context, temp_block, arguments,
+                                       num_columns_without_result, temp_block.rows()));
     result_column = temp_block.get_by_position(num_columns_without_result).column;
     DCHECK_EQ(result_column->size(), count);
     return Status::OK();

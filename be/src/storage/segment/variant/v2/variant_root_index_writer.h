@@ -67,11 +67,6 @@ private:
         Slice value;
     };
 
-    struct OwnedAnalyzedValue {
-        std::string prefix;
-        std::string value;
-    };
-
     IndexFileWriter* _index_file_writer = nullptr;
     const TabletIndex* _index_meta = nullptr;
     bool _is_direct_load = false;
@@ -84,7 +79,7 @@ private:
     std::unique_ptr<SniiIndexColumnWriter> _writer;
     std::vector<std::string> _exact_terms;
     std::vector<AnalyzedValue> _analyzed_values;
-    std::vector<OwnedAnalyzedValue> _owned_analyzed_values;
+    std::vector<std::string> _owned_analyzed_values;
 };
 
 // Fan out one canonical leaf to every root index writer. AllValues serialization is shared across

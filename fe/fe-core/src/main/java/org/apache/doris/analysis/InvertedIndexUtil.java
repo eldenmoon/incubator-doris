@@ -97,6 +97,8 @@ public class InvertedIndexUtil {
             InvertedIndexProperties.VARIANT_ROOT_FORMAT_VERSION_KEY;
     public static final String VARIANT_ROOT_FORMAT_VERSION_V1 =
             InvertedIndexProperties.VARIANT_ROOT_FORMAT_VERSION_V1;
+    public static final String VARIANT_ROOT_FORMAT_VERSION_V2 =
+            InvertedIndexProperties.VARIANT_ROOT_FORMAT_VERSION_V2;
 
     public static boolean isVariantRootIndexMode(String mode) {
         return InvertedIndexProperties.isVariantRootIndexMode(mode);

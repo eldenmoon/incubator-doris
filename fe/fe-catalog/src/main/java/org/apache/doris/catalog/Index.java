@@ -333,7 +333,9 @@ public class Index implements Writable {
                 && properties != null
                 && InvertedIndexProperties.VARIANT_INDEX_MODE_ALL_VALUES.equals(
                         properties.get(InvertedIndexProperties.VARIANT_INDEX_MODE_KEY))
-                && InvertedIndexProperties.VARIANT_ROOT_FORMAT_VERSION_V1.equals(
-                        properties.get(InvertedIndexProperties.VARIANT_ROOT_FORMAT_VERSION_KEY));
+                && (InvertedIndexProperties.VARIANT_ROOT_FORMAT_VERSION_V1.equals(
+                        properties.get(InvertedIndexProperties.VARIANT_ROOT_FORMAT_VERSION_KEY))
+                    || InvertedIndexProperties.VARIANT_ROOT_FORMAT_VERSION_V2.equals(
+                        properties.get(InvertedIndexProperties.VARIANT_ROOT_FORMAT_VERSION_KEY)));
     }
 }

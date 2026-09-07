@@ -1524,13 +1524,7 @@ TabletIndexes VariantColumnReader::find_subcolumn_tablet_indexes(
         index_data_type->get_primitive_type() != PrimitiveType::TYPE_MAP /*SPARSE COLUMN*/) {
         const PrimitiveType path_type = remove_nullable(index_data_type)->get_primitive_type();
         const bool root_exact_supported =
-                is_string_type(path_type) || path_type == PrimitiveType::TYPE_BOOLEAN ||
-                path_type == PrimitiveType::TYPE_TINYINT ||
-                path_type == PrimitiveType::TYPE_SMALLINT || path_type == PrimitiveType::TYPE_INT ||
-                path_type == PrimitiveType::TYPE_BIGINT ||
-                path_type == PrimitiveType::TYPE_UINT32 ||
-                path_type == PrimitiveType::TYPE_UINT64 || path_type == PrimitiveType::TYPE_FLOAT ||
-                path_type == PrimitiveType::TYPE_DOUBLE;
+                !variant_root_index::query_value_family(path_type).empty();
         for (const TabletIndex* index : parent_index) {
             // Root indexes contain scalar leaves only. Array equality and membership predicates
             // need the ordinary child index (when present) or a scalar residual; binding them to
@@ -1545,8 +1539,8 @@ TabletIndexes VariantColumnReader::find_subcolumn_tablet_indexes(
                     (root_exact_supported || (path_type == PrimitiveType::TYPE_VARIANT &&
                                               dynamic_cast<const BinaryColumnExtractIterator*>(
                                                       selected_path_reader) != nullptr));
-            if ((analyzed && (is_string_type(path_type) || all_values_supported)) ||
-                (!analyzed && (root_exact_supported || all_values_supported))) {
+            if (all_values_supported ||
+                (analyzed ? is_string_type(path_type) : root_exact_supported)) {
                 sub_column_info.indexes.push_back(
                         variant_root_index::make_query_index(*index, relative_path_str, path_type));
             }

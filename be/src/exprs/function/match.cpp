@@ -62,6 +62,13 @@ Status append_variant_all_values_tokens(const InvertedIndexAnalyzerCtx* analyzer
         }
         return Status::OK();
     }
+    if (value.basic_type() == VariantBasicType::ARRAY) {
+        for (uint32_t index = 0; index < value.num_elements(); ++index) {
+            RETURN_IF_ERROR(
+                    append_variant_all_values_tokens(analyzer_ctx, value.array_at(index), tokens));
+        }
+        return Status::OK();
+    }
     if (value.is_null() || analyzer_ctx == nullptr) {
         return Status::OK();
     }
@@ -385,7 +392,8 @@ inline std::vector<segment_v2::TermInfo> FunctionMatchBase::analyse_data_token(
 }
 
 Status FunctionMatchBase::check(FunctionContext* context, const std::string& function_name) const {
-    if (!context->state()->query_options().enable_match_without_inverted_index) {
+    if (!context->state()->query_options().enable_match_without_inverted_index &&
+        !context->is_index_recheck()) {
         return Status::Error<ErrorCode::INVERTED_INDEX_NOT_SUPPORTED>(
                 "{} not support execute_match", function_name);
     }

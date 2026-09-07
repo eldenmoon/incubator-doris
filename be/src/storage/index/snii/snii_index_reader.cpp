@@ -879,6 +879,12 @@ Status SniiIndexReader::_query_variant_root(const IndexQueryContextPtr& context,
     }
     const bool all_values =
             variant_root_index::is_all_values_mode_properties(_index_meta.properties());
+    if (all_values && _index_meta.properties().at(
+                              std::string(variant_root_index::VARIANT_ROOT_FORMAT_VERSION_KEY)) ==
+                              variant_root_index::VARIANT_ROOT_FORMAT_VERSION_V1) {
+        return Status::Error<ErrorCode::INVERTED_INDEX_EVALUATE_SKIPPED>(
+                "Legacy VARIANT all-values indexes require scalar evaluation for recursive leaves");
+    }
     const auto bound_path = _index_meta.properties().find(
             std::string(variant_root_index::VARIANT_ROOT_QUERY_PATH_KEY));
     const bool has_bound_path = bound_path != _index_meta.properties().end();
@@ -901,6 +907,14 @@ Status SniiIndexReader::_query_variant_root(const IndexQueryContextPtr& context,
             return Status::Error<ErrorCode::INVERTED_INDEX_EVALUATE_SKIPPED>(
                     "VARIANT root index path type is incompatible with the query value type");
         }
+    }
+
+    // The all-values domain preserves textual floating representations, including the sign
+    // of zero. SQL floating equality cannot use it as a complete candidate set.
+    if (all_values && query_type == InvertedIndexQueryType::EQUAL_QUERY &&
+        (query_value.get_type() == TYPE_FLOAT || query_value.get_type() == TYPE_DOUBLE)) {
+        return Status::Error<ErrorCode::INVERTED_INDEX_EVALUATE_SKIPPED>(
+                "VARIANT all-values floating equality requires scalar evaluation");
     }
 
     std::vector<std::string> terms;
@@ -940,17 +954,17 @@ Status SniiIndexReader::_query_variant_root(const IndexQueryContextPtr& context,
                 return Status::Error<ErrorCode::INVERTED_INDEX_EVALUATE_SKIPPED>(
                         "VARIANT exact root index does not evaluate NULL or missing paths");
             }
-            if (is_string_type(query_value.get_type()) &&
-                query_value.as_string_view().size() >
-                        cast_set<size_t>(std::stoul(get_parser_ignore_above_value_from_properties(
-                                _index_meta.properties())))) {
-                return Status::Error<ErrorCode::INVERTED_INDEX_EVALUATE_SKIPPED>(
-                        "VARIANT root equality value exceeds ignore_above");
-            }
+            const auto ignore_above = cast_set<size_t>(std::stoul(
+                    get_parser_ignore_above_value_from_properties(_index_meta.properties())));
             if (all_values) {
-                RETURN_IF_ERROR(variant_root_index::encode_all_values_query_value_terms(query_value,
-                                                                                        &terms));
+                RETURN_IF_ERROR(variant_root_index::encode_all_values_query_value_terms(
+                        query_value, &terms, ignore_above));
             } else {
+                if (is_string_type(query_value.get_type()) &&
+                    query_value.as_string_view().size() > ignore_above) {
+                    return Status::Error<ErrorCode::INVERTED_INDEX_EVALUATE_SKIPPED>(
+                            "VARIANT root equality value exceeds ignore_above");
+                }
                 RETURN_IF_ERROR(
                         variant_root_index::encode_query_value_terms(path, query_value, &terms));
             }

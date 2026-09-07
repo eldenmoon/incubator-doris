@@ -40,6 +40,8 @@ inline constexpr std::string_view VARIANT_INDEX_MODE_ROOT = "root";
 inline constexpr std::string_view VARIANT_INDEX_MODE_ALL_VALUES = "all_values";
 inline constexpr std::string_view VARIANT_ROOT_FORMAT_VERSION_KEY = "variant_root_format_version";
 inline constexpr std::string_view VARIANT_ROOT_FORMAT_VERSION_V1 = "1";
+// AllValues v2 indexes recursive scalar leaves inside arrays. Root retains v1.
+inline constexpr std::string_view VARIANT_ROOT_FORMAT_VERSION_V2 = "2";
 inline constexpr std::string_view VARIANT_ROOT_QUERY_PATH_KEY = "variant_root_query_path";
 inline constexpr std::string_view VARIANT_ROOT_QUERY_VALUE_FAMILY_KEY =
         "variant_root_query_value_family";
@@ -80,7 +82,8 @@ Status encode_query_value_terms(std::string_view path, const Field& value,
 // Encodes the scalar query types whose textual representation is guaranteed to match
 // serialize_all_value(). An empty result means the caller must retain scalar evaluation.
 Status serialize_all_values_query_value(const Field& value, std::string* serialized);
-Status encode_all_values_query_value_terms(const Field& value, std::vector<std::string>* terms);
+Status encode_all_values_query_value_terms(const Field& value, std::vector<std::string>* terms,
+                                           size_t ignore_above = std::string::npos);
 
 std::shared_ptr<TabletIndex> make_query_index(const TabletIndex& root_index,
                                               std::string_view relative_path,

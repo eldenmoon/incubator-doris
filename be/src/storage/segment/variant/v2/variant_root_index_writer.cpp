@@ -106,9 +106,7 @@ Status VariantRootIndexWriter::add_serialized_all_value(std::string_view seriali
     DORIS_CHECK(!_sql_null);
     DORIS_CHECK(_all_values);
     if (_should_analyze) {
-        _owned_analyzed_values.push_back(
-                {.prefix = variant_root_index::encode_all_value_token_term(""),
-                 .value = std::string(serialized)});
+        _owned_analyzed_values.emplace_back(serialized);
     } else if (serialized.size() <= _ignore_above) {
         _exact_terms.push_back(variant_root_index::encode_all_value_term(serialized));
     }
@@ -126,8 +124,10 @@ Status VariantRootIndexWriter::end_document() {
         for (const AnalyzedValue& value : _analyzed_values) {
             analyzed_values.push_back({.term_prefix = value.prefix, .value = value.value});
         }
-        for (const OwnedAnalyzedValue& value : _owned_analyzed_values) {
-            analyzed_values.push_back({.term_prefix = value.prefix, .value = Slice(value.value)});
+        const std::string all_values_prefix =
+                _all_values ? variant_root_index::encode_all_value_token_term("") : std::string {};
+        for (const std::string& value : _owned_analyzed_values) {
+            analyzed_values.push_back({.term_prefix = all_values_prefix, .value = Slice(value)});
         }
         status = _writer->add_document(_exact_terms, analyzed_values);
     }
@@ -136,6 +136,33 @@ Status VariantRootIndexWriter::end_document() {
 }
 
 namespace {
+
+Status append_all_values(std::span<VariantRootIndexWriter*> writers, const VariantRef& value) {
+    if (value.basic_type() == VariantBasicType::OBJECT) {
+        const auto object = value.object_view();
+        for (uint32_t index = 0; index < object.size(); ++index) {
+            RETURN_IF_ERROR(append_all_values(writers, object.value_at(index)));
+        }
+        return Status::OK();
+    }
+    if (value.basic_type() == VariantBasicType::ARRAY) {
+        for (uint32_t index = 0; index < value.num_elements(); ++index) {
+            RETURN_IF_ERROR(append_all_values(writers, value.array_at(index)));
+        }
+        return Status::OK();
+    }
+    if (value.is_null()) {
+        return Status::OK();
+    }
+    std::string serialized;
+    RETURN_IF_ERROR(variant_root_index::serialize_all_value(value, &serialized));
+    for (VariantRootIndexWriter* writer : writers) {
+        if (writer->is_all_values()) {
+            RETURN_IF_ERROR(writer->add_serialized_all_value(serialized));
+        }
+    }
+    return Status::OK();
+}
 
 Status visit_root_index_writers(std::span<VariantRootIndexWriter*> writers, const VariantRef& value,
                                 const PathInData& relative_path,
@@ -177,22 +204,17 @@ Status visit_root_index_writers(std::span<VariantRootIndexWriter*> writers, cons
 Status append_variant_root_index_leaf(std::span<VariantRootIndexWriter*> writers,
                                       std::string_view relative_path, const VariantRef& value,
                                       bool is_root_value) {
-    std::string serialized_all_value;
-    bool serialized = false;
+    bool has_all_values = false;
     for (VariantRootIndexWriter* writer : writers) {
         DORIS_CHECK(writer != nullptr);
-        if (!writer->is_all_values()) {
+        if (writer->is_all_values()) {
+            has_all_values = true;
+        } else {
             RETURN_IF_ERROR(writer->add_path_value(relative_path, value, is_root_value));
-            continue;
         }
-        if (value.is_null()) {
-            continue;
-        }
-        if (!serialized) {
-            RETURN_IF_ERROR(variant_root_index::serialize_all_value(value, &serialized_all_value));
-            serialized = true;
-        }
-        RETURN_IF_ERROR(writer->add_serialized_all_value(serialized_all_value));
+    }
+    if (has_all_values) {
+        RETURN_IF_ERROR(append_all_values(writers, value));
     }
     return Status::OK();
 }
@@ -315,9 +337,8 @@ size_t VariantRootIndexWriter::size() const {
     for (const AnalyzedValue& value : _analyzed_values) {
         result += value.prefix.capacity();
     }
-    for (const OwnedAnalyzedValue& value : _owned_analyzed_values) {
-        result += value.prefix.capacity();
-        result += value.value.capacity();
+    for (const std::string& value : _owned_analyzed_values) {
+        result += value.capacity();
     }
     return result;
 }
