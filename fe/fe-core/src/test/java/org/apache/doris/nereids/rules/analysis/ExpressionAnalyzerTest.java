@@ -17,6 +17,7 @@
 
 package org.apache.doris.nereids.rules.analysis;
 
+import org.apache.doris.common.Config;
 import org.apache.doris.nereids.analyzer.Scope;
 import org.apache.doris.nereids.analyzer.UnboundFunction;
 import org.apache.doris.nereids.analyzer.UnboundSlot;
@@ -29,6 +30,8 @@ import org.apache.doris.nereids.trees.expressions.Expression;
 import org.apache.doris.nereids.trees.expressions.IsFalse;
 import org.apache.doris.nereids.trees.expressions.IsNull;
 import org.apache.doris.nereids.trees.expressions.IsTrue;
+import org.apache.doris.nereids.trees.expressions.MatchAny;
+import org.apache.doris.nereids.trees.expressions.MatchPhrase;
 import org.apache.doris.nereids.trees.expressions.Not;
 import org.apache.doris.nereids.trees.expressions.SlotReference;
 import org.apache.doris.nereids.trees.expressions.literal.DateTimeV2Literal;
@@ -36,6 +39,7 @@ import org.apache.doris.nereids.trees.expressions.literal.StringLiteral;
 import org.apache.doris.nereids.trees.expressions.literal.TinyIntLiteral;
 import org.apache.doris.nereids.types.BigIntType;
 import org.apache.doris.nereids.types.BooleanType;
+import org.apache.doris.nereids.types.VariantType;
 
 import com.google.common.collect.ImmutableList;
 import org.junit.jupiter.api.Assertions;
@@ -44,6 +48,27 @@ import org.junit.jupiter.api.Test;
 import java.util.List;
 
 public class ExpressionAnalyzerTest {
+
+    @Test
+    void testVariantMatchScalarBoundary() {
+        boolean previous = Config.enable_variant_v2;
+        try {
+            ExpressionAnalyzer analyzer = new ExpressionAnalyzer(null, new Scope(ImmutableList.of()),
+                    null, true, true);
+            SlotReference value = new SlotReference("v", VariantType.INSTANCE);
+            StringLiteral query = new StringLiteral("apache doris");
+            Config.enable_variant_v2 = true;
+            Expression phrase = analyzer.visitMatch(new MatchPhrase(value, query), null);
+            Assertions.assertInstanceOf(Cast.class, phrase.child(0));
+            Expression any = analyzer.visitMatch(new MatchAny(value, query), null);
+            Assertions.assertSame(value, any.child(0));
+            Config.enable_variant_v2 = false;
+            Expression legacy = analyzer.visitMatch(new MatchAny(value, query), null);
+            Assertions.assertInstanceOf(Cast.class, legacy.child(0));
+        } finally {
+            Config.enable_variant_v2 = previous;
+        }
+    }
 
     @Test
     void testPreProcessUnboundFunctionForThreeArgsDataTimeFunction() {

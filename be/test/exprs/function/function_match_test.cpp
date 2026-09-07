@@ -29,6 +29,7 @@
 #include "core/column/column_string.h"
 #include "core/column/column_vector.h"
 #include "core/column/variant_v2/column_variant_v2.h"
+#include "core/data_type/data_type_array.h"
 #include "core/data_type/data_type_number.h"
 #include "core/data_type/data_type_string.h"
 #include "core/data_type/data_type_variant_v2.h"
@@ -459,6 +460,35 @@ TEST(FunctionMatchTest, error_handling_and_edge_cases) {
 }
 
 // Test with array offsets (for array column types)
+TEST(FunctionMatchTest, ArrayPhraseKeepsElementBoundaries) {
+    TQueryOptions options;
+    options.__set_enable_match_without_inverted_index(true);
+    RuntimeState state(options, TQueryGlobals {});
+    auto context = FunctionContext::create_context(&state, {}, {});
+    auto strings = ColumnString::create();
+    for (const std::string_view value : {"apache", "doris", "apache doris", "other"}) {
+        strings->insert_data(value.data(), value.size());
+    }
+    auto offsets = ColumnArray::ColumnOffsets::create();
+    offsets->get_data() = {2, 4};
+    ColumnPtr array = ColumnArray::create(std::move(strings), std::move(offsets));
+    auto analyzer = create_inverted_index_ctx(InvertedIndexParserType::PARSER_ENGLISH);
+    std::shared_ptr<InvertedIndexAnalyzerCtx> analyzer_state(std::move(analyzer.ctx));
+    context->set_function_state(FunctionContext::THREAD_LOCAL, analyzer_state);
+    auto query = ColumnString::create();
+    query->insert_data("apache doris", 12);
+    Block block;
+    block.insert({array, std::make_shared<DataTypeArray>(std::make_shared<DataTypeString>()), "a"});
+    block.insert({std::move(query), std::make_shared<DataTypeString>(), "query"});
+    block.insert({ColumnUInt8::create(), std::make_shared<DataTypeUInt8>(), "result"});
+    FunctionMatchPhrase phrase;
+    ASSERT_TRUE(phrase.execute_impl(context.get(), block, {0, 1}, 2, 2).ok());
+    const auto& result =
+            assert_cast<const ColumnUInt8&>(*block.get_by_position(2).column).get_data();
+    EXPECT_EQ(result[0], 0);
+    EXPECT_EQ(result[1], 1);
+}
+
 TEST(FunctionMatchTest, array_offset_handling) {
     FunctionMatchAny match_any;
 

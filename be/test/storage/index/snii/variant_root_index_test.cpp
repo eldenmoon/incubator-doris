@@ -40,6 +40,7 @@
 #include "storage/index/snii/query/term_query.h"
 #include "storage/index/snii/snii_index_writer.h"
 #include "storage/segment/variant/v2/variant_root_index_writer.h"
+#include "storage/segment/variant/v2/variant_shredder.h"
 #include "storage/tablet/tablet_schema.h"
 
 namespace doris::segment_v2::variant_root_index {
@@ -189,6 +190,20 @@ TEST(VariantRootIndexCodecTest, AllValuesIgnoredQueryValuesRequireFallback) {
     }
 }
 
+TEST(VariantRootIndexCodecTest, AllValuesUnsupportedValueIsDistinctFromEmptyString) {
+    std::string text;
+    const auto unsupported = Field::create_field<TYPE_LARGEINT>(static_cast<Int128>(1));
+    EXPECT_TRUE(serialize_all_values_query_value(unsupported, &text)
+                        .is<ErrorCode::INVERTED_INDEX_EVALUATE_SKIPPED>());
+    std::vector<std::string> terms;
+    EXPECT_TRUE(encode_all_values_query_value_terms(unsupported, &terms)
+                        .is<ErrorCode::INVERTED_INDEX_EVALUATE_SKIPPED>());
+    EXPECT_TRUE(terms.empty());
+    const auto empty = Field::create_field<TYPE_STRING>("");
+    ASSERT_TRUE(encode_all_values_query_value_terms(empty, &terms).ok());
+    EXPECT_EQ(terms, std::vector<std::string>({encode_all_value_term("")}));
+}
+
 TEST(VariantRootIndexCodecTest, CandidateRecheckSurvivesBooleanCombination) {
     auto exact_rows = std::make_shared<roaring::Roaring>();
     exact_rows->add(1);
@@ -277,6 +292,84 @@ TEST_F(VariantRootIndexWriterTest, KeepsOneDocumentPerVariantRow) {
     ASSERT_TRUE(snii::query::term_query(**opened, encode_string_term("action", "opened"), &docids)
                         .ok());
     EXPECT_EQ(docids, std::vector<uint32_t>({0}));
+}
+
+// NOLINTNEXTLINE(readability-function-cognitive-complexity): one writer/readback fixture verifies converted terms and document alignment together.
+TEST_F(VariantRootIndexWriterTest, TypedValuesKeepConvertedPostingsAndRowids) {
+    TabletSchemaPB schema_pb;
+    auto* parent = schema_pb.add_column();
+    parent->set_unique_id(3);
+    parent->set_name("payload");
+    parent->set_type("VARIANT");
+    parent->set_is_nullable(true);
+    TabletSchema schema;
+    schema.init_from_pb(schema_pb);
+    ColumnPB typed_pb;
+    typed_pb.set_unique_id(-1);
+    typed_pb.set_name("n");
+    typed_pb.set_type("INT");
+    typed_pb.set_is_nullable(true);
+    typed_pb.set_pattern_type(PatternTypePB::MATCH_NAME);
+    TabletColumn typed;
+    typed.init_from_pb(typed_pb);
+    schema.mutable_column_by_uid(3).add_sub_column(typed);
+
+    TabletIndexPB index_pb;
+    index_pb.set_index_id(76);
+    index_pb.set_index_name("typed_root");
+    index_pb.set_index_type(IndexType::INVERTED);
+    index_pb.add_col_unique_id(3);
+    (*index_pb.mutable_properties())[std::string(VARIANT_INDEX_MODE_KEY)] = VARIANT_INDEX_MODE_ROOT;
+    (*index_pb.mutable_properties())[std::string(VARIANT_ROOT_FORMAT_VERSION_KEY)] =
+            VARIANT_ROOT_FORMAT_VERSION_V1;
+    (*index_pb.mutable_properties())["parser"] = "none";
+    TabletIndex index;
+    index.init_from_pb(index_pb);
+    const std::string prefix = std::string(TEST_DIR) + "/typed";
+    io::FileWriterPtr file;
+    ASSERT_TRUE(
+            io::global_local_filesystem()
+                    ->create_file(InvertedIndexDescriptor::get_index_file_path_v2(prefix), &file)
+                    .ok());
+    IndexFileWriter index_file(io::global_local_filesystem(), prefix, "typed_rowset", 0,
+                               InvertedIndexStorageFormatPB::SNII, std::move(file));
+    VariantRootIndexWriter writer(&index_file, &index, false, false);
+    ASSERT_TRUE(writer.init().ok());
+    JsonStringToVariantEncoder encoder;
+    for (const std::string_view json :
+         {R"({"n":"001"})", R"({"n":"bad"})", "null", "[]", R"({"n":"002"})"}) {
+        encoder.add_json({json.data(), json.size()});
+    }
+    auto input = ColumnVariantV2::create();
+    input->insert_encoded_batch(encoder.finish_batch());
+    VariantShredderOptions options;
+    options.tablet_schema = &schema;
+    options.parent_column_unique_id = 3;
+    options.root_index_writers = {&writer};
+    VariantShredder shredder(std::move(options));
+    const std::vector<uint8_t> nulls {0, 0, 1, 0, 0};
+    ASSERT_TRUE(shredder.append(input->read_view(), 0, input->size(), nulls).ok());
+    VariantShreddedColumns output;
+    ASSERT_TRUE(shredder.finish(&output).ok());
+    ASSERT_TRUE(writer.finish().ok());
+    ASSERT_TRUE(index_file.begin_close().ok());
+    ASSERT_TRUE(index_file.finish_close().ok());
+    IndexFileReader reader(io::global_local_filesystem(), prefix,
+                           InvertedIndexStorageFormatPB::SNII);
+    ASSERT_TRUE(reader.init().ok());
+    auto opened = reader.open_snii_index(&index);
+    ASSERT_TRUE(opened.has_value());
+    EXPECT_EQ((*opened)->stats().doc_count, 5U);
+    EXPECT_EQ((*opened)->stats().null_count, 1U);
+    std::vector<uint32_t> docids;
+    ASSERT_TRUE(snii::query::term_query(**opened, encode_int64_term("n", 1), &docids).ok());
+    EXPECT_EQ(docids, std::vector<uint32_t>({0}));
+    docids.clear();
+    ASSERT_TRUE(snii::query::term_query(**opened, encode_int64_term("n", 2), &docids).ok());
+    EXPECT_EQ(docids, std::vector<uint32_t>({4}));
+    docids.clear();
+    ASSERT_TRUE(snii::query::term_query(**opened, encode_string_term("n", "bad"), &docids).ok());
+    EXPECT_TRUE(docids.empty());
 }
 
 // NOLINTNEXTLINE(readability-function-cognitive-complexity) -- One fixture pins both analyzer streams.

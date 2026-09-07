@@ -32,17 +32,29 @@ reader whose cast cannot use an index retains scan evaluation.
 | Whole-root MATCH_ANY / MATCH_ALL | AllValues v2 can answer from its whole-root value/token domain. |
 | Path MATCH using Root or AllValues | Candidate set followed by the original scalar predicate. |
 | Path numeric EQ / IN | Existing physical-type and cast compatibility gates apply. Root keeps its canonical numeric domain. AllValues FLOAT/DOUBLE equality falls back to scalar evaluation. |
+| Declared typed path in doc layout | Parent Root/AllValues postings are bypassed because doc retains original values while a materialized path can be converted. Direct child indexes retain their existing rules. Whole-root AllValues remains usable. |
 | Exact value longer than `ignore_above` | Scan fallback, using the serialized byte length for AllValues values. One unsupported IN element makes the whole predicate fall back. |
 | NOT, inequality, NOT IN and boolean combinations | A candidate superset cannot be complemented or counted as final matches. Existing residual protections remain. |
-| MATCH without a usable index | Requires `enable_match_without_inverted_index=true`. A successful candidate index result permits its necessary residual even when the option is false. |
+| MATCH without a usable index | Requires `enable_match_without_inverted_index=true`. This round validates only `true`; candidate-residual behavior with `false`, including OR short-circuiting, remains unresolved. |
 
-Phrase, scoring and nested element correlation are outside this change.
+Ordinary typed paths are indexed after the existing storage conversion, so a
+stored INT `1` converted from `"001"` has the same numeric postings as INT `1`.
+Doc layout instead retains its original whole-root values, including failed
+path casts. This distinction follows existing storage reads.
+
+Ordinary scalar/path phrase and regexp evaluation retains its existing scalar
+conversion. Array phrase evaluation stays inside each scalar element; ANY/ALL
+keep their cross-element token semantics. New whole-root phrase, scoring and
+nested element correlation remain outside this change.
 
 ## Stored format and lifecycle
 
 New AllValues indexes use the existing `variant_root_format_version` property
 with value `2`, identifying recursive scalar leaves in arrays. Root remains at
 version `1`; term tags and postings encoding are unchanged.
+
+Reload experimental tables whose typed-path indexes were built before the
+storage-conversion fix; the new writer does not repair existing postings.
 
 Deploy the updated FE and BE before creating v2 indexes; mixed old/new binary
 rollout is not covered by the local validation.
