@@ -39,6 +39,9 @@ import org.apache.doris.nereids.trees.plans.commands.AlterTableCommand;
 import org.apache.doris.nereids.trees.plans.logical.LogicalPlan;
 import org.apache.doris.qe.ConnectContext;
 import org.apache.doris.qe.StmtExecutor;
+import org.apache.doris.service.FrontendServiceImpl;
+import org.apache.doris.thrift.TGetTabletSchemaResult;
+import org.apache.doris.thrift.TStatusCode;
 import org.apache.doris.utframe.TestWithFeService;
 
 import com.google.common.collect.Lists;
@@ -659,6 +662,52 @@ public class SchemaChangeHandlerTest extends TestWithFeService {
             testChangeExistingSubColumnType(defaultVal, tableName);
             testAddUnsupportedSubColumnType(defaultVal, tableName);
         }
+    }
+
+    @Test
+    public void testModifyVariantPropertiesLightSchemaChange() throws Exception {
+        createTable("CREATE TABLE test.sc_variant_properties (id INT, "
+                + "v VARIANT<'a': STRING, PROPERTIES('variant_max_subcolumns_count'='1')>) "
+                + "DUPLICATE KEY(id) DISTRIBUTED BY HASH(id) BUCKETS 1 "
+                + "PROPERTIES ('replication_num'='1', 'light_schema_change'='true')");
+        OlapTable table = (OlapTable) Env.getCurrentInternalCatalog().getDbOrMetaException("test")
+                .getTableOrMetaException("sc_variant_properties", Table.TableType.OLAP);
+        int uniqueId = table.getColumn("v").getUniqueId();
+        int schemaVersion = table.getIndexMetaByIndexId(table.getBaseIndexId()).getSchemaVersion();
+        List<String> definitions = List.of(
+                "VARIANT<'a': STRING, PROPERTIES('variant_max_subcolumns_count'='3')>",
+                "VARIANT<'a': INT, 'b': STRING, PROPERTIES('variant_max_subcolumns_count'='3')>",
+                "VARIANT<MATCH_NAME 'a': INT, 'b': STRING, PROPERTIES('variant_max_subcolumns_count'='3')>",
+                "VARIANT<PROPERTIES('variant_max_subcolumns_count'='0')>");
+        for (int i = 0; i < definitions.size(); ++i) {
+            alterTable("ALTER TABLE test.sc_variant_properties MODIFY COLUMN v " + definitions.get(i), connectContext);
+            Assertions.assertEquals(uniqueId, table.getColumn("v").getUniqueId());
+            Assertions.assertEquals(++schemaVersion,
+                    table.getIndexMetaByIndexId(table.getBaseIndexId()).getSchemaVersion());
+            Assertions.assertEquals(OlapTable.OlapTableState.NORMAL, table.getState());
+            long tabletId = table.getPartitions().iterator().next().getBaseIndex().getTablets().get(0).getId();
+            TGetTabletSchemaResult snapshot = new FrontendServiceImpl(null).getTabletSchema(tabletId);
+            Assertions.assertEquals(TStatusCode.OK, snapshot.getStatus().getStatusCode());
+            Assertions.assertEquals(schemaVersion, snapshot.getSchemaVersion());
+            Assertions.assertEquals(uniqueId, snapshot.getColumns().get(1).getColUniqueId());
+            Assertions.assertEquals(table.getColumn("v").getVariantMaxSubcolumnsCount(),
+                    snapshot.getColumns().get(1).getColumnType().getVariantMaxSubcolumnsCount());
+            Assertions.assertEquals(List.of(1, 2, 2, 0).get(i).intValue(),
+                    snapshot.getColumns().get(1).getChildrenColumnSize());
+        }
+        Assertions.assertEquals(0, table.getColumn("v").getVariantMaxSubcolumnsCount());
+        Assertions.assertNull(table.getColumn("v").getChildren());
+
+        createTable("CREATE TABLE test.sc_variant_row_store (id INT, "
+                + "v VARIANT<PROPERTIES('variant_max_subcolumns_count'='1')>) "
+                + "UNIQUE KEY(id) DISTRIBUTED BY HASH(id) BUCKETS 1 "
+                + "PROPERTIES ('replication_num'='1', 'store_row_column'='true')");
+        alterTable("ALTER TABLE test.sc_variant_row_store MODIFY COLUMN v "
+                + "VARIANT<PROPERTIES('variant_max_subcolumns_count'='0')>", connectContext);
+        DdlException exception = Assertions.assertThrows(DdlException.class, () ->
+                alterTable("ALTER TABLE test.sc_variant_row_store MODIFY COLUMN v VARIANT<'a': INT>",
+                        connectContext));
+        Assertions.assertTrue(exception.getMessage().contains("schema templates on a row-store table"));
     }
 
     @Test
