@@ -63,5 +63,51 @@ suite("test_variant_root_typed_doc", "p0,nonConcurrent") {
                 }
             }
         }
+
+        sql "DROP TABLE IF EXISTS variant_root_untyped_doc"
+        sql """CREATE TABLE variant_root_untyped_doc(id INT,
+            v VARIANT<PROPERTIES("variant_enable_doc_mode"="true",
+                "variant_doc_materialization_min_rows"="1000000000",
+                "variant_doc_hash_shard_count"="1")>,
+            INDEX idx_exact(v) USING INVERTED PROPERTIES(
+                "parser"="none", "variant_index_mode"="root"),
+            INDEX idx_token(v) USING INVERTED PROPERTIES(
+                "parser"="english", "variant_index_mode"="root"))
+            DUPLICATE KEY(id) DISTRIBUTED BY HASH(id) BUCKETS 1
+            PROPERTIES("replication_num"="1", "inverted_index_storage_format"="SNII",
+                "disable_auto_compaction"="true")"""
+        sql """INSERT INTO variant_root_untyped_doc VALUES
+            (1,parse_to_variant('{"body":"needle text"}')),
+            (2,parse_to_variant('{"other":"needle text"}')),
+            (3,parse_to_variant('{"body":"haystack"}'))"""
+        [false, true].each { enabled ->
+            sql "SET enable_inverted_index_query=${enabled}"
+            quickTest("variant_root_untyped_doc_match_${enabled}",
+                "SELECT id FROM variant_root_untyped_doc WHERE CAST(v['body'] AS STRING) " +
+                "MATCH_ANY 'needle' USING ANALYZER english ORDER BY id", true)
+            quickTest("variant_root_untyped_doc_eq_${enabled}",
+                "SELECT id FROM variant_root_untyped_doc " +
+                "WHERE CAST(v['body'] AS STRING)='needle text' ORDER BY id", true)
+        }
+        try {
+            GetDebugPoint().enableDebugPointForAllBEs(
+                "segment_iterator.inverted_index.filtered_rows", [filtered_rows: "2"])
+            quickTest("variant_root_untyped_doc_match_postings",
+                "SELECT id FROM variant_root_untyped_doc WHERE CAST(v['body'] AS STRING) " +
+                "MATCH_ANY 'needle' USING ANALYZER english ORDER BY id", true)
+        } finally {
+            GetDebugPoint().disableDebugPointForAllBEs(
+                "segment_iterator.inverted_index.filtered_rows")
+        }
+        try {
+            GetDebugPoint().enableDebugPointForAllBEs(
+                "segment_iterator.inverted_index.filtered_rows", [filtered_rows: "0"])
+            quickTest("variant_root_untyped_doc_eq_fallback",
+                "SELECT id FROM variant_root_untyped_doc " +
+                "WHERE CAST(v['body'] AS STRING)='needle text' ORDER BY id", true)
+        } finally {
+            GetDebugPoint().disableDebugPointForAllBEs(
+                "segment_iterator.inverted_index.filtered_rows")
+        }
     }
 }

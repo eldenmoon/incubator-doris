@@ -6858,6 +6858,42 @@ TEST_F(VariantColumnWriterReaderTest, test_find_subcolumn_tablet_indexes_branch_
         EXPECT_NE(nested[0]->get_index_suffix(), "arr%2Einner%2Ez");
     }
 
+    TabletIndexPB root_index_pb;
+    construct_tablet_index(&root_index_pb, 10005, "idx_v_root", root_column.unique_id());
+    (*root_index_pb.mutable_properties())[std::string(
+            segment_v2::variant_root_index::VARIANT_INDEX_MODE_KEY)] =
+            segment_v2::variant_root_index::VARIANT_INDEX_MODE_ROOT;
+    (*root_index_pb.mutable_properties())[std::string(
+            segment_v2::variant_root_index::VARIANT_ROOT_FORMAT_VERSION_KEY)] =
+            segment_v2::variant_root_index::VARIANT_ROOT_FORMAT_VERSION_V1;
+    (*root_index_pb.mutable_properties())["parser"] = "english";
+    TabletIndex root_index;
+    root_index.init_from_pb(root_index_pb);
+    _tablet_schema->append_index(std::move(root_index));
+
+    std::shared_ptr<segment_v2::ColumnReader> root_index_column_reader;
+    st = create_variant_root_reader(footer, file_reader, _tablet_schema, &root_index_column_reader);
+    ASSERT_TRUE(st.ok()) << st.msg();
+    auto* root_index_variant_reader =
+            assert_cast<segment_v2::VariantColumnReader*>(root_index_column_reader.get());
+    ASSERT_NE(root_index_variant_reader, nullptr);
+    segment_v2::BinaryColumnExtractIterator selected_sparse_reader("sparse", nullptr, nullptr,
+                                                                   true);
+    {
+        auto sparse_logical_path = root_index_variant_reader->find_subcolumn_tablet_indexes(
+                make_subcolumn("v.sparse", FieldType::OLAP_FIELD_TYPE_VARIANT, "v.sparse",
+                               root_unique_id),
+                std::make_shared<DataTypeVariant>(10, false), &selected_sparse_reader);
+        ASSERT_EQ(sparse_logical_path.size(), 1);
+        EXPECT_EQ(sparse_logical_path[0]->index_id(), 10005);
+        EXPECT_EQ(sparse_logical_path[0]->properties().at(
+                          std::string(segment_v2::variant_root_index::VARIANT_ROOT_QUERY_PATH_KEY)),
+                  "sparse");
+        EXPECT_EQ(sparse_logical_path[0]->properties().at(std::string(
+                          segment_v2::variant_root_index::VARIANT_ROOT_QUERY_VALUE_FAMILY_KEY)),
+                  "string");
+    }
+
     TabletIndexPB all_values_index_pb;
     construct_tablet_index(&all_values_index_pb, 10004, "idx_v_all_values",
                            root_column.unique_id());
@@ -6878,21 +6914,24 @@ TEST_F(VariantColumnWriterReaderTest, test_find_subcolumn_tablet_indexes_branch_
     auto* all_values_variant_reader =
             assert_cast<segment_v2::VariantColumnReader*>(all_values_column_reader.get());
     ASSERT_NE(all_values_variant_reader, nullptr);
-    segment_v2::BinaryColumnExtractIterator selected_sparse_reader("sparse", nullptr, nullptr,
-                                                                   true);
-
     {
         auto sparse_logical_path = all_values_variant_reader->find_subcolumn_tablet_indexes(
                 make_subcolumn("v.sparse", FieldType::OLAP_FIELD_TYPE_VARIANT, "v.sparse",
                                root_unique_id),
                 std::make_shared<DataTypeVariant>(10, false), &selected_sparse_reader);
-        ASSERT_EQ(sparse_logical_path.size(), 1);
-        EXPECT_EQ(sparse_logical_path[0]->index_id(), 10004);
-        EXPECT_EQ(sparse_logical_path[0]->properties().at(
-                          std::string(segment_v2::variant_root_index::VARIANT_ROOT_QUERY_PATH_KEY)),
+        ASSERT_EQ(sparse_logical_path.size(), 2);
+        const auto all_values = std::ranges::find_if(
+                sparse_logical_path, [](const auto& index) { return index->index_id() == 10004; });
+        ASSERT_NE(all_values, sparse_logical_path.end());
+        EXPECT_EQ((*all_values)
+                          ->properties()
+                          .at(std::string(
+                                  segment_v2::variant_root_index::VARIANT_ROOT_QUERY_PATH_KEY)),
                   "sparse");
-        EXPECT_FALSE(sparse_logical_path[0]->properties().contains(
-                std::string(segment_v2::variant_root_index::VARIANT_ROOT_QUERY_VALUE_FAMILY_KEY)));
+        EXPECT_FALSE((*all_values)
+                             ->properties()
+                             .contains(std::string(segment_v2::variant_root_index::
+                                                           VARIANT_ROOT_QUERY_VALUE_FAMILY_KEY)));
     }
 
     {

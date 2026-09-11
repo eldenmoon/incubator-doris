@@ -69,3 +69,21 @@
 -- !variant_typed_doc_all_values_1000_root_postings --
 2
 
+-- !variant_root_untyped_doc_match_false --
+1
+
+-- !variant_root_untyped_doc_eq_false --
+1
+
+-- !variant_root_untyped_doc_match_true --
+1
+
+-- !variant_root_untyped_doc_eq_true --
+1
+
+-- !variant_root_untyped_doc_match_postings --
+1
+
+-- !variant_root_untyped_doc_eq_fallback --
+1
+
