@@ -325,6 +325,10 @@ struct OlapReaderStatistics {
     int64_t inverted_index_searcher_cache_hit = 0;
     int64_t inverted_index_searcher_cache_miss = 0;
     int64_t inverted_index_downgrade_count = 0;
+    // VARIANT value-first index dictionary scans (whole-root / subtree / range predicates):
+    // dictionary entries enumerated and posting lists merged.
+    int64_t variant_index_scan_terms = 0;
+    int64_t variant_index_scan_postings = 0;
     int64_t inverted_index_analyzer_timer = 0;
     int64_t inverted_index_lookup_timer = 0;
     // See snii_query_stats.h: one field here instead of one per SNII counter.

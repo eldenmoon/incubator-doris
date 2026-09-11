@@ -46,6 +46,9 @@ inline constexpr std::string_view VARIANT_ROOT_FORMAT_VERSION_V2 = "2";
 inline constexpr std::string_view VARIANT_ROOT_QUERY_PATH_KEY = "variant_root_query_path";
 inline constexpr std::string_view VARIANT_ROOT_QUERY_VALUE_FAMILY_KEY =
         "variant_root_query_value_family";
+// Present when the bound path is a dynamic (VARIANT typed) sub-document: the predicate then
+// applies to every scalar leaf at or below the path, and an empty path is the whole document.
+inline constexpr std::string_view VARIANT_ROOT_QUERY_SUBTREE_KEY = "variant_root_query_subtree";
 
 bool is_root_mode_properties(const std::map<std::string, std::string>& properties);
 bool is_path_root_mode_properties(const std::map<std::string, std::string>& properties);

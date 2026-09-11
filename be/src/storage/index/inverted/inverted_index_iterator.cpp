@@ -79,11 +79,15 @@ Status InvertedIndexIterator::read_from_index(const IndexParam& param) {
                 "inverted index reader is null");
     }
     const auto& selected_properties = reader->get_index_properties();
+    // Root indexes store typed value-first terms per path and answer every supported predicate
+    // exactly. An AllValues index bound to one path only proves that the value exists somewhere
+    // in the row, so its rows remain candidates for the residual expression.
     i_param->requires_recheck =
-            variant_root_index::is_path_root_mode_properties(selected_properties) ||
-            (variant_root_index::is_all_values_mode_properties(selected_properties) &&
-             selected_properties.contains(
-                     std::string(variant_root_index::VARIANT_ROOT_QUERY_PATH_KEY)));
+            variant_root_index::is_all_values_mode_properties(selected_properties) &&
+            selected_properties.contains(
+                    std::string(variant_root_index::VARIANT_ROOT_QUERY_PATH_KEY)) &&
+            !selected_properties.at(std::string(variant_root_index::VARIANT_ROOT_QUERY_PATH_KEY))
+                     .empty();
     if (i_param->requires_recheck && _context->collection_similarity != nullptr) {
         return Status::Error<ErrorCode::INVERTED_INDEX_EVALUATE_SKIPPED>(
                 "candidate-only inverted index reader cannot provide exact scores");
