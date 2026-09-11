@@ -1195,9 +1195,10 @@ Status Compaction::do_inverted_index_compaction() {
                         if (!merge_status.ok()) {
                             break;
                         }
+                        const auto destination_segment_id =
+                                dest_segment_ids.at(destination_ordinal);
                         auto* destination_writer =
-                                inverted_index_file_writers[cast_set<int>(destination_ordinal)]
-                                        .get();
+                                inverted_index_file_writers.at(destination_segment_id).get();
                         if (merge_eligibility.kind ==
                             snii::compaction::SniiStreamedMergeKind::kCommonGramsT3) {
                             merge_status = destination_writer->add_snii_index_streamed(

@@ -19,6 +19,8 @@
 
 #include <hs/hs.h>
 
+#include <iterator>
+
 #include "core/field.h"
 #include "runtime/query_context.h"
 #include "runtime/runtime_state.h"
@@ -248,9 +250,11 @@ inline std::vector<segment_v2::TermInfo> FunctionMatchBase::analyse_data_token(
             auto reader = doris::segment_v2::inverted_index::InvertedIndexAnalyzer::create_reader(
                     analyzer_ctx->char_filter_map);
             reader->init(str_ref.data, (int)str_ref.size, true);
-            data_tokens =
+            auto element_tokens =
                     doris::segment_v2::inverted_index::InvertedIndexAnalyzer::get_analyse_result(
                             reader, analyzer_ctx->analyzer.get());
+            data_tokens.insert(data_tokens.end(), std::make_move_iterator(element_tokens.begin()),
+                               std::make_move_iterator(element_tokens.end()));
         }
     } else {
         const auto& str_ref = string_col->get_data_at(current_block_row_idx);

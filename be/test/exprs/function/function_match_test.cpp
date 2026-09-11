@@ -448,7 +448,10 @@ TEST(FunctionMatchTest, array_offset_handling) {
         int32_t offset = 0;
         auto tokens = match_any.analyse_data_token("test_col", ctx.ctx.get(), string_col.get(), 0,
                                                    &array_offsets, offset);
-        EXPECT_GT(tokens.size(), 0);
+        // Every element's tokens must survive, not only the last element's.
+        ASSERT_EQ(tokens.size(), 2);
+        EXPECT_EQ(tokens[0].get_single_term(), "first");
+        EXPECT_EQ(tokens[1].get_single_term(), "second");
         // offset should be updated to 2
         EXPECT_EQ(offset, 2);
     }
@@ -458,7 +461,9 @@ TEST(FunctionMatchTest, array_offset_handling) {
         int32_t offset = 2; // Start from where previous ended
         auto tokens = match_any.analyse_data_token("test_col", ctx.ctx.get(), string_col.get(), 1,
                                                    &array_offsets, offset);
-        EXPECT_GT(tokens.size(), 0);
+        ASSERT_EQ(tokens.size(), 2);
+        EXPECT_EQ(tokens[0].get_single_term(), "third");
+        EXPECT_EQ(tokens[1].get_single_term(), "fourth");
         // offset should be updated to 4
         EXPECT_EQ(offset, 4);
     }
