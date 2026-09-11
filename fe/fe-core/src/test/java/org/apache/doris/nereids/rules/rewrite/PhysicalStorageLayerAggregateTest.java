@@ -17,10 +17,17 @@
 
 package org.apache.doris.nereids.rules.rewrite;
 
+import org.apache.doris.analysis.InvertedIndexProperties;
 import org.apache.doris.catalog.Column;
 import org.apache.doris.catalog.DatabaseIf;
+import org.apache.doris.catalog.HashDistributionInfo;
+import org.apache.doris.catalog.Index;
+import org.apache.doris.catalog.KeysType;
+import org.apache.doris.catalog.OlapTable;
+import org.apache.doris.catalog.PartitionInfo;
 import org.apache.doris.catalog.TableIf;
 import org.apache.doris.catalog.Type;
+import org.apache.doris.catalog.info.IndexType;
 import org.apache.doris.datasource.CatalogIf;
 import org.apache.doris.datasource.plugin.PluginDrivenExternalTable;
 import org.apache.doris.nereids.CascadesContext;
@@ -29,14 +36,18 @@ import org.apache.doris.nereids.rules.RulePromise;
 import org.apache.doris.nereids.rules.RuleType;
 import org.apache.doris.nereids.rules.implementation.AggregateStrategies;
 import org.apache.doris.nereids.trees.expressions.Alias;
+import org.apache.doris.nereids.trees.expressions.MatchAny;
+import org.apache.doris.nereids.trees.expressions.SlotReference;
 import org.apache.doris.nereids.trees.expressions.functions.agg.Count;
 import org.apache.doris.nereids.trees.expressions.functions.agg.Max;
 import org.apache.doris.nereids.trees.expressions.functions.agg.Min;
 import org.apache.doris.nereids.trees.expressions.functions.scalar.Ln;
+import org.apache.doris.nereids.trees.expressions.literal.StringLiteral;
 import org.apache.doris.nereids.trees.plans.RelationId;
 import org.apache.doris.nereids.trees.plans.logical.LogicalAggregate;
 import org.apache.doris.nereids.trees.plans.logical.LogicalFileScan;
 import org.apache.doris.nereids.trees.plans.logical.LogicalFileScan.SelectedPartitions;
+import org.apache.doris.nereids.trees.plans.logical.LogicalFilter;
 import org.apache.doris.nereids.trees.plans.logical.LogicalOlapScan;
 import org.apache.doris.nereids.trees.plans.logical.LogicalProject;
 import org.apache.doris.nereids.trees.plans.physical.PhysicalStorageLayerAggregate.PushDownAggOp;
@@ -44,8 +55,11 @@ import org.apache.doris.nereids.util.MemoPatternMatchSupported;
 import org.apache.doris.nereids.util.MemoTestUtils;
 import org.apache.doris.nereids.util.PlanChecker;
 import org.apache.doris.nereids.util.PlanConstructor;
+import org.apache.doris.thrift.TStorageType;
 
 import com.google.common.collect.ImmutableList;
+import com.google.common.collect.ImmutableMap;
+import com.google.common.collect.ImmutableSet;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 
@@ -136,6 +150,44 @@ public class PhysicalStorageLayerAggregateTest implements MemoPatternMatchSuppor
                         physicalStorageLayerAggregate().when(agg -> agg.getAggOp() == PushDownAggOp.COUNT
                                 && agg.getCountArgumentExprIds().equals(
                                         ImmutableList.of(fileScan.getOutput().get(0).getExprId())))));
+    }
+
+    @Test
+    public void testCountOnIndexDoesNotInspectVariantIndexMode() {
+        Column id = new Column("id", Type.INT, false);
+        Column payload = new Column("payload", Type.VARIANT, true);
+        ImmutableList<Column> columns = ImmutableList.of(id, payload);
+        Index allValuesIndex = new Index(10L, "payload_all_values", ImmutableList.of("payload"),
+                IndexType.INVERTED,
+                ImmutableMap.of(
+                        InvertedIndexProperties.INVERTED_INDEX_PARSER_KEY,
+                        InvertedIndexProperties.INVERTED_INDEX_PARSER_NONE,
+                        InvertedIndexProperties.VARIANT_INDEX_MODE_KEY,
+                        InvertedIndexProperties.VARIANT_INDEX_MODE_ALL_VALUES,
+                        InvertedIndexProperties.VARIANT_ROOT_FORMAT_VERSION_KEY,
+                        InvertedIndexProperties.VARIANT_ROOT_FORMAT_VERSION_V1),
+                "");
+        OlapTable table = new OlapTable(10L, "variant_table", columns, KeysType.DUP_KEYS,
+                new PartitionInfo(), new HashDistributionInfo(1, ImmutableList.of(id)));
+        table.setIndexes(ImmutableList.of(allValuesIndex));
+        table.setIndexMeta(-1, "variant_table", columns, 0, 0, (short) 0,
+                TStorageType.COLUMN, KeysType.DUP_KEYS, ImmutableList.of(allValuesIndex));
+
+        LogicalOlapScan scan = new LogicalOlapScan(PlanConstructor.getNextRelationId(), table,
+                ImmutableList.of("db"));
+        SlotReference payloadRepo = ((SlotReference) scan.getOutput().get(1))
+                .withSubPath(ImmutableList.of("repo"));
+        LogicalFilter<LogicalOlapScan> filter = new LogicalFilter<>(
+                ImmutableSet.of(new MatchAny(payloadRepo, new StringLiteral("doris"))), scan);
+        LogicalAggregate<LogicalFilter<LogicalOlapScan>> aggregate = new LogicalAggregate<>(
+                Collections.emptyList(), ImmutableList.of(new Alias(new Count(), "count")),
+                true, Optional.empty(), filter);
+
+        PlanChecker.from(MemoTestUtils.createCascadesContext(aggregate))
+                .applyImplementation(countOnIndexWithoutProject())
+                .matches(logicalAggregate(logicalFilter(
+                        physicalStorageLayerAggregate()
+                                .when(agg -> agg.getAggOp() == PushDownAggOp.COUNT_ON_MATCH))));
     }
 
     @Test
@@ -289,6 +341,14 @@ public class PhysicalStorageLayerAggregateTest implements MemoPatternMatchSuppor
         return new AggregateStrategies().buildRules()
                 .stream()
                 .filter(rule -> rule.getRuleType() == RuleType.STORAGE_LAYER_AGGREGATE_WITHOUT_PROJECT)
+                .findFirst()
+                .get();
+    }
+
+    private Rule countOnIndexWithoutProject() {
+        return new AggregateStrategies().buildRules()
+                .stream()
+                .filter(rule -> rule.getRuleType() == RuleType.COUNT_ON_INDEX_WITHOUT_PROJECT)
                 .findFirst()
                 .get();
     }

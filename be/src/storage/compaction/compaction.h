@@ -184,6 +184,9 @@ protected:
     RuntimeProfile::Counter* _output_row_num_counter = nullptr;
     RuntimeProfile::Counter* _output_segments_num_counter = nullptr;
     RuntimeProfile::Counter* _merge_rowsets_latency_timer = nullptr;
+    RuntimeProfile::Counter* _merge_row_data_latency_timer = nullptr;
+    RuntimeProfile::Counter* _inverted_index_compaction_latency_timer = nullptr;
+    RuntimeProfile::Counter* _build_output_rowset_latency_timer = nullptr;
 };
 
 // `StorageEngine` mixin for `Compaction`

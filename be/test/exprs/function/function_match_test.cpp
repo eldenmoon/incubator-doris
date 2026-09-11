@@ -24,13 +24,22 @@
 #include <thread>
 #include <vector>
 
+#include "core/assert_cast.h"
 #include "core/block/block.h"
 #include "core/column/column_string.h"
 #include "core/column/column_vector.h"
+#include "core/column/variant_v2/column_variant_v2.h"
+#include "core/data_type/data_type_array.h"
+#include "core/data_type/data_type_number.h"
+#include "core/data_type/data_type_string.h"
+#include "core/data_type/data_type_variant_v2.h"
+#include "core/value/variant/variant_batch_builder.h"
 #include "exprs/function/match.h"
+#include "exprs/function/parse/variant_string_parse.h"
 #include "runtime/runtime_state.h"
 #include "storage/index/inverted/analyzer/analyzer.h"
 #include "storage/index/inverted/analyzer/custom_analyzer.h"
+#include "storage/index/inverted/inverted_index_iterator.h"
 
 namespace doris {
 
@@ -54,6 +63,28 @@ TestInvertedIndexCtx create_inverted_index_ctx(InvertedIndexParserType parser_ty
     }
     return test_ctx;
 }
+
+class RootMatchIndexIterator final : public segment_v2::IndexIterator {
+public:
+    segment_v2::IndexReaderPtr get_reader(segment_v2::IndexReaderType) const override {
+        return nullptr;
+    }
+
+    Status read_from_index(const segment_v2::IndexParam& param) override {
+        auto* inverted = std::get<segment_v2::InvertedIndexParam*>(param);
+        inverted->roaring->add(1);
+        inverted->roaring->add(3);
+        inverted->requires_recheck = true;
+        return Status::OK();
+    }
+
+    Status read_null_bitmap(segment_v2::InvertedIndexQueryCacheHandle*) override {
+        return Status::OK();
+    }
+
+    Result<bool> has_null() override { return false; }
+    bool is_variant_root_index() const override { return true; }
+};
 
 TEST(FunctionMatchTest, analyse_query_str) {
     FunctionMatchPhrase func_match_phrase;
@@ -429,6 +460,35 @@ TEST(FunctionMatchTest, error_handling_and_edge_cases) {
 }
 
 // Test with array offsets (for array column types)
+TEST(FunctionMatchTest, ArrayPhraseKeepsElementBoundaries) {
+    TQueryOptions options;
+    options.__set_enable_match_without_inverted_index(true);
+    RuntimeState state(options, TQueryGlobals {});
+    auto context = FunctionContext::create_context(&state, {}, {});
+    auto strings = ColumnString::create();
+    for (const std::string_view value : {"apache", "doris", "apache doris", "other"}) {
+        strings->insert_data(value.data(), value.size());
+    }
+    auto offsets = ColumnArray::ColumnOffsets::create();
+    offsets->get_data() = {2, 4};
+    ColumnPtr array = ColumnArray::create(std::move(strings), std::move(offsets));
+    auto analyzer = create_inverted_index_ctx(InvertedIndexParserType::PARSER_ENGLISH);
+    std::shared_ptr<InvertedIndexAnalyzerCtx> analyzer_state(std::move(analyzer.ctx));
+    context->set_function_state(FunctionContext::THREAD_LOCAL, analyzer_state);
+    auto query = ColumnString::create();
+    query->insert_data("apache doris", 12);
+    Block block;
+    block.insert({array, std::make_shared<DataTypeArray>(std::make_shared<DataTypeString>()), "a"});
+    block.insert({std::move(query), std::make_shared<DataTypeString>(), "query"});
+    block.insert({ColumnUInt8::create(), std::make_shared<DataTypeUInt8>(), "result"});
+    FunctionMatchPhrase phrase;
+    ASSERT_TRUE(phrase.execute_impl(context.get(), block, {0, 1}, 2, 2).ok());
+    const auto& result =
+            assert_cast<const ColumnUInt8&>(*block.get_by_position(2).column).get_data();
+    EXPECT_EQ(result[0], 0);
+    EXPECT_EQ(result[1], 1);
+}
+
 TEST(FunctionMatchTest, array_offset_handling) {
     FunctionMatchAny match_any;
 
@@ -448,7 +508,9 @@ TEST(FunctionMatchTest, array_offset_handling) {
         int32_t offset = 0;
         auto tokens = match_any.analyse_data_token("test_col", ctx.ctx.get(), string_col.get(), 0,
                                                    &array_offsets, offset);
-        EXPECT_GT(tokens.size(), 0);
+        ASSERT_EQ(tokens.size(), 2);
+        EXPECT_EQ(tokens[0].get_single_term(), "first");
+        EXPECT_EQ(tokens[1].get_single_term(), "second");
         // offset should be updated to 2
         EXPECT_EQ(offset, 2);
     }
@@ -458,7 +520,9 @@ TEST(FunctionMatchTest, array_offset_handling) {
         int32_t offset = 2; // Start from where previous ended
         auto tokens = match_any.analyse_data_token("test_col", ctx.ctx.get(), string_col.get(), 1,
                                                    &array_offsets, offset);
-        EXPECT_GT(tokens.size(), 0);
+        ASSERT_EQ(tokens.size(), 2);
+        EXPECT_EQ(tokens[0].get_single_term(), "third");
+        EXPECT_EQ(tokens[1].get_single_term(), "fourth");
         // offset should be updated to 4
         EXPECT_EQ(offset, 4);
     }
@@ -567,16 +631,100 @@ TEST(FunctionMatchTest, evaluate_inverted_index_basic) {
               doris::segment_v2::InvertedIndexQueryType::MATCH_PHRASE_EDGE_QUERY);
 }
 
-// Test check function with different error conditions
-TEST(FunctionMatchTest, check_function_error_handling) {
+TEST(FunctionMatchTest, VariantRootMatchKeepsScalarResidual) {
+    auto query = ColumnString::create();
+    query->insert_data("root search", 11);
+    ColumnsWithTypeAndName arguments = {
+            {std::move(query), std::make_shared<DataTypeString>(), "query"}};
+    std::vector<IndexFieldNameAndTypePair> data_type_with_names = {
+            {"v.comment.body", std::make_shared<DataTypeString>()}};
+    RootMatchIndexIterator iterator;
+    std::vector<segment_v2::IndexIterator*> iterators = {&iterator};
+
+    segment_v2::InvertedIndexResultBitmap result;
     FunctionMatchAny match_any;
+    ASSERT_TRUE(match_any
+                        .evaluate_inverted_index(arguments, data_type_with_names, iterators,
+                                                 /*num_rows=*/5, nullptr, result)
+                        .ok());
+    ASSERT_NE(result.get_data_bitmap(), nullptr);
+    EXPECT_EQ(result.get_data_bitmap()->cardinality(), 2U);
+    EXPECT_TRUE(result.requires_recheck());
+}
 
-    // Note: The actual check function requires proper runtime state setup
-    // This test verifies the function exists and can be called
-    // In real scenarios, it would test enable_match_without_inverted_index option
+TEST(FunctionMatchTest, VariantRootResidualMatchesAcrossPathsArraysAndScalars) {
+    JsonStringToVariantEncoder encoder;
+    for (const std::string_view json : {
+                 R"({"message":"Apache","repo":"Doris"})",
+                 R"({"message":"Apache only","items":[{"secretkey":"leafvalue"}]})",
+                 R"({"tags":["apache","doris"]})",
+                 R"("Apache Doris")",
+                 R"(null)",
+         }) {
+        encoder.add_json({json.data(), json.size()});
+    }
+    VariantBatchBuilder batch = encoder.finish_batch();
+    auto values = ColumnVariantV2::create();
+    values->insert_encoded_batch(batch);
+    ColumnPtr values_column = std::move(values);
 
-    // Test that the check function is implemented
-    EXPECT_TRUE(true); // Placeholder - actual implementation would test error scenarios
+    TQueryOptions query_options;
+    query_options.__set_enable_match_without_inverted_index(true);
+    RuntimeState runtime_state(query_options, TQueryGlobals {});
+    auto context = FunctionContext::create_context(&runtime_state, {}, {});
+    auto analyzer = create_inverted_index_ctx(InvertedIndexParserType::PARSER_ENGLISH);
+    std::shared_ptr<InvertedIndexAnalyzerCtx> analyzer_state(std::move(analyzer.ctx));
+    context->set_function_state(FunctionContext::THREAD_LOCAL, analyzer_state);
+
+    const auto execute = [&](FunctionMatchBase& function, std::string_view query) {
+        auto query_column = ColumnString::create();
+        query_column->insert_data(query.data(), query.size());
+        Block block;
+        block.insert({values_column, std::make_shared<DataTypeVariantV2>(), "payload"});
+        block.insert({std::move(query_column), std::make_shared<DataTypeString>(), "query"});
+        block.insert({ColumnUInt8::create(), std::make_shared<DataTypeUInt8>(), "result"});
+        EXPECT_TRUE(
+                function.execute_impl(context.get(), block, {0, 1}, 2, values_column->size()).ok());
+        const auto& result =
+                assert_cast<const ColumnUInt8&>(*block.get_by_position(2).column).get_data();
+        return std::vector<uint8_t>(result.begin(), result.end());
+    };
+
+    FunctionMatchAll match_all;
+    EXPECT_EQ(execute(match_all, "apache doris"), std::vector<uint8_t>({1, 0, 1, 1, 0}));
+    FunctionMatchAny match_any;
+    EXPECT_EQ(execute(match_any, "doris"), std::vector<uint8_t>({1, 0, 1, 1, 0}));
+    EXPECT_EQ(execute(match_any, "secretkey"), std::vector<uint8_t>({0, 0, 0, 0, 0}));
+    EXPECT_EQ(execute(match_any, "leafvalue"), std::vector<uint8_t>({0, 1, 0, 0, 0}));
+
+    auto exact_analyzer = create_inverted_index_ctx(InvertedIndexParserType::PARSER_NONE);
+    context->set_function_state(
+            FunctionContext::THREAD_LOCAL,
+            std::shared_ptr<InvertedIndexAnalyzerCtx>(std::move(exact_analyzer.ctx)));
+    EXPECT_EQ(execute(match_any, "doris"), std::vector<uint8_t>({0, 0, 1, 0, 0}));
+}
+
+TEST(FunctionMatchTest, IndexRecheckDoesNotEnableUnindexedMatch) {
+    TQueryOptions query_options;
+    query_options.__set_enable_match_without_inverted_index(false);
+    RuntimeState runtime_state(query_options, TQueryGlobals {});
+    auto context = FunctionContext::create_context(&runtime_state, {}, {});
+    auto strings = ColumnString::create();
+    strings->insert_data("abc", 3);
+    ColumnUInt8::Container result(1, 0);
+    auto analyzer = create_inverted_index_ctx(InvertedIndexParserType::PARSER_NONE);
+    FunctionMatchAny function;
+    auto execute = [&]() {
+        return function.execute_match(context.get(), "s", "abc", 1, strings.get(),
+                                      analyzer.ctx.get(), nullptr, result);
+    };
+    EXPECT_TRUE(execute().is<ErrorCode::INVERTED_INDEX_NOT_SUPPORTED>());
+    context->set_is_index_recheck(true);
+    EXPECT_TRUE(execute().ok());
+    EXPECT_EQ(result[0], 1);
+    EXPECT_FALSE(context->clone()->is_index_recheck());
+    context->set_is_index_recheck(false);
+    EXPECT_TRUE(execute().is<ErrorCode::INVERTED_INDEX_NOT_SUPPORTED>());
 }
 
 // Test execute_impl basic structure

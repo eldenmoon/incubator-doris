@@ -957,10 +957,13 @@ Status VExpr::_evaluate_inverted_index(VExprContext* context, const FunctionBase
                         continue;
                     }
                 }
-                if (origin_primitive_type != TYPE_VARIANT &&
-                    (storage_type->equals(*target_type) ||
-                     (is_string_type(target_primitive_type) &&
-                      is_string_type(origin_primitive_type)))) {
+                const bool dynamic_variant_text_match = _node_type == TExprNodeType::MATCH_PRED &&
+                                                        origin_primitive_type == TYPE_VARIANT &&
+                                                        is_string_type(target_primitive_type);
+                if (dynamic_variant_text_match || (origin_primitive_type != TYPE_VARIANT &&
+                                                   (storage_type->equals(*target_type) ||
+                                                    (is_string_type(target_primitive_type) &&
+                                                     is_string_type(origin_primitive_type))))) {
                     children_exprs.emplace_back(expr_without_cast(child));
                 }
             } else {
@@ -1028,8 +1031,10 @@ Status VExpr::_evaluate_inverted_index(VExprContext* context, const FunctionBase
     }
     if (!result_bitmap.is_empty()) {
         index_context->set_index_result_for_expr(this, result_bitmap);
-        for (int column_id : column_ids) {
-            index_context->set_true_for_index_status(this, column_id);
+        if (!result_bitmap.requires_recheck()) {
+            for (int column_id : column_ids) {
+                index_context->set_true_for_index_status(this, column_id);
+            }
         }
     }
     return Status::OK();

@@ -388,6 +388,9 @@ writer::TrackedEncodedNorms SniiPlainT2MergePlan::take_destination_encoded_norms
 }
 
 format::IndexConfig SniiPlainT2MergePlan::destination_index_config() const {
+    if (eligibility_.kind == SniiStreamedMergeKind::kDocsOnlyT1) {
+        return format::IndexConfig::kDocsOnly;
+    }
     return eligibility_.kind == SniiStreamedMergeKind::kCommonGramsT3
                    ? format::IndexConfig::kDocsPositionsScoring
                    : format::IndexConfig::kDocsPositions;
@@ -395,7 +398,7 @@ format::IndexConfig SniiPlainT2MergePlan::destination_index_config() const {
 
 std::optional<segment_v2::inverted_index::CommonGramsSegmentMetadata>
 SniiPlainT2MergePlan::destination_common_grams_metadata(size_t destination_segment) const {
-    if (eligibility_.kind == SniiStreamedMergeKind::kPlainT2) {
+    if (eligibility_.kind != SniiStreamedMergeKind::kCommonGramsT3) {
         return std::nullopt;
     }
     DORIS_CHECK(eligibility_.common_grams_metadata_seed.has_value());
@@ -426,8 +429,12 @@ Status SniiPlainT2MergePlan::take_front_source(TermMergeFrontier* frontier, Curr
     }
 
     const bool source_has_positions = posting_entry_has_positions(entry);
-    if (!current->common_gram && !source_has_positions) {
+    if (eligibility_.kind != SniiStreamedMergeKind::kDocsOnlyT1 && !current->common_gram &&
+        !source_has_positions) {
         return index_compaction_merge_corruption("ordinary term has docs-only posting shape");
+    }
+    if (eligibility_.kind == SniiStreamedMergeKind::kDocsOnlyT1 && source_has_positions) {
+        return index_compaction_merge_corruption("docs-only term has position posting shape");
     }
     if (!current->has_positions.has_value()) {
         current->has_positions = source_has_positions;

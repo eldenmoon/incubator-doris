@@ -105,6 +105,11 @@ public:
             return Status::OK();
         }
         auto* index_iter = iterators[0];
+        if (index_iter->is_variant_root_index()) {
+            // The root null bitmap describes SQL NULL values of the whole VARIANT column, not
+            // the nullability of the nested path bound to this scan slot.
+            return Status::OK();
+        }
         if (index_iter->has_null()) {
             segment_v2::InvertedIndexQueryCacheHandle null_bitmap_cache_handle;
             RETURN_IF_ERROR(index_iter->read_null_bitmap(&null_bitmap_cache_handle));

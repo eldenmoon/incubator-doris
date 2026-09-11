@@ -78,6 +78,9 @@ public class CreateIndexOp extends AlterTableOp {
         }
 
         indexDef.validate();
+        if (indexDef.isVariantRootIndex()) {
+            throw new AnalysisException("VARIANT root index can only be declared in CREATE TABLE");
+        }
         index = indexDef.translateToCatalogStyle();
     }
 

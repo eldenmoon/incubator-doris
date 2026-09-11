@@ -349,9 +349,14 @@ public:
             if (context->get_index_context()->has_index_result_for_expr(child.get())) {
                 const auto* index_result =
                         context->get_index_context()->get_index_result_for_expr(child.get());
-                roaring::Roaring full_result;
-                full_result.addRange(0, segment_num_rows);
-                res = index_result->op_not(&full_result);
+                if (index_result->requires_recheck()) {
+                    // The complement of a candidate superset is not a safe candidate for NOT.
+                    all_pass = false;
+                } else {
+                    roaring::Roaring full_result;
+                    full_result.addRange(0, segment_num_rows);
+                    res = index_result->op_not(&full_result);
+                }
             } else {
                 all_pass = false;
             }

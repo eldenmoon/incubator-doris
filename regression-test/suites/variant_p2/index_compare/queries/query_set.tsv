@@ -1,0 +1,18 @@
+id	category	execution	layouts	repetitions	predicate	expected_indexed_layouts	note
+exact_action_opened	string_eq	index_on	all	5	CAST(payload['action'] AS STRING) = 'opened'	root,all_values,children	Common real action value
+exact_action_in	string_in	index_on	all	5	CAST(payload['action'] AS STRING) IN ('opened', 'closed')	root,all_values,children	IN operator on a real string path
+exact_pr_number	numeric_eq	index_on	all	5	CAST(payload['pull_request']['number'] AS BIGINT) = 3842	root,all_values,children	Rare nested numeric value
+exact_pr_number_in	numeric_in	index_on	all	5	CAST(payload['pull_request']['number'] AS BIGINT) IN (3842, 42, 1)	root,all_values,children	Numeric IN on a nested path
+token_comment_security	match_any	index_on_and_off	root,all_values,children	5	CAST(payload['comment']['body'] AS STRING) MATCH_ANY 'security' USING ANALYZER english	root,all_values,children	English token; NoIndex is N/A because explicit analyzer binding requires matching index metadata
+token_comment_sonar	match_any_sparse	index_on_and_off	root,all_values,children	5	CAST(payload['comment']['body'] AS STRING) MATCH_ANY 'sonar' USING ANALYZER english	root,all_values,children	Sparse English token; compare same-table index-off residual scan
+token_comment_the	match_any_dense	index_on_and_off	root,all_values,children	5	CAST(payload['comment']['body'] AS STRING) MATCH_ANY 'the' USING ANALYZER english	root,all_values,children	Dense English token on the same path and analyzer; compare same-table index-off residual scan
+token_comment_test_code	match_all	index_on_and_off	root,all_values,children	5	CAST(payload['comment']['body'] AS STRING) MATCH_ALL 'test code' USING ANALYZER english	root,all_values,children	Two-token conjunction; compare same-table index-off residual scan
+complex_and	and	index_on_and_off	root,all_values,children	5	type = 'IssueCommentEvent' AND CAST(payload['comment']['body'] AS STRING) MATCH_ANY 'security' USING ANALYZER english	root,all_values,children	Variant token plus scalar predicate; NoIndex explicit analyzer is N/A
+complex_or	or	index_on_and_off	root,all_values,children	5	CAST(payload['action'] AS STRING) = 'opened' OR CAST(payload['comment']['body'] AS STRING) MATCH_ANY 'sonar' USING ANALYZER english	root,all_values,children	OR across exact and token predicates; compare same-table index-off residual scan
+path_like_error	path_like	index_off	all	5	CAST(payload['comment']['body'] AS STRING) LIKE '%error%'	none	Scan-only path substring; index disabled and no admission expected
+ref_prefix	starts_with	index_off	all	5	STARTS_WITH(CAST(payload['ref'] AS STRING), 'refs/heads/')	none	Scan-only path prefix; index disabled and no admission expected
+whole_root_match_xgboost	whole_root_match_sparse	index_on_and_off	all_values	5	payload MATCH_ANY 'xgboost' USING ANALYZER english	all_values	Sparse whole-root English token; compare AllValues index-on with same-table index-off
+whole_root_match_update	whole_root_match_dense	index_on_and_off	all_values	5	payload MATCH_ANY 'update' USING ANALYZER english	all_values	Dense whole-root English token; compare AllValues index-on with same-table index-off
+whole_root_match_error	whole_root_match_auxiliary	index_on_and_off	all_values	5	payload MATCH_ANY 'error' USING ANALYZER english	all_values	Medium-high whole-root auxiliary token; retain as context, not as the sparse-dense contrast
+whole_root_match_opened_exact	whole_root_match	index_on_and_off	all_values	5	payload MATCH_ANY 'opened' USING ANALYZER none	all_values	AllValues exact whole-root value query
+whole_root_like_error	whole_root_like	index_off	all	1	CAST(payload AS STRING) LIKE '%error%'	none	Brute full-root reconstruction; scan-only with no admission expected

@@ -17,9 +17,11 @@
 
 package org.apache.doris.nereids.rules.analysis;
 
+import org.apache.doris.analysis.MatchPredicate.Operator;
 import org.apache.doris.analysis.SetType;
 import org.apache.doris.catalog.Env;
 import org.apache.doris.catalog.FunctionRegistry;
+import org.apache.doris.common.Config;
 import org.apache.doris.common.DdlException;
 import org.apache.doris.common.Pair;
 import org.apache.doris.common.util.Util;
@@ -1022,9 +1024,14 @@ public class ExpressionAnalyzer extends SubExprAnalyzer<ExpressionRewriteContext
                     right.toSql(), match.toSql(), right.getDataType()));
         }
 
-        if (left.getDataType().isVariantType()) {
-            left = new Cast(left, right.getDataType());
+        // Recursive VARIANT evaluation is limited to ANY/ALL. Other MATCH operators keep
+        // the existing scalar conversion, including ordinary VARIANT subpaths.
+        if (left.getDataType().isVariantType()
+                && (!Config.enable_variant_v2
+                    || (match.op() != Operator.MATCH_ANY && match.op() != Operator.MATCH_ALL))) {
+            left = TypeCoercionUtils.castIfNotSameType(left, StringType.INSTANCE);
         }
+
         return match.withChildren(left, right);
     }
 
