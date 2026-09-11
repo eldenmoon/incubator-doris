@@ -1514,6 +1514,14 @@ void Compaction::construct_index_compaction_columns(RowsetWriterContext& ctx) {
             if (ctx.snii_indexes_to_do_compaction.contains(index_key)) {
                 continue;
             }
+            if (const auto decided = _snii_merge_eligibility.find(index_key);
+                decided != _snii_merge_eligibility.end()) {
+                // Already validated by an earlier planning pass of this compaction.
+                if (decided->second.ok()) {
+                    ctx.snii_indexes_to_do_compaction.emplace(index_key);
+                }
+                continue;
+            }
             if (!_cur_tablet_schema->has_column_unique_id(col_unique_id)) {
                 continue;
             }
@@ -1542,6 +1550,12 @@ void Compaction::construct_index_compaction_columns(RowsetWriterContext& ctx) {
                                        "source index unavailable or read-ahead budget gate failed");
             std::optional<snii::compaction::SniiCompactionEligibility> merge_eligibility;
             size_t source_ordinal = 0;
+            // Guaranteed allocations of a native merge: the read-ahead budget plus, per source,
+            // one term's docids and frequencies at the worst case df == indexed docs (a
+            // ubiquitous token such as "https" in a VARIANT token index). Positions are not
+            // estimated. The merge charges the same cap (inverted_index_ram_buffer_size) as a
+            // hard limit and would otherwise fail this compaction mid-way.
+            uint64_t estimated_merge_bytes = kSniiCompactionReadAheadBudgetBytes;
 
             for (const auto& rowset : _input_rowsets) {
                 if (!eligible) {
@@ -1629,6 +1643,10 @@ void Compaction::construct_index_compaction_columns(RowsetWriterContext& ctx) {
                         eligible = false;
                         break;
                     }
+                    const auto& source_stats = source_index.value()->stats();
+                    estimated_merge_bytes +=
+                            source_stats.indexed_doc_count * (sizeof(uint32_t) * 2);
+                    estimated_merge_bytes += source_stats.null_count * sizeof(uint32_t);
                     ++source_ordinal;
                 }
             }
@@ -1637,6 +1655,21 @@ void Compaction::construct_index_compaction_columns(RowsetWriterContext& ctx) {
                 eligibility_status = Status::Error<INVERTED_INDEX_NOT_SUPPORTED>(
                         "source SNII index file or metadata is unavailable");
             }
+            if (eligible) {
+                const auto merge_cap_bytes =
+                        static_cast<uint64_t>(config::inverted_index_ram_buffer_size * 1024 * 1024);
+                DBUG_EXECUTE_IF("Compaction::snii_native_merge_preflight_over_cap",
+                                { estimated_merge_bytes = merge_cap_bytes + 1; });
+                if (merge_cap_bytes != 0 && estimated_merge_bytes > merge_cap_bytes) {
+                    eligible = false;
+                    eligibility_status = Status::Error<MEM_LIMIT_EXCEEDED>(
+                            "estimated native merge memory {} bytes exceeds "
+                            "inverted_index_ram_buffer_size {} bytes",
+                            estimated_merge_bytes, merge_cap_bytes);
+                    _snii_merge_preflight_rejections++;
+                }
+            }
+            _snii_merge_eligibility.emplace(index_key, eligibility_status);
             // Per-(column, index) granularity: an eligible index merges natively
             // even when a sibling on the SAME column must be rebuilt from the
             // raw column -- eligibility is a property of the logical index, not
