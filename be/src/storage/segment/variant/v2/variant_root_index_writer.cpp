@@ -17,6 +17,7 @@
 
 #include "storage/segment/variant/v2/variant_root_index_writer.h"
 
+#include <algorithm>
 #include <limits>
 #include <unordered_set>
 
@@ -24,6 +25,7 @@
 #include "common/exception.h"
 #include "core/column/column_variant.h"
 #include "core/value/variant/variant_leaf_visitor.h"
+#include "exec/common/variant_util.h"
 #include "exprs/function/parse/variant_string_parse.h"
 #include "storage/index/inverted/analyzer/analyzer.h"
 #include "storage/index/inverted/inverted_index_parser.h"
@@ -55,7 +57,10 @@ Status VariantRootIndexWriter::init() {
         return Status::Error<ErrorCode::INVERTED_INDEX_NOT_SUPPORTED>(
                 "VARIANT root index does not support phrase positions");
     }
-    _all_values = variant_root_index::is_all_values_index(*_index_meta);
+    const auto scope = variant_root_index::variant_index_scope(_index_meta->properties());
+    DORIS_CHECK(scope.has_value());
+    _scope = *scope;
+    _exclude_paths = variant_root_index::variant_index_exclude_paths(_index_meta->properties());
     _ignore_above = cast_set<uint32_t>(
             std::stoul(get_parser_ignore_above_value_from_properties(_index_meta->properties())));
     _should_analyze =
@@ -80,7 +85,20 @@ Status VariantRootIndexWriter::begin_document(bool sql_null) {
 Status VariantRootIndexWriter::add_leaf(const VariantLeaf& leaf) {
     DORIS_CHECK(_document_open);
     DORIS_CHECK(!_sql_null);
-    const std::string_view path = _all_values ? std::string_view {} : leaf.path;
+    if (_is_excluded(leaf.path)) {
+        return Status::OK();
+    }
+    // `paths` stores term(value, path); `values` stores the path-less term; both stores both.
+    if (_scope.paths) {
+        _add_leaf_terms(leaf.path, leaf);
+    }
+    if (_scope.values) {
+        _add_leaf_terms({}, leaf);
+    }
+    return Status::OK();
+}
+
+void VariantRootIndexWriter::_add_leaf_terms(std::string_view path, const VariantLeaf& leaf) {
     if (leaf.kind == VariantLeafKind::STRING) {
         if (_should_analyze) {
             _analyzed_values.push_back(
@@ -89,13 +107,22 @@ Status VariantRootIndexWriter::add_leaf(const VariantLeaf& leaf) {
         } else if (leaf.string_value.size <= _ignore_above) {
             variant_root_index::append_variant_leaf_terms(path, leaf, &_exact_terms);
         }
-        return Status::OK();
+        return;
     }
     // Numbers and booleans are exact-only: a token index carries TOKEN terms and nothing else.
     if (!_should_analyze) {
         variant_root_index::append_variant_leaf_terms(path, leaf, &_exact_terms);
     }
-    return Status::OK();
+}
+
+bool VariantRootIndexWriter::_is_excluded(std::string_view path) const {
+    if (_exclude_paths.empty()) {
+        return false;
+    }
+    const std::string candidate(path);
+    return std::ranges::any_of(_exclude_paths, [&](const std::string& glob) {
+        return variant_util::glob_match_re2(glob, candidate);
+    });
 }
 
 Status VariantRootIndexWriter::add_path_value(std::string_view relative_path,

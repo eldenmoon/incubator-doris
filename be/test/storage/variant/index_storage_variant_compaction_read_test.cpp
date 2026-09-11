@@ -319,7 +319,7 @@ TEST_F(IndexStorageVariantCompactionReadTest,
                 {std::string(segment_v2::variant_root_index::VARIANT_INDEX_MODE_KEY),
                  std::string(segment_v2::variant_root_index::VARIANT_INDEX_MODE_ROOT)},
                 {std::string(segment_v2::variant_root_index::VARIANT_ROOT_FORMAT_VERSION_KEY),
-                 std::string(segment_v2::variant_root_index::VARIANT_ROOT_FORMAT_VERSION_V1)}};
+                 std::string(segment_v2::variant_root_index::VARIANT_ROOT_FORMAT_VERSION_CURRENT)}};
     };
     IndexSchemaPatch patch;
     patch.add_inverted_indexes = {
@@ -386,7 +386,7 @@ TEST_F(IndexStorageVariantCompactionReadTest,
                 {std::string(segment_v2::variant_root_index::VARIANT_INDEX_MODE_KEY),
                  std::string(segment_v2::variant_root_index::VARIANT_INDEX_MODE_ROOT)},
                 {std::string(segment_v2::variant_root_index::VARIANT_ROOT_FORMAT_VERSION_KEY),
-                 std::string(segment_v2::variant_root_index::VARIANT_ROOT_FORMAT_VERSION_V1)}};
+                 std::string(segment_v2::variant_root_index::VARIANT_ROOT_FORMAT_VERSION_CURRENT)}};
     };
 
     VariantColumnSpec variant;
@@ -516,7 +516,7 @@ TEST_F(IndexStorageVariantCompactionReadTest,
                 {std::string(segment_v2::variant_root_index::VARIANT_INDEX_MODE_KEY),
                  std::string(segment_v2::variant_root_index::VARIANT_INDEX_MODE_ROOT)},
                 {std::string(segment_v2::variant_root_index::VARIANT_ROOT_FORMAT_VERSION_KEY),
-                 std::string(segment_v2::variant_root_index::VARIANT_ROOT_FORMAT_VERSION_V1)}};
+                 std::string(segment_v2::variant_root_index::VARIANT_ROOT_FORMAT_VERSION_CURRENT)}};
     };
 
     VariantColumnSpec variant;

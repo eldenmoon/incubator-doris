@@ -27,6 +27,7 @@
 #include "common/status.h"
 #include "core/column/variant_v2/column_variant_v2.h"
 #include "core/value/variant/variant_value.h"
+#include "storage/index/inverted/variant_root_index.h"
 #include "storage/index/snii/snii_index_writer.h"
 #include "util/slice.h"
 
@@ -62,10 +63,13 @@ public:
     Status finish();
     void close_on_error();
     size_t size() const;
-    bool is_all_values() const { return _all_values; }
+    const variant_root_index::VariantIndexScope& scope() const { return _scope; }
     bool check_duplicate_json_path() const { return _check_duplicate_json_path; }
 
 private:
+    void _add_leaf_terms(std::string_view path, const VariantLeaf& leaf);
+    bool _is_excluded(std::string_view path) const;
+
     struct AnalyzedValue {
         std::string suffix; // [0 0][path]; the SNII writer escapes the token and appends this
         Slice value;
@@ -75,7 +79,8 @@ private:
     const TabletIndex* _index_meta = nullptr;
     bool _is_direct_load = false;
     bool _check_duplicate_json_path = false;
-    bool _all_values = false;
+    variant_root_index::VariantIndexScope _scope;
+    std::vector<std::string> _exclude_paths;
     bool _should_analyze = false;
     uint32_t _ignore_above = 0;
     bool _document_open = false;

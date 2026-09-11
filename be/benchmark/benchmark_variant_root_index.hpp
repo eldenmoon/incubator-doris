@@ -214,7 +214,8 @@ bool expects_inverted_index(IndexLayout layout, QueryShape shape) {
         return false;
     }
     if (shape == QueryShape::WHOLE_ROOT_ENGLISH_MATCH_ANY) {
-        return layout == IndexLayout::ALL_VALUES;
+        // The value-first dictionary answers whole-root MATCH from either scope.
+        return is_single_root_layout(layout);
     }
     if (shape == QueryShape::PATH_ARRAY_CONTAINS) {
         return layout == IndexLayout::CHILDREN;
@@ -479,9 +480,7 @@ TabletSchemaSPtr make_schema(IndexLayout layout, TextMode mode) {
                             : segment_v2::variant_root_index::VARIANT_INDEX_MODE_ALL_VALUES;
             (*index->mutable_properties())[std::string(
                     segment_v2::variant_root_index::VARIANT_ROOT_FORMAT_VERSION_KEY)] =
-                    layout == IndexLayout::ROOT
-                            ? segment_v2::variant_root_index::VARIANT_ROOT_FORMAT_VERSION_V1
-                            : segment_v2::variant_root_index::VARIANT_ROOT_FORMAT_VERSION_V2;
+                    segment_v2::variant_root_index::VARIANT_ROOT_FORMAT_VERSION_CURRENT;
         }
     }
 
@@ -1082,10 +1081,9 @@ public:
             return Status::InvalidArgument("query shape {} is incompatible with text mode {}",
                                            query_shape_name(shape), text_mode_name(_text_mode));
         }
-        if (shape == QueryShape::WHOLE_ROOT_ENGLISH_MATCH_ANY &&
-            _layout != IndexLayout::ALL_VALUES) {
+        if (shape == QueryShape::WHOLE_ROOT_ENGLISH_MATCH_ANY && !is_single_root_layout(_layout)) {
             return Status::InvalidArgument(
-                    "whole-root MATCH is only valid for the all_values layout");
+                    "whole-root MATCH is only valid for the root and all_values layouts");
         }
         if (shape == QueryShape::WHOLE_ROOT_LIKE_SUBSTRING && _layout != IndexLayout::ALL_VALUES &&
             _layout != IndexLayout::NO_INDEX) {
@@ -2347,6 +2345,8 @@ REGISTER_VARIANT_QUERY(ArrayContainsChildren, IndexLayout::CHILDREN, TextMode::E
                        PATH_ARRAY_CONTAINS);
 REGISTER_VARIANT_QUERY(ArrayContainsNoIndex, IndexLayout::NO_INDEX, TextMode::EXACT,
                        PATH_ARRAY_CONTAINS);
+REGISTER_VARIANT_QUERY(WholeRootMatchRoot, IndexLayout::ROOT, TextMode::ENGLISH,
+                       WHOLE_ROOT_ENGLISH_MATCH_ANY);
 REGISTER_VARIANT_QUERY(WholeRootMatchAllValues, IndexLayout::ALL_VALUES, TextMode::ENGLISH,
                        WHOLE_ROOT_ENGLISH_MATCH_ANY);
 REGISTER_VARIANT_QUERY(WholeRootLikeAllValues, IndexLayout::ALL_VALUES, TextMode::ENGLISH,

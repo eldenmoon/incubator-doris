@@ -225,7 +225,7 @@ TEST_F(IndexStorageVariantCompactionSchemaTest,
              {std::string(segment_v2::variant_root_index::VARIANT_INDEX_MODE_KEY),
               std::string(segment_v2::variant_root_index::VARIANT_INDEX_MODE_ROOT)},
              {std::string(segment_v2::variant_root_index::VARIANT_ROOT_FORMAT_VERSION_KEY),
-              std::string(segment_v2::variant_root_index::VARIANT_ROOT_FORMAT_VERSION_V1)}})};
+              std::string(segment_v2::variant_root_index::VARIANT_ROOT_FORMAT_VERSION_CURRENT)}})};
     ASSERT_TRUE(create_tablet(options).ok());
 
     auto values = ColumnVariantV2::create();
@@ -260,7 +260,7 @@ TEST_F(IndexStorageVariantCompactionSchemaTest,
                 {std::string(segment_v2::variant_root_index::VARIANT_INDEX_MODE_KEY),
                  std::string(segment_v2::variant_root_index::VARIANT_INDEX_MODE_ROOT)},
                 {std::string(segment_v2::variant_root_index::VARIANT_ROOT_FORMAT_VERSION_KEY),
-                 std::string(segment_v2::variant_root_index::VARIANT_ROOT_FORMAT_VERSION_V1)}};
+                 std::string(segment_v2::variant_root_index::VARIANT_ROOT_FORMAT_VERSION_CURRENT)}};
     };
 
     VariantColumnSpec variant;

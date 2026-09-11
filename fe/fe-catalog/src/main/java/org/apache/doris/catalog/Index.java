@@ -83,8 +83,7 @@ public class Index implements Writable {
                             .INVERTED_INDEX_SUPPORT_PHRASE_KEY;
                     if (!this.properties.containsKey(supportPhraseKey)) {
                         this.properties.put(supportPhraseKey,
-                                InvertedIndexProperties.isVariantRootIndexMode(
-                                        this.properties.get(InvertedIndexProperties.VARIANT_INDEX_MODE_KEY))
+                                InvertedIndexProperties.isVariantRootIndex(this.properties)
                                         ? "false" : "true");
                     }
                 }
@@ -328,14 +327,15 @@ public class Index implements Writable {
                 && InvertedIndexProperties.isAnalyzed(properties);
     }
 
+    /** A VARIANT index that stores path-less value terms (scope contains "values"). */
     public boolean isVariantAllValuesIndex() {
         return indexType == IndexType.INVERTED
-                && properties != null
-                && InvertedIndexProperties.VARIANT_INDEX_MODE_ALL_VALUES.equals(
-                        properties.get(InvertedIndexProperties.VARIANT_INDEX_MODE_KEY))
-                && (InvertedIndexProperties.VARIANT_ROOT_FORMAT_VERSION_V1.equals(
-                        properties.get(InvertedIndexProperties.VARIANT_ROOT_FORMAT_VERSION_KEY))
-                    || InvertedIndexProperties.VARIANT_ROOT_FORMAT_VERSION_V2.equals(
-                        properties.get(InvertedIndexProperties.VARIANT_ROOT_FORMAT_VERSION_KEY)));
+                && InvertedIndexProperties.variantIndexScopeHasValues(properties);
+    }
+
+    /** Any VARIANT value-first index (scope paths, values or both). */
+    public boolean isVariantRootIndex() {
+        return indexType == IndexType.INVERTED
+                && InvertedIndexProperties.isVariantRootIndex(properties);
     }
 }

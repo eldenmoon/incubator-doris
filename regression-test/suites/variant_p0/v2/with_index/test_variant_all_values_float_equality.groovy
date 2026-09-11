@@ -59,7 +59,10 @@ suite("test_variant_all_values_float_equality", "p0,nonConcurrent") {
         }
         def checkpoint = "segment_iterator.inverted_index.filtered_rows"
         try {
-            GetDebugPoint().enableDebugPointForAllBEs(checkpoint, [filtered_rows: "0"])
+            // Values are typed and -0.0 folds into 0: the values index answers the equality with
+            // one exact term (rows 1 and 2 are candidates, rows 3-6 are filtered) instead of
+            // falling back to a scan.
+            GetDebugPoint().enableDebugPointForAllBEs(checkpoint, [filtered_rows: "4"])
             order_qt_float_fallback """SELECT id FROM variant_all_values_float_equality
                 WHERE CAST(v['f'] AS DOUBLE) = 0.0 ORDER BY id"""
         } finally {

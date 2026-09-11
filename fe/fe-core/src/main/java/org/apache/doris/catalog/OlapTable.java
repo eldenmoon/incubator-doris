@@ -4019,13 +4019,24 @@ public class OlapTable extends Table implements MTMVRelatedTableIf, GsonPostProc
         return getInvertedIndex(column, subPath, null);
     }
 
+    /**
+     * The VARIANT index that serves whole-document predicates (v = c, v MATCH 'x'). A "values"
+     * scope answers them with one exact term; a "paths" scope answers them with a dictionary run
+     * over the value on the BE. Prefer the former when both exist.
+     */
     public Index getVariantAllValuesIndex(Column column, String analyzer) {
         if (indexes == null) {
             return null;
         }
-        List<Index> candidates = getInvertedIndexes(column).stream()
+        List<Index> roots = getInvertedIndexes(column).stream()
+                .filter(Index::isVariantRootIndex)
+                .collect(Collectors.toList());
+        List<Index> candidates = roots.stream()
                 .filter(Index::isVariantAllValuesIndex)
                 .collect(Collectors.toList());
+        if (candidates.isEmpty()) {
+            candidates = roots;
+        }
         List<Index> filteredCandidates = filterIndexesByAnalyzer(candidates, analyzer);
         return filteredCandidates.size() == 1 ? filteredCandidates.get(0)
                 : filteredCandidates.stream().filter(Index::isAnalyzedInvertedIndex)

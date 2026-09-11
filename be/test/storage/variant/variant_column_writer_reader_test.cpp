@@ -6865,7 +6865,7 @@ TEST_F(VariantColumnWriterReaderTest, test_find_subcolumn_tablet_indexes_branch_
             segment_v2::variant_root_index::VARIANT_INDEX_MODE_ROOT;
     (*root_index_pb.mutable_properties())[std::string(
             segment_v2::variant_root_index::VARIANT_ROOT_FORMAT_VERSION_KEY)] =
-            segment_v2::variant_root_index::VARIANT_ROOT_FORMAT_VERSION_V1;
+            segment_v2::variant_root_index::VARIANT_ROOT_FORMAT_VERSION_CURRENT;
     (*root_index_pb.mutable_properties())["parser"] = "english";
     TabletIndex root_index;
     root_index.init_from_pb(root_index_pb);
@@ -6889,9 +6889,12 @@ TEST_F(VariantColumnWriterReaderTest, test_find_subcolumn_tablet_indexes_branch_
         EXPECT_EQ(sparse_logical_path[0]->properties().at(
                           std::string(segment_v2::variant_root_index::VARIANT_ROOT_QUERY_PATH_KEY)),
                   "sparse");
-        EXPECT_EQ(sparse_logical_path[0]->properties().at(std::string(
-                          segment_v2::variant_root_index::VARIANT_ROOT_QUERY_VALUE_FAMILY_KEY)),
-                  "string");
+        // A dynamic (VARIANT typed) path binds a paths-scope index as a sub-document: the
+        // predicate applies to every leaf below it, with no single value family.
+        EXPECT_FALSE(sparse_logical_path[0]->properties().contains(
+                std::string(segment_v2::variant_root_index::VARIANT_ROOT_QUERY_VALUE_FAMILY_KEY)));
+        EXPECT_TRUE(sparse_logical_path[0]->properties().contains(
+                std::string(segment_v2::variant_root_index::VARIANT_ROOT_QUERY_SUBTREE_KEY)));
     }
 
     TabletIndexPB all_values_index_pb;
@@ -6902,7 +6905,7 @@ TEST_F(VariantColumnWriterReaderTest, test_find_subcolumn_tablet_indexes_branch_
             segment_v2::variant_root_index::VARIANT_INDEX_MODE_ALL_VALUES;
     (*all_values_index_pb.mutable_properties())[std::string(
             segment_v2::variant_root_index::VARIANT_ROOT_FORMAT_VERSION_KEY)] =
-            segment_v2::variant_root_index::VARIANT_ROOT_FORMAT_VERSION_V1;
+            segment_v2::variant_root_index::VARIANT_ROOT_FORMAT_VERSION_CURRENT;
     (*all_values_index_pb.mutable_properties())["parser"] = "english";
     TabletIndex all_values_index;
     all_values_index.init_from_pb(all_values_index_pb);

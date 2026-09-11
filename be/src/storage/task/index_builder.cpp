@@ -20,18 +20,24 @@
 #include <mutex>
 
 #include "common/cast_set.h"
+#include "common/config.h"
 #include "common/logging.h"
 #include "common/status.h"
+#include "core/column/column_nullable.h"
+#include "core/column/column_variant.h"
+#include "core/column/variant_v2/column_variant_v2.h"
 #include "storage/index/index_file_reader.h"
 #include "storage/index/index_file_writer.h"
 #include "storage/index/index_writer.h" // IndexColumnWriter, complete type for member calls
 #include "storage/index/inverted/inverted_index_desc.h"
 #include "storage/index/inverted/inverted_index_fs_directory.h"
+#include "storage/index/inverted/variant_root_index.h"
 #include "storage/olap_define.h"
 #include "storage/rowset/beta_rowset.h"
 #include "storage/rowset/rowset_writer_context.h"
 #include "storage/schema.h"
 #include "storage/segment/segment_loader.h"
+#include "storage/segment/variant/v2/variant_root_index_writer.h"
 #include "storage/storage_engine.h"
 #include "storage/tablet/tablet_schema.h"
 #include "util/debug_points.h"
@@ -801,6 +807,7 @@ Status IndexBuilder::_handle_single_rowset_snii(
         RETURN_IF_ERROR(index_file_writer->finish_close());
     }
     _index_column_writers.clear();
+    _variant_root_index_writers.clear();
     _index_file_writers.clear();
     output_rowset_meta->set_data_disk_size(output_rowset_meta->data_disk_size());
     output_rowset_meta->set_total_disk_size(output_rowset_meta->total_disk_size() +
@@ -885,17 +892,37 @@ Status IndexBuilder::_build_snii_indexes_for_segment(const TabletSchemaSPtr& out
     // One raw column read per column group; every writer on the column is fed
     // from the same converted data.
     std::vector<std::vector<std::pair<int64_t, int64_t>>> group_writer_signs;
+    std::vector<std::vector<segment_v2::VariantRootIndexWriter*>> group_root_writers;
     std::vector<ColumnId> return_columns;
     _olap_data_convertor->reserve(plan.build_columns.size());
     for (const auto& [col_unique_id, index_metas] : plan.build_columns) {
         const int32_t column_idx = output_rowset_schema->field_index(col_unique_id);
         DORIS_CHECK_GE(column_idx, 0);
         const TabletColumn& column = output_rowset_schema->column(column_idx);
-        DORIS_CHECK(segment_v2::IndexColumnWriter::check_support_inverted_index(column));
+        // Every group registers a convertor so convertor ordinals stay aligned with groups;
+        // VARIANT value-first groups read the block column directly and never convert.
         _olap_data_convertor->add_column_data_convertor(column);
         return_columns.emplace_back(column_idx);
         std::vector<std::pair<int64_t, int64_t>> signs;
+        std::vector<segment_v2::VariantRootIndexWriter*> root_writers;
         for (const TabletIndex* index_meta : index_metas) {
+            if (column.is_variant_type() &&
+                segment_v2::variant_root_index::is_root_index(*index_meta)) {
+                // The VARIANT index is derived from the logical document, so BUILD INDEX feeds
+                // rows to the same writer the load path uses.
+                auto root_writer = std::make_unique<segment_v2::VariantRootIndexWriter>(
+                        index_file_writer, index_meta, /*is_direct_load=*/false,
+                        config::variant_enable_duplicate_json_path_check);
+                RETURN_IF_ERROR(root_writer->init());
+                auto writer_sign =
+                        std::make_pair<int64_t, int64_t>(seg_ptr->id(), index_meta->index_id());
+                root_writers.push_back(root_writer.get());
+                auto [writer_it, inserted] = _variant_root_index_writers.insert(
+                        std::make_pair(writer_sign, std::move(root_writer)));
+                DORIS_CHECK(inserted);
+                continue;
+            }
+            DORIS_CHECK(segment_v2::IndexColumnWriter::check_support_inverted_index(column));
             std::unique_ptr<segment_v2::IndexColumnWriter> index_column_writer;
             try {
                 RETURN_IF_ERROR(segment_v2::IndexColumnWriter::create(
@@ -913,6 +940,7 @@ Status IndexBuilder::_build_snii_indexes_for_segment(const TabletSchemaSPtr& out
             signs.push_back(writer_sign);
         }
         group_writer_signs.push_back(std::move(signs));
+        group_root_writers.push_back(std::move(root_writers));
     }
 
     StorageReadOptions read_options;
@@ -936,7 +964,7 @@ Status IndexBuilder::_build_snii_indexes_for_segment(const TabletSchemaSPtr& out
             return status;
         }
         RETURN_IF_ERROR(_write_snii_index_data(output_rowset_schema, block.get(), plan,
-                                               group_writer_signs));
+                                               group_writer_signs, group_root_writers));
         block->clear_column_data();
     }
     for (const auto& signs : group_writer_signs) {
@@ -950,15 +978,54 @@ Status IndexBuilder::_build_snii_indexes_for_segment(const TabletSchemaSPtr& out
             })
         }
     }
+    for (auto& root_writers : group_root_writers) {
+        if (!root_writers.empty()) {
+            RETURN_IF_ERROR(segment_v2::finish_variant_root_indexes(root_writers));
+        }
+    }
     _olap_data_convertor->reset();
     return Status::OK();
 }
 
+Status IndexBuilder::_write_variant_root_index_data(
+        Block* block, size_t position,
+        const std::vector<segment_v2::VariantRootIndexWriter*>& writers) {
+    const ColumnPtr& column = block->get_by_position(position).column;
+    const IColumn* physical = column.get();
+    std::span<const uint8_t> outer_nulls;
+    if (const auto* nullable = check_and_get_column<ColumnNullable>(physical)) {
+        const auto& null_map = nullable->get_null_map_data();
+        outer_nulls = {null_map.data(), null_map.size()};
+        physical = &nullable->get_nested_column();
+    }
+    std::vector<segment_v2::VariantRootIndexWriter*> writer_ptrs = writers;
+    if (const auto* variant_v2 = check_and_get_column<ColumnVariantV2>(physical)) {
+        // The writer indexes the encoded document; a typed-state read is normalized first. The
+        // block owns this column exclusively, so the in-place normalization is safe.
+        auto* mutable_variant = const_cast<ColumnVariantV2*>(variant_v2);
+        mutable_variant->ensure_encoded();
+        return segment_v2::append_variant_root_indexes(writer_ptrs, mutable_variant->read_view(), 0,
+                                                       block->rows(), outer_nulls);
+    }
+    if (const auto* variant_v1 = check_and_get_column<ColumnVariant>(physical)) {
+        return segment_v2::append_variant_root_indexes(writer_ptrs, *variant_v1, 0, block->rows(),
+                                                       outer_nulls);
+    }
+    return Status::InternalError("VARIANT index build expects a Variant column, got {}",
+                                 column->get_name());
+}
+
 Status IndexBuilder::_write_snii_index_data(
         const TabletSchemaSPtr& tablet_schema, Block* block, const SniiIndexRewritePlan& plan,
-        const std::vector<std::vector<std::pair<int64_t, int64_t>>>& group_writer_signs) {
+        const std::vector<std::vector<std::pair<int64_t, int64_t>>>& group_writer_signs,
+        const std::vector<std::vector<segment_v2::VariantRootIndexWriter*>>& group_root_writers) {
     _olap_data_convertor->set_source_content(block, 0, block->rows());
     for (size_t group = 0; group < group_writer_signs.size(); ++group) {
+        if (!group_root_writers[group].empty()) {
+            RETURN_IF_ERROR(
+                    _write_variant_root_index_data(block, group, group_root_writers[group]));
+            continue;
+        }
         auto converted_result = _olap_data_convertor->convert_column_data(group);
         if (!converted_result.first.ok()) {
             LOG(WARNING) << "failed to convert block, errcode: " << converted_result.first;

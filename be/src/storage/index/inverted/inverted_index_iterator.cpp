@@ -84,6 +84,7 @@ Status InvertedIndexIterator::read_from_index(const IndexParam& param) {
     // in the row, so its rows remain candidates for the residual expression.
     i_param->requires_recheck =
             variant_root_index::is_all_values_mode_properties(selected_properties) &&
+            !variant_root_index::is_path_root_mode_properties(selected_properties) &&
             selected_properties.contains(
                     std::string(variant_root_index::VARIANT_ROOT_QUERY_PATH_KEY)) &&
             !selected_properties.at(std::string(variant_root_index::VARIANT_ROOT_QUERY_PATH_KEY))
