@@ -77,13 +77,28 @@ TEST(VariantRootIndexCodecTest, GoldenTermsKeepPathTypeAndValueDistinct) {
     EXPECT_NE(encode_string_term("a", "1"), encode_int64_term("a", 1));
 }
 
-TEST(VariantRootIndexCodecTest, NumericTermsUseStableBigEndianPayloads) {
+TEST(VariantRootIndexCodecTest, NumericTermsUseOrderPreservingBigEndianPayloads) {
     EXPECT_EQ(encode_int64_term("n", -1),
-              bytes({1, 0, 0, 0, 1, 'n', 2, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff}));
+              bytes({1, 0, 0, 0, 1, 'n', 2, 0x7f, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff}));
+    EXPECT_EQ(encode_int64_term("n", 0), bytes({1, 0, 0, 0, 1, 'n', 2, 0x80, 0, 0, 0, 0, 0, 0, 0}));
     EXPECT_EQ(encode_uint64_term("n", 42), bytes({1, 0, 0, 0, 1, 'n', 3, 0, 0, 0, 0, 0, 0, 0, 42}));
     EXPECT_EQ(encode_double_term("n", 1.5),
-              bytes({1, 0, 0, 0, 1, 'n', 4, 0x3f, 0xf8, 0, 0, 0, 0, 0, 0}));
+              bytes({1, 0, 0, 0, 1, 'n', 4, 0xbf, 0xf8, 0, 0, 0, 0, 0, 0}));
     EXPECT_EQ(encode_double_term("n", -0.0), encode_double_term("n", 0.0));
+
+    // Terms under one path sort by value, which is what makes a numeric range a dictionary
+    // interval instead of a scramble.
+    const int64_t int_min = std::numeric_limits<int64_t>::min();
+    const int64_t int_max = std::numeric_limits<int64_t>::max();
+    EXPECT_LT(encode_int64_term("n", int_min), encode_int64_term("n", -1));
+    EXPECT_LT(encode_int64_term("n", -1), encode_int64_term("n", 0));
+    EXPECT_LT(encode_int64_term("n", 0), encode_int64_term("n", 1));
+    EXPECT_LT(encode_int64_term("n", 1), encode_int64_term("n", int_max));
+    const double inf = std::numeric_limits<double>::infinity();
+    EXPECT_LT(encode_double_term("n", -inf), encode_double_term("n", -1.5));
+    EXPECT_LT(encode_double_term("n", -1.5), encode_double_term("n", 0.0));
+    EXPECT_LT(encode_double_term("n", 0.0), encode_double_term("n", 1.5));
+    EXPECT_LT(encode_double_term("n", 1.5), encode_double_term("n", inf));
 }
 
 // NOLINTNEXTLINE(readability-function-cognitive-complexity) -- GTest assertions pin the numeric matrix.

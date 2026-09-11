@@ -17,10 +17,8 @@
 
 #include "storage/index/inverted/variant_root_index.h"
 
-#include <bit>
 #include <cmath>
 #include <limits>
-#include <type_traits>
 #include <utility>
 
 #include "common/cast_set.h"
@@ -29,6 +27,7 @@
 #include "exprs/function/parse/variant_string_parse.h"
 #include "gen_cpp/olap_file.pb.h"
 #include "storage/index/inverted/analyzer/analyzer.h"
+#include "storage/index/inverted/variant_term_codec.h"
 #include "storage/tablet/tablet_schema.h"
 
 namespace doris::segment_v2::variant_root_index {
@@ -70,19 +69,12 @@ std::string term_prefix(std::string_view path, TermTag tag) {
     return result;
 }
 
-template <typename T>
-std::string fixed_width_term(std::string_view path, TermTag tag, T value) {
-    static_assert(sizeof(T) == sizeof(uint64_t));
+// Fixed width payloads use the order preserving bit mappings shared with variant_term_codec, so
+// numeric terms under one (path, tag) prefix sort by value: [lo .. hi] is a dictionary interval
+// rather than the two's complement / raw IEEE scramble of the first layout.
+std::string fixed_width_term(std::string_view path, TermTag tag, uint64_t ordered_bits) {
     std::string result = term_prefix(path, tag);
-    uint64_t bits;
-    if constexpr (std::is_floating_point_v<T>) {
-        bits = std::bit_cast<uint64_t>(value);
-    } else {
-        bits = static_cast<uint64_t>(value);
-    }
-    for (int shift = static_cast<int>((sizeof(T) - 1) * 8); shift >= 0; shift -= 8) {
-        result.push_back(static_cast<char>((bits >> shift) & 0xff));
-    }
+    variant_term_codec::append_be64(&result, ordered_bits);
     return result;
 }
 
@@ -176,18 +168,16 @@ bool is_all_values_index(const TabletIndex& index) {
 }
 
 std::string encode_int64_term(std::string_view path, int64_t value) {
-    return fixed_width_term(path, TermTag::INT64, value);
+    return fixed_width_term(path, TermTag::INT64, variant_term_codec::ordered_int64_bits(value));
 }
 
 std::string encode_uint64_term(std::string_view path, uint64_t value) {
-    return fixed_width_term(path, TermTag::UINT64, value);
+    return fixed_width_term(path, TermTag::UINT64, variant_term_codec::ordered_uint64_bits(value));
 }
 
 std::string encode_double_term(std::string_view path, double value) {
-    if (value == 0) {
-        value = 0;
-    }
-    return fixed_width_term(path, TermTag::DOUBLE, value);
+    // -0.0 folds into 0.0 inside the codec so both spellings share one posting.
+    return fixed_width_term(path, TermTag::DOUBLE, variant_term_codec::ordered_double_bits(value));
 }
 
 std::string encode_bool_term(std::string_view path, bool value) {
