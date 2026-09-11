@@ -44,6 +44,7 @@
 #include "storage/index/index_file_writer.h"
 #include "storage/index/inverted/inverted_index_desc.h"
 #include "storage/index/inverted/variant_root_index.h"
+#include "storage/index/inverted/variant_root_index_scan.h"
 #include "storage/index/snii/query/boolean_query.h"
 #include "storage/index/snii/query/term_query.h"
 #include "storage/segment/variant/v2/variant_root_index_writer.h"
@@ -597,7 +598,170 @@ TEST_F(VariantIndexParityTest, IndexAndScanAgreeOnRandomDocuments) {
             checks += 4;
         }
     }
-    EXPECT_GE(checks, 3600U);
+    // 7. whole-root / subtree equality on the ROOT index via a dictionary run (PR-D scan path)
+    // 8. numeric ranges on one path via the INT64 / UINT64 / DOUBLE dictionary runs
+    const std::vector<std::string> subtrees = {"", "a", "b", "a.b", "e", "c.d"};
+    for (int round = 0; round < 400; ++round) {
+        const Literal literal = generator.literal();
+        const Field field = literal.field();
+        const std::string& subtree = subtrees[generator.next() % subtrees.size()];
+        std::vector<std::string> prefixes;
+        ASSERT_TRUE(encode_query_value_terms({}, field, &prefixes).ok());
+        ASSERT_EQ(prefixes.size(), 1U);
+        std::vector<uint32_t> actual;
+        ScanStats stats;
+        ASSERT_TRUE(scan_root_prefix(**r_root_exact, prefixes[0], subtree, &actual, &stats).ok());
+        const auto expected = expected_rows([&](const std::vector<OracleLeaf>& leaves) {
+            return std::ranges::any_of(leaves, [&](const OracleLeaf& leaf) {
+                return path_in_subtree(leaf.path, subtree) && literal.matches(leaf);
+            });
+        });
+        EXPECT_EQ(actual, expected) << "subtree=" << subtree << " round=" << round;
+        EXPECT_GE(stats.terms_visited, stats.terms_matched);
+        ++checks;
+
+        // whole-root MATCH through per-token dictionary runs
+        const std::string query = generator.match_query();
+        const std::vector<std::string> words = split_words(query);
+        std::set<uint32_t> any_rows;
+        std::set<uint32_t> all_rows;
+        for (size_t w = 0; w < words.size(); ++w) {
+            std::vector<uint32_t> token_rows;
+            ASSERT_TRUE(scan_root_prefix(**r_root_token, encode_all_value_token_term(words[w]),
+                                         subtree, &token_rows, &stats)
+                                .ok());
+            std::set<uint32_t> token_set(token_rows.begin(), token_rows.end());
+            any_rows.insert(token_set.begin(), token_set.end());
+            if (w == 0) {
+                all_rows = token_set;
+            } else {
+                std::set<uint32_t> kept;
+                for (const uint32_t row : all_rows) {
+                    if (token_set.contains(row)) {
+                        kept.insert(row);
+                    }
+                }
+                all_rows = kept;
+            }
+        }
+        const auto covers = [&](const std::set<std::string>& tokens) {
+            return std::ranges::all_of(
+                    words, [&](const std::string& word) { return tokens.contains(word); });
+        };
+        const auto touches = [&](const std::set<std::string>& tokens) {
+            return std::ranges::any_of(
+                    words, [&](const std::string& word) { return tokens.contains(word); });
+        };
+        const auto subtree_tokens = [&](const std::vector<OracleLeaf>& leaves) {
+            std::set<std::string> tokens;
+            for (const OracleLeaf& leaf : leaves) {
+                if (leaf.kind != OracleKind::STRING || !path_in_subtree(leaf.path, subtree)) {
+                    continue;
+                }
+                for (std::string& word : split_words(leaf.text)) {
+                    tokens.insert(std::move(word));
+                }
+            }
+            return tokens;
+        };
+        EXPECT_EQ(std::vector<uint32_t>(any_rows.begin(), any_rows.end()),
+                  expected_rows([&](const std::vector<OracleLeaf>& leaves) {
+                      return touches(subtree_tokens(leaves));
+                  }))
+                << "scan MATCH_ANY subtree=" << subtree << " query=" << query;
+        EXPECT_EQ(std::vector<uint32_t>(all_rows.begin(), all_rows.end()),
+                  expected_rows([&](const std::vector<OracleLeaf>& leaves) {
+                      return covers(subtree_tokens(leaves));
+                  }))
+                << "scan MATCH_ALL subtree=" << subtree << " query=" << query;
+        checks += 2;
+
+        // numeric range on one path: random bounds from the literal pools, any inclusivity
+        const std::string path = generator.path();
+        const Literal lo_lit = generator.literal();
+        const Literal hi_lit = generator.literal();
+        const auto as_bound = [](const Literal& lit,
+                                 bool inclusive) -> std::optional<NumericBound> {
+            if (lit.type == Literal::INT) {
+                return NumericBound::integer(lit.i, inclusive);
+            }
+            if (lit.type == Literal::DOUBLE) {
+                return NumericBound::floating(lit.d, inclusive);
+            }
+            return std::nullopt;
+        };
+        NumericBound lower = NumericBound::unbounded_low();
+        NumericBound upper = NumericBound::unbounded_high();
+        if (const auto b = as_bound(lo_lit, generator.next() % 2 == 0); b.has_value()) {
+            lower = *b;
+        }
+        if (const auto b = as_bound(hi_lit, generator.next() % 2 == 0); b.has_value()) {
+            upper = *b;
+        }
+        std::vector<uint32_t> range_rows;
+        ASSERT_TRUE(
+                scan_numeric_range(**r_root_exact, path, lower, upper, &range_rows, &stats).ok());
+        // Oracle: compare in long double so integer and double leaves share one number line.
+        const auto leaf_number = [](const OracleLeaf& leaf) -> std::optional<long double> {
+            switch (leaf.kind) {
+            case OracleKind::INT64:
+                return static_cast<long double>(leaf.i64);
+            case OracleKind::UINT64:
+                return static_cast<long double>(leaf.u64);
+            case OracleKind::DOUBLE:
+                return static_cast<long double>(leaf.d);
+            default:
+                return std::nullopt;
+            }
+        };
+        const auto bound_number = [](const NumericBound& bound) -> long double {
+            return bound.integral ? static_cast<long double>(bound.int_value)
+                                  : static_cast<long double>(bound.value);
+        };
+        const auto in_range = [&](long double v) {
+            const long double lo = bound_number(lower);
+            const long double hi = bound_number(upper);
+            if (v < lo || (v == lo && !lower.inclusive)) {
+                return false;
+            }
+            if (v > hi || (v == hi && !upper.inclusive)) {
+                return false;
+            }
+            return true;
+        };
+        const auto expected_range = expected_rows([&](const std::vector<OracleLeaf>& leaves) {
+            return std::ranges::any_of(leaves, [&](const OracleLeaf& leaf) {
+                const auto number = leaf_number(leaf);
+                return leaf.path == path && number.has_value() && in_range(*number);
+            });
+        });
+        if (range_rows != expected_range) {
+            std::string detail;
+            for (const uint32_t row : expected_range) {
+                if (std::ranges::find(range_rows, row) != range_rows.end()) {
+                    continue;
+                }
+                for (const OracleLeaf& leaf : oracle[row]) {
+                    if (leaf.path == path && leaf_number(leaf).has_value()) {
+                        detail += " missing row " + std::to_string(row) + " kind " +
+                                  std::to_string(static_cast<int>(leaf.kind)) +
+                                  " i64=" + std::to_string(leaf.i64) +
+                                  " u64=" + std::to_string(leaf.u64) +
+                                  " d=" + std::to_string(leaf.d) + ";";
+                    }
+                }
+            }
+            ADD_FAILURE() << "range path=" << path << " round=" << round << " lower="
+                          << (lower.integral ? std::to_string(lower.int_value)
+                                             : std::to_string(lower.value))
+                          << (lower.inclusive ? " incl" : " excl") << " upper="
+                          << (upper.integral ? std::to_string(upper.int_value)
+                                             : std::to_string(upper.value))
+                          << (upper.inclusive ? " incl" : " excl") << detail;
+        }
+        ++checks;
+    }
+    EXPECT_GE(checks, 5200U);
     // The generator must actually produce hits, or the parity is vacuous.
     EXPECT_GT(non_empty, 200U);
 

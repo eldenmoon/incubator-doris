@@ -1545,11 +1545,13 @@ TabletIndexes VariantColumnReader::find_subcolumn_tablet_indexes(
                     inverted_index::InvertedIndexAnalyzer::should_analyzer(index->properties());
             const bool all_values_supported = variant_root_index::is_all_values_index(*index) &&
                                               (root_exact_supported || reads_untyped_binary_value);
-            // A binary path keeps its original dynamic type, so it cannot safely bind exact
-            // scalar equality to one encoding family. Text MATCH remains safe: both the scalar
-            // evaluator and the analyzed root index recursively consume scalar leaf text.
-            const bool dynamic_token_supported = reads_untyped_binary_value && analyzed;
-            if (all_values_supported || dynamic_token_supported ||
+            // A dynamic (binary) path binds a Root index as a subtree: the value-first
+            // dictionary answers "any leaf at or below the path equals / matches c" exactly,
+            // for typed equality, MATCH and, on exact indexes, numeric ranges. The empty path
+            // is the whole document.
+            const bool dynamic_subtree_supported =
+                    reads_untyped_binary_value && !variant_root_index::is_all_values_index(*index);
+            if (all_values_supported || dynamic_subtree_supported ||
                 (analyzed ? is_string_type(path_type) : root_exact_supported)) {
                 sub_column_info.indexes.push_back(
                         variant_root_index::make_query_index(*index, relative_path_str, path_type));

@@ -254,19 +254,20 @@ Status encode_all_values_query_value_terms(const Field& value, std::vector<std::
 std::shared_ptr<TabletIndex> make_query_index(const TabletIndex& root_index,
                                               std::string_view relative_path,
                                               PrimitiveType path_type) {
-    std::string_view family = query_value_family(path_type);
-    if (family.empty() && path_type == PrimitiveType::TYPE_VARIANT &&
-        !is_all_values_index(root_index) &&
-        inverted_index::InvertedIndexAnalyzer::should_analyzer(root_index.properties())) {
-        family = query_value_family(PrimitiveType::TYPE_STRING);
-    }
-    DORIS_CHECK(!family.empty() ||
-                (path_type == PrimitiveType::TYPE_VARIANT && is_all_values_index(root_index)));
+    const std::string_view family = query_value_family(path_type);
+    // A dynamic path has no single value family: on a Root index it binds as a subtree scan
+    // (any typed literal, every leaf below the path); on an AllValues index the path is ignored.
+    const bool subtree =
+            path_type == PrimitiveType::TYPE_VARIANT && !is_all_values_index(root_index);
+    DORIS_CHECK(!family.empty() || path_type == PrimitiveType::TYPE_VARIANT);
     TabletIndexPB index_pb;
     root_index.to_schema_pb(&index_pb);
     (*index_pb.mutable_properties())[std::string(VARIANT_ROOT_QUERY_PATH_KEY)] = relative_path;
     if (!family.empty()) {
         (*index_pb.mutable_properties())[std::string(VARIANT_ROOT_QUERY_VALUE_FAMILY_KEY)] = family;
+    }
+    if (subtree) {
+        (*index_pb.mutable_properties())[std::string(VARIANT_ROOT_QUERY_SUBTREE_KEY)] = "1";
     }
     auto result = std::make_shared<TabletIndex>();
     result->init_from_pb(index_pb);
