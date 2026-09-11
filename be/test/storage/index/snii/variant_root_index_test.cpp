@@ -23,6 +23,7 @@
 #include <bit>
 #include <cstdint>
 #include <limits>
+#include <map>
 #include <string>
 #include <vector>
 
@@ -161,27 +162,61 @@ TEST(VariantRootIndexCodecTest, NumericValuesUseOneCanonicalEqualityTerm) {
                         .empty());
 }
 
-TEST(VariantRootIndexCodecTest, RootModeRecognitionRequiresSupportedFormat) {
-    EXPECT_TRUE(is_root_mode_properties(
-            {{std::string(VARIANT_INDEX_MODE_KEY), std::string(VARIANT_INDEX_MODE_ROOT)},
-             {std::string(VARIANT_ROOT_FORMAT_VERSION_KEY),
-              std::string(VARIANT_ROOT_FORMAT_VERSION_V1)}}));
-    EXPECT_TRUE(is_root_mode_properties(
-            {{std::string(VARIANT_INDEX_MODE_KEY), std::string(VARIANT_INDEX_MODE_ALL_VALUES)},
-             {std::string(VARIANT_ROOT_FORMAT_VERSION_KEY),
-              std::string(VARIANT_ROOT_FORMAT_VERSION_V1)}}));
-    EXPECT_TRUE(is_all_values_mode_properties(
-            {{std::string(VARIANT_INDEX_MODE_KEY), std::string(VARIANT_INDEX_MODE_ALL_VALUES)},
-             {std::string(VARIANT_ROOT_FORMAT_VERSION_KEY),
-              std::string(VARIANT_ROOT_FORMAT_VERSION_V1)}}));
-    EXPECT_TRUE(is_all_values_mode_properties(
-            {{std::string(VARIANT_INDEX_MODE_KEY), std::string(VARIANT_INDEX_MODE_ALL_VALUES)},
-             {std::string(VARIANT_ROOT_FORMAT_VERSION_KEY),
-              std::string(VARIANT_ROOT_FORMAT_VERSION_V2)}}));
-    EXPECT_FALSE(is_root_mode_properties({{std::string(VARIANT_INDEX_MODE_KEY), "children"}}));
-    EXPECT_FALSE(is_root_mode_properties(
-            {{std::string(VARIANT_INDEX_MODE_KEY), std::string(VARIANT_INDEX_MODE_ROOT)},
-             {std::string(VARIANT_ROOT_FORMAT_VERSION_KEY), "2"}}));
+TEST(VariantRootIndexCodecTest, ScopeRecognitionRequiresTheCurrentFormat) {
+    const auto props = [](std::map<std::string, std::string> extra) {
+        std::map<std::string, std::string> properties = std::move(extra);
+        properties.emplace(std::string(VARIANT_ROOT_FORMAT_VERSION_KEY),
+                           std::string(VARIANT_ROOT_FORMAT_VERSION_CURRENT));
+        return properties;
+    };
+    // scope spellings
+    auto scope = variant_index_scope(props({{std::string(VARIANT_INDEX_SCOPE_KEY), "paths"}}));
+    ASSERT_TRUE(scope.has_value());
+    EXPECT_TRUE(scope->paths);
+    EXPECT_FALSE(scope->values);
+    scope = variant_index_scope(props({{std::string(VARIANT_INDEX_SCOPE_KEY), "values"}}));
+    ASSERT_TRUE(scope.has_value());
+    EXPECT_FALSE(scope->paths);
+    EXPECT_TRUE(scope->values);
+    scope = variant_index_scope(
+            props({{std::string(VARIANT_INDEX_SCOPE_KEY), " values , paths "}}));
+    ASSERT_TRUE(scope.has_value());
+    EXPECT_TRUE(scope->paths);
+    EXPECT_TRUE(scope->values);
+    EXPECT_FALSE(variant_index_scope(props({{std::string(VARIANT_INDEX_SCOPE_KEY), "children"}}))
+                         .has_value());
+    EXPECT_FALSE(
+            variant_index_scope(props({{std::string(VARIANT_INDEX_SCOPE_KEY), ""}})).has_value());
+    // legacy mode spellings map onto scopes
+    EXPECT_TRUE(is_path_root_mode_properties(
+            props({{std::string(VARIANT_INDEX_MODE_KEY), std::string(VARIANT_INDEX_MODE_ROOT)}})));
+    EXPECT_FALSE(is_all_values_mode_properties(
+            props({{std::string(VARIANT_INDEX_MODE_KEY), std::string(VARIANT_INDEX_MODE_ROOT)}})));
+    EXPECT_TRUE(is_all_values_mode_properties(props(
+            {{std::string(VARIANT_INDEX_MODE_KEY), std::string(VARIANT_INDEX_MODE_ALL_VALUES)}})));
+    EXPECT_TRUE(is_root_mode_properties(props(
+            {{std::string(VARIANT_INDEX_MODE_KEY), std::string(VARIANT_INDEX_MODE_ALL_VALUES)}})));
+    EXPECT_FALSE(
+            is_root_mode_properties(props({{std::string(VARIANT_INDEX_MODE_KEY), "children"}})));
+    // the scope key wins over the legacy key
+    scope = variant_index_scope(props({{std::string(VARIANT_INDEX_SCOPE_KEY), "values"},
+                                       {std::string(VARIANT_INDEX_MODE_KEY), "root"}}));
+    ASSERT_TRUE(scope.has_value());
+    EXPECT_FALSE(scope->paths);
+    // an unknown or missing format version makes the index invisible rather than misread
+    for (const std::string_view version :
+         {VARIANT_ROOT_FORMAT_VERSION_V1, VARIANT_ROOT_FORMAT_VERSION_V2, std::string_view("4")}) {
+        EXPECT_FALSE(is_root_mode_properties(
+                {{std::string(VARIANT_INDEX_SCOPE_KEY), "paths"},
+                 {std::string(VARIANT_ROOT_FORMAT_VERSION_KEY), std::string(version)}}))
+                << version;
+    }
+    EXPECT_FALSE(is_root_mode_properties({{std::string(VARIANT_INDEX_SCOPE_KEY), "paths"}}));
+    // exclude globs
+    EXPECT_TRUE(variant_index_exclude_paths(props({})).empty());
+    EXPECT_EQ(variant_index_exclude_paths(props({{std::string(VARIANT_INDEX_EXCLUDE_PATHS_KEY),
+                                                  " *_url, *.avatar_url ,, "}})),
+              (std::vector<std::string> {"*_url", "*.avatar_url"}));
 }
 
 TEST(VariantRootIndexCodecTest, AllValuesTermsArePathlessTypedTerms) {
@@ -284,7 +319,7 @@ TEST_F(VariantRootIndexWriterTest, KeepsOneDocumentPerVariantRow) {
     pb.add_col_unique_id(3);
     (*pb.mutable_properties())[std::string(VARIANT_INDEX_MODE_KEY)] = VARIANT_INDEX_MODE_ROOT;
     (*pb.mutable_properties())[std::string(VARIANT_ROOT_FORMAT_VERSION_KEY)] =
-            VARIANT_ROOT_FORMAT_VERSION_V1;
+            VARIANT_ROOT_FORMAT_VERSION_CURRENT;
     (*pb.mutable_properties())["parser"] = "none";
     TabletIndex index;
     index.init_from_pb(pb);
@@ -358,7 +393,7 @@ TEST_F(VariantRootIndexWriterTest, TypedValuesKeepConvertedPostingsAndRowids) {
     index_pb.add_col_unique_id(3);
     (*index_pb.mutable_properties())[std::string(VARIANT_INDEX_MODE_KEY)] = VARIANT_INDEX_MODE_ROOT;
     (*index_pb.mutable_properties())[std::string(VARIANT_ROOT_FORMAT_VERSION_KEY)] =
-            VARIANT_ROOT_FORMAT_VERSION_V1;
+            VARIANT_ROOT_FORMAT_VERSION_CURRENT;
     (*index_pb.mutable_properties())["parser"] = "none";
     TabletIndex index;
     index.init_from_pb(index_pb);
@@ -418,7 +453,7 @@ TEST_F(VariantRootIndexWriterTest, FansOutOneTraversalToExactAndTokenIndexes) {
     exact_pb.add_col_unique_id(3);
     (*exact_pb.mutable_properties())[std::string(VARIANT_INDEX_MODE_KEY)] = VARIANT_INDEX_MODE_ROOT;
     (*exact_pb.mutable_properties())[std::string(VARIANT_ROOT_FORMAT_VERSION_KEY)] =
-            VARIANT_ROOT_FORMAT_VERSION_V1;
+            VARIANT_ROOT_FORMAT_VERSION_CURRENT;
     (*exact_pb.mutable_properties())["parser"] = "none";
     TabletIndex exact_index;
     exact_index.init_from_pb(exact_pb);
@@ -520,7 +555,7 @@ TEST_F(VariantRootIndexWriterTest, RootIndexRecursesArraysUnderTheArrayPath) {
     exact_pb.add_col_unique_id(3);
     (*exact_pb.mutable_properties())[std::string(VARIANT_INDEX_MODE_KEY)] = VARIANT_INDEX_MODE_ROOT;
     (*exact_pb.mutable_properties())[std::string(VARIANT_ROOT_FORMAT_VERSION_KEY)] =
-            VARIANT_ROOT_FORMAT_VERSION_V1;
+            VARIANT_ROOT_FORMAT_VERSION_CURRENT;
     (*exact_pb.mutable_properties())["parser"] = "none";
     TabletIndex exact_index;
     exact_index.init_from_pb(exact_pb);
@@ -605,6 +640,81 @@ TEST_F(VariantRootIndexWriterTest, RootIndexRecursesArraysUnderTheArrayPath) {
     expect_term(**token, encode_int64_term("n", 1), {});
 }
 
+TEST_F(VariantRootIndexWriterTest, BothScopesStoreBothTermShapesAndExcludeGlobsDropLeaves) {
+    TabletIndexPB pb;
+    pb.set_index_id(79);
+    pb.set_index_name("payload_scoped_idx");
+    pb.set_index_type(IndexType::INVERTED);
+    pb.add_col_unique_id(3);
+    (*pb.mutable_properties())[std::string(VARIANT_INDEX_SCOPE_KEY)] = "paths,values";
+    (*pb.mutable_properties())[std::string(VARIANT_ROOT_FORMAT_VERSION_KEY)] =
+            VARIANT_ROOT_FORMAT_VERSION_CURRENT;
+    (*pb.mutable_properties())[std::string(VARIANT_INDEX_EXCLUDE_PATHS_KEY)] = "*_url,meta.*";
+    (*pb.mutable_properties())["parser"] = "none";
+    TabletIndex index;
+    index.init_from_pb(pb);
+
+    const std::string prefix = std::string(TEST_DIR) + "/scoped";
+    io::FileWriterPtr file_writer;
+    ASSERT_TRUE(io::global_local_filesystem()
+                        ->create_file(InvertedIndexDescriptor::get_index_file_path_v2(prefix),
+                                      &file_writer)
+                        .ok());
+    IndexFileWriter index_file_writer(io::global_local_filesystem(), prefix, "scoped_rowset",
+                                      /*seg_id=*/0, InvertedIndexStorageFormatPB::SNII,
+                                      std::move(file_writer));
+    ::doris::segment_v2::VariantRootIndexWriter writer(&index_file_writer, &index,
+                                                       /*is_direct_load=*/false,
+                                                       /*check_duplicate_json_path=*/false);
+    ASSERT_TRUE(writer.init().ok());
+    EXPECT_TRUE(writer.scope().paths);
+    EXPECT_TRUE(writer.scope().values);
+
+    auto values = ColumnVariantV2::create();
+    DataTypeVariantV2SerDe serde;
+    DataTypeSerDe::FormatOptions format_options;
+    for (const std::string_view json : {
+                 R"({"action":"opened","avatar_url":"http://x","meta":{"k":"v"},"n":7})",
+                 R"({"action":"closed","repo":{"html_url":"http://y","name":"doris"}})",
+         }) {
+        Slice slice(json.data(), json.size());
+        ASSERT_TRUE(serde.deserialize_one_cell_from_json(*values, slice, format_options).ok());
+    }
+    std::array<::doris::segment_v2::VariantRootIndexWriter*, 1> writers = {&writer};
+    ASSERT_TRUE(
+            append_variant_root_indexes(writers, values->read_view(), 0, values->size(), {}).ok());
+    ASSERT_TRUE(writer.finish().ok());
+    ASSERT_TRUE(index_file_writer.begin_close().ok());
+    ASSERT_TRUE(index_file_writer.finish_close().ok());
+
+    IndexFileReader index_file_reader(io::global_local_filesystem(), prefix,
+                                      InvertedIndexStorageFormatPB::SNII);
+    ASSERT_TRUE(index_file_reader.init().ok());
+    auto reader = index_file_reader.open_snii_index(&index);
+    ASSERT_TRUE(reader.has_value()) << reader.error();
+    const auto expect_term = [](const snii::reader::LogicalIndexReader& reader,
+                                const std::string& term, std::vector<uint32_t> expected) {
+        std::vector<uint32_t> docids;
+        ASSERT_TRUE(snii::query::term_query(reader, term, &docids).ok());
+        EXPECT_EQ(docids, expected);
+    };
+    // Every kept leaf is stored once with its path and once without.
+    expect_term(**reader, encode_string_term("action", "opened"), {0});
+    expect_term(**reader, encode_all_value_term("opened"), {0});
+    expect_term(**reader, encode_int64_term("n", 7), {0});
+    expect_term(**reader, encode_int64_term("", 7), {0});
+    expect_term(**reader, encode_string_term("repo.name", "doris"), {1});
+    expect_term(**reader, encode_all_value_term("doris"), {1});
+    // Excluded globs drop the leaf from both shapes: *_url matches avatar_url and repo.html_url,
+    // meta.* matches meta.k.
+    expect_term(**reader, encode_string_term("avatar_url", "http://x"), {});
+    expect_term(**reader, encode_all_value_term("http://x"), {});
+    expect_term(**reader, encode_string_term("repo.html_url", "http://y"), {});
+    expect_term(**reader, encode_all_value_term("http://y"), {});
+    expect_term(**reader, encode_string_term("meta.k", "v"), {});
+    expect_term(**reader, encode_all_value_term("v"), {});
+}
+
 // NOLINTNEXTLINE(readability-function-cognitive-complexity) -- Pins row-domain and term semantics.
 TEST_F(VariantRootIndexWriterTest, AllValuesIndexesRootScalarsArraysAndCrossPathTokens) {
     TabletIndexPB exact_pb;
@@ -615,7 +725,7 @@ TEST_F(VariantRootIndexWriterTest, AllValuesIndexesRootScalarsArraysAndCrossPath
     (*exact_pb.mutable_properties())[std::string(VARIANT_INDEX_MODE_KEY)] =
             VARIANT_INDEX_MODE_ALL_VALUES;
     (*exact_pb.mutable_properties())[std::string(VARIANT_ROOT_FORMAT_VERSION_KEY)] =
-            VARIANT_ROOT_FORMAT_VERSION_V2;
+            VARIANT_ROOT_FORMAT_VERSION_CURRENT;
     (*exact_pb.mutable_properties())["parser"] = "none";
     (*exact_pb.mutable_properties())["support_phrase"] = "false";
     TabletIndex exact_index;

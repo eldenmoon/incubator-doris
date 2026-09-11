@@ -166,8 +166,15 @@ public class IndexDefinitionTest {
             root.checkColumn(new ColumnDefinition("col1", VariantType.INSTANCE, false,
                             AggregateType.NONE, true, null, "comment"), KeysType.DUP_KEYS, false,
                     TInvertedIndexFileStorageFormat.SNII);
-            Assertions.assertEquals("1", root.getProperties().get("variant_root_format_version"));
+            // The legacy mode spelling is normalized to the scope key and the FE stamps the
+            // value-first format version.
+            Assertions.assertEquals("paths", root.getProperties().get("variant_index_scope"));
+            Assertions.assertNull(root.getProperties().get("variant_index_mode"));
+            Assertions.assertNull(root.getProperties().get("variant_root_format_version"));
+            Assertions.assertEquals("3",
+                    root.translateToCatalogStyle().getProperties().get("variant_root_format_version"));
             Assertions.assertEquals("false", root.getProperties().get("support_phrase"));
+            Assertions.assertTrue(root.isVariantRootIndex());
             Index catalogRoot = new Index(1, "variant_root_index", Lists.newArrayList("col1"),
                     IndexType.INVERTED,
                     new HashMap<>(Map.of("variant_index_mode", "root", "parser", "none")),
@@ -191,9 +198,45 @@ public class IndexDefinitionTest {
             allValues.checkColumn(new ColumnDefinition("col1", VariantType.INSTANCE, false,
                             AggregateType.NONE, true, null, "comment"), KeysType.DUP_KEYS, false,
                     TInvertedIndexFileStorageFormat.SNII);
-            Assertions.assertEquals("2",
-                    allValues.getProperties().get("variant_root_format_version"));
+            Assertions.assertEquals("values", allValues.getProperties().get("variant_index_scope"));
+            Assertions.assertEquals("3", allValues.translateToCatalogStyle().getProperties()
+                    .get("variant_root_format_version"));
             Assertions.assertEquals("false", allValues.getProperties().get("support_phrase"));
+
+            IndexDefinition scoped = new IndexDefinition("variant_scoped_index", false,
+                    Lists.newArrayList("col1"), "INVERTED",
+                    new HashMap<>(Map.of("variant_index_scope", "values, paths", "parser", "none",
+                            "variant_index_exclude_paths", "*_url,*.avatar_url")),
+                    "comment");
+            scoped.checkColumn(new ColumnDefinition("col1", VariantType.INSTANCE, false,
+                            AggregateType.NONE, true, null, "comment"), KeysType.DUP_KEYS, false,
+                    TInvertedIndexFileStorageFormat.SNII);
+            Assertions.assertEquals("paths,values",
+                    scoped.getProperties().get("variant_index_scope"));
+            Assertions.assertEquals("*_url,*.avatar_url",
+                    scoped.getProperties().get("variant_index_exclude_paths"));
+            Index catalogScoped = new Index(3, "variant_scoped_index", Lists.newArrayList("col1"),
+                    IndexType.INVERTED, new HashMap<>(scoped.getProperties()), "comment");
+            Assertions.assertTrue(catalogScoped.isVariantRootIndex());
+            Assertions.assertTrue(catalogScoped.isVariantAllValuesIndex());
+
+            IndexDefinition userVersion = new IndexDefinition("variant_user_version", false,
+                    Lists.newArrayList("col1"), "INVERTED",
+                    new HashMap<>(Map.of("variant_index_scope", "paths",
+                            "variant_root_format_version", "3")),
+                    "comment");
+            Assertions.assertThrows(AnalysisException.class, () -> userVersion.checkColumn(
+                    new ColumnDefinition("col1", VariantType.INSTANCE, false, AggregateType.NONE,
+                            true, null, "comment"), KeysType.DUP_KEYS, false,
+                    TInvertedIndexFileStorageFormat.SNII));
+
+            IndexDefinition excludeWithoutScope = new IndexDefinition("variant_exclude_only", false,
+                    Lists.newArrayList("col1"), "INVERTED",
+                    new HashMap<>(Map.of("variant_index_exclude_paths", "*_url")), "comment");
+            Assertions.assertThrows(AnalysisException.class, () -> excludeWithoutScope.checkColumn(
+                    new ColumnDefinition("col1", VariantType.INSTANCE, false, AggregateType.NONE,
+                            true, null, "comment"), KeysType.DUP_KEYS, false,
+                    TInvertedIndexFileStorageFormat.SNII));
             Index catalogAllValues = new Index(2, "variant_all_values_index",
                     Lists.newArrayList("col1"), IndexType.INVERTED,
                     new HashMap<>(Map.of("variant_index_mode", "all_values", "parser", "english",

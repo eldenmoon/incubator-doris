@@ -117,6 +117,7 @@ protected:
         return reader;
     }
 
+    // A Root (paths scope) index bound to one scalar path: its results are exact.
     std::shared_ptr<MockInvertedIndexReader> create_mock_root_reader(const std::string& parser,
                                                                      InvertedIndexReaderType type,
                                                                      int64_t index_id) {
@@ -125,7 +126,26 @@ protected:
                 {std::string(variant_root_index::VARIANT_INDEX_MODE_KEY),
                  std::string(variant_root_index::VARIANT_INDEX_MODE_ROOT)},
                 {std::string(variant_root_index::VARIANT_ROOT_FORMAT_VERSION_KEY),
-                 std::string(variant_root_index::VARIANT_ROOT_FORMAT_VERSION_V1)}};
+                 std::string(variant_root_index::VARIANT_ROOT_FORMAT_VERSION_CURRENT)},
+                {std::string(variant_root_index::VARIANT_ROOT_QUERY_PATH_KEY), "repo"},
+                {std::string(variant_root_index::VARIANT_ROOT_QUERY_VALUE_FAMILY_KEY), "string"}};
+        auto reader = MockInvertedIndexReader::create(properties, index_id);
+        reader->set_type(type);
+        return reader;
+    }
+
+    // A values-only index bound to one scalar path: it only proves the value exists somewhere in
+    // the row, so its rows are candidates for the residual expression.
+    std::shared_ptr<MockInvertedIndexReader> create_mock_values_path_reader(
+            const std::string& parser, InvertedIndexReaderType type, int64_t index_id) {
+        std::map<std::string, std::string> properties = {
+                {INVERTED_INDEX_PARSER_KEY, parser},
+                {std::string(variant_root_index::VARIANT_INDEX_MODE_KEY),
+                 std::string(variant_root_index::VARIANT_INDEX_MODE_ALL_VALUES)},
+                {std::string(variant_root_index::VARIANT_ROOT_FORMAT_VERSION_KEY),
+                 std::string(variant_root_index::VARIANT_ROOT_FORMAT_VERSION_CURRENT)},
+                {std::string(variant_root_index::VARIANT_ROOT_QUERY_PATH_KEY), "repo"},
+                {std::string(variant_root_index::VARIANT_ROOT_QUERY_VALUE_FAMILY_KEY), "string"}};
         auto reader = MockInvertedIndexReader::create(properties, index_id);
         reader->set_type(type);
         return reader;
@@ -234,7 +254,8 @@ TEST_F(InvertedIndexIteratorTest, DefaultRawReaderMatchesExplicitNone) {
 
 TEST_F(InvertedIndexIteratorTest, CandidateReaderDisablesCountOnlyFabrication) {
     InvertedIndexIterator iterator;
-    auto root_reader = create_mock_root_reader("none", InvertedIndexReaderType::STRING_TYPE, 9);
+    auto root_reader =
+            create_mock_values_path_reader("none", InvertedIndexReaderType::STRING_TYPE, 9);
     iterator.add_reader(InvertedIndexReaderType::STRING_TYPE, root_reader);
     auto context = std::make_shared<IndexQueryContext>();
     context->count_on_index_fastpath = true;
@@ -282,9 +303,34 @@ TEST_F(InvertedIndexIteratorTest, ExactChildReaderKeepsCountOnlyFabrication) {
               std::vector<uint32_t>({0}));
 }
 
+// A Root index answers a path predicate exactly, so it keeps the count-only fast path and
+// raises no recheck.
+TEST_F(InvertedIndexIteratorTest, RootPathReaderIsExactAndKeepsCountOnlyFabrication) {
+    InvertedIndexIterator iterator;
+    auto root_reader = create_mock_root_reader("none", InvertedIndexReaderType::STRING_TYPE, 11);
+    iterator.add_reader(InvertedIndexReaderType::STRING_TYPE, root_reader);
+    auto context = std::make_shared<IndexQueryContext>();
+    context->count_on_index_fastpath = true;
+    iterator.set_context(context);
+
+    InvertedIndexParam param;
+    param.column_name = "payload.repo";
+    param.column_type = std::make_shared<DataTypeString>();
+    param.query_value = Field::create_field<TYPE_STRING>(std::string("apache/doris"));
+    param.query_type = InvertedIndexQueryType::EQUAL_QUERY;
+    param.num_rows = 10;
+    param.roaring = std::make_shared<roaring::Roaring>();
+
+    ASSERT_TRUE(iterator.read_from_index(IndexParam {&param}).ok());
+    EXPECT_FALSE(param.requires_recheck);
+    EXPECT_TRUE(root_reader->count_fastpath_requested());
+    EXPECT_TRUE(context->count_on_index_fastpath_hit);
+}
+
 TEST_F(InvertedIndexIteratorTest, CandidateReaderDoesNotPublishInexactScores) {
     InvertedIndexIterator iterator;
-    auto root_reader = create_mock_root_reader("none", InvertedIndexReaderType::STRING_TYPE, 10);
+    auto root_reader =
+            create_mock_values_path_reader("none", InvertedIndexReaderType::STRING_TYPE, 10);
     iterator.add_reader(InvertedIndexReaderType::STRING_TYPE, root_reader);
     auto context = std::make_shared<IndexQueryContext>();
     context->collection_similarity = std::make_shared<CollectionSimilarity>();

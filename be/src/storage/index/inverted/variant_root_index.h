@@ -20,6 +20,7 @@
 #include <cstdint>
 #include <map>
 #include <memory>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -36,13 +37,44 @@ struct VariantRef;
 
 namespace segment_v2::variant_root_index {
 
+// `variant_index_scope` selects the terms an index stores:
+//   paths        -> term(value, path): exact per-path predicates; whole-root / sub-document
+//                   predicates through a dictionary run;
+//   values       -> term(value): whole-root equality / MATCH as one exact term lookup;
+//   paths,values -> both.
+// `variant_index_mode` (root / all_values) is the pre-scope spelling: root == paths,
+// all_values == values. The FE stamps `variant_root_format_version`; only the version this BE
+// writes is usable -- any other version (or none) makes the index invisible to writers and
+// readers instead of being misread.
+inline constexpr std::string_view VARIANT_INDEX_SCOPE_KEY = "variant_index_scope";
+inline constexpr std::string_view VARIANT_INDEX_SCOPE_PATHS = "paths";
+inline constexpr std::string_view VARIANT_INDEX_SCOPE_VALUES = "values";
+// Comma separated globs (variant_util::glob_match_re2) of leaf paths that produce no term.
+inline constexpr std::string_view VARIANT_INDEX_EXCLUDE_PATHS_KEY = "variant_index_exclude_paths";
 inline constexpr std::string_view VARIANT_INDEX_MODE_KEY = "variant_index_mode";
 inline constexpr std::string_view VARIANT_INDEX_MODE_ROOT = "root";
 inline constexpr std::string_view VARIANT_INDEX_MODE_ALL_VALUES = "all_values";
 inline constexpr std::string_view VARIANT_ROOT_FORMAT_VERSION_KEY = "variant_root_format_version";
+// Path-first layouts of the first prototype; never produced by this BE and not readable by it.
 inline constexpr std::string_view VARIANT_ROOT_FORMAT_VERSION_V1 = "1";
-// AllValues v2 indexes recursive scalar leaves inside arrays. Root retains v1.
 inline constexpr std::string_view VARIANT_ROOT_FORMAT_VERSION_V2 = "2";
+// Value-first layout [tag][value][sep][path] with typed, order-preserving values.
+inline constexpr std::string_view VARIANT_ROOT_FORMAT_VERSION_V3 = "3";
+inline constexpr std::string_view VARIANT_ROOT_FORMAT_VERSION_CURRENT =
+        VARIANT_ROOT_FORMAT_VERSION_V3;
+
+struct VariantIndexScope {
+    bool paths = false;
+    bool values = false;
+};
+
+// The scope of a usable value-first index, or nullopt when the properties describe none: no
+// scope / mode, an unknown scope spelling, or a format version this BE does not implement.
+std::optional<VariantIndexScope> variant_index_scope(
+        const std::map<std::string, std::string>& properties);
+// Trimmed, non-empty exclude globs.
+std::vector<std::string> variant_index_exclude_paths(
+        const std::map<std::string, std::string>& properties);
 inline constexpr std::string_view VARIANT_ROOT_QUERY_PATH_KEY = "variant_root_query_path";
 inline constexpr std::string_view VARIANT_ROOT_QUERY_VALUE_FAMILY_KEY =
         "variant_root_query_value_family";
@@ -50,6 +82,7 @@ inline constexpr std::string_view VARIANT_ROOT_QUERY_VALUE_FAMILY_KEY =
 // applies to every scalar leaf at or below the path, and an empty path is the whole document.
 inline constexpr std::string_view VARIANT_ROOT_QUERY_SUBTREE_KEY = "variant_root_query_subtree";
 
+// Any usable value-first index / one whose scope has paths / one whose scope has values.
 bool is_root_mode_properties(const std::map<std::string, std::string>& properties);
 bool is_path_root_mode_properties(const std::map<std::string, std::string>& properties);
 bool is_all_values_mode_properties(const std::map<std::string, std::string>& properties);

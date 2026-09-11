@@ -220,7 +220,7 @@ void init_root_index_meta(TabletIndex* meta) {
     (*pb.mutable_properties())[std::string(variant_root_index::VARIANT_INDEX_MODE_KEY)] =
             std::string(variant_root_index::VARIANT_INDEX_MODE_ROOT);
     (*pb.mutable_properties())[std::string(variant_root_index::VARIANT_ROOT_FORMAT_VERSION_KEY)] =
-            std::string(variant_root_index::VARIANT_ROOT_FORMAT_VERSION_V1);
+            std::string(variant_root_index::VARIANT_ROOT_FORMAT_VERSION_CURRENT);
     (*pb.mutable_properties())[std::string(variant_root_index::VARIANT_ROOT_QUERY_PATH_KEY)] =
             "repo";
     (*pb.mutable_properties())[std::string(
@@ -1026,7 +1026,7 @@ void init_value_first_root_meta(TabletIndex* meta, std::string bound_path,
     (*pb.mutable_properties())[std::string(variant_root_index::VARIANT_INDEX_MODE_KEY)] =
             std::string(variant_root_index::VARIANT_INDEX_MODE_ROOT);
     (*pb.mutable_properties())[std::string(variant_root_index::VARIANT_ROOT_FORMAT_VERSION_KEY)] =
-            std::string(variant_root_index::VARIANT_ROOT_FORMAT_VERSION_V1);
+            std::string(variant_root_index::VARIANT_ROOT_FORMAT_VERSION_CURRENT);
     (*pb.mutable_properties())[std::string(variant_root_index::VARIANT_ROOT_QUERY_PATH_KEY)] =
             std::move(bound_path);
     if (family.has_value()) {

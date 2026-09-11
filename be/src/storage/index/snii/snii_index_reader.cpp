@@ -884,8 +884,11 @@ Status SniiIndexReader::_query_variant_root(const IndexQueryContextPtr& context,
         return Status::Error<ErrorCode::INVERTED_INDEX_EVALUATE_SKIPPED>(
                 "VARIANT root index supports only equality, IN, ranges, MATCH_ANY, and MATCH_ALL");
     }
-    const bool all_values =
-            variant_root_index::is_all_values_mode_properties(_index_meta.properties());
+    const auto scope = variant_root_index::variant_index_scope(_index_meta.properties());
+    if (!scope.has_value()) {
+        return Status::Error<ErrorCode::INVERTED_INDEX_EVALUATE_SKIPPED>(
+                "VARIANT index format version is not usable by this BE");
+    }
     const auto bound_path = _index_meta.properties().find(
             std::string(variant_root_index::VARIANT_ROOT_QUERY_PATH_KEY));
     // A binding to a dynamic (VARIANT typed) path is a subtree query: the predicate applies to
@@ -897,12 +900,17 @@ Status SniiIndexReader::_query_variant_root(const IndexQueryContextPtr& context,
     const std::string_view path = bound_path != _index_meta.properties().end()
                                           ? std::string_view(bound_path->second)
                                           : std::string_view {};
-    // Root indexes answer path queries with one term and subtree / whole-root queries with a
-    // dictionary run over the value; AllValues indexes only know the value (any path).
+    // The `paths` scope answers path queries with one term and subtree / whole-root queries
+    // with a dictionary run over the value. The `values` scope answers whole-document queries
+    // with one path-less term (preferred when both scopes are stored); bound to a scalar path
+    // on a values-only index it yields candidates (the value exists somewhere in the row) that
+    // the iterator marks for residual evaluation. A sub-document needs the paths scope.
+    const bool whole_document = !has_bound_path && path.empty();
+    const bool all_values = scope->values && (whole_document || (has_bound_path && !scope->paths));
     const bool scan_mode = !all_values && !has_bound_path;
-    if (all_values && has_bound_path && subtree_query) {
+    if (!all_values && !scope->paths) {
         return Status::Error<ErrorCode::INVERTED_INDEX_EVALUATE_SKIPPED>(
-                "VARIANT all-values index cannot bind a subtree");
+                "VARIANT values-only index cannot bind a sub-document");
     }
     if (has_bound_path) {
         const auto bound_family = _index_meta.properties().find(

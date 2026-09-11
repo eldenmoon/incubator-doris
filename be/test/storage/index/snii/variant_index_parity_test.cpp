@@ -370,7 +370,7 @@ protected:
         pb.add_col_unique_id(3);
         (*pb.mutable_properties())[std::string(VARIANT_INDEX_MODE_KEY)] = std::string(mode);
         (*pb.mutable_properties())[std::string(VARIANT_ROOT_FORMAT_VERSION_KEY)] =
-                std::string(VARIANT_ROOT_FORMAT_VERSION_V1);
+                std::string(VARIANT_ROOT_FORMAT_VERSION_CURRENT);
         (*pb.mutable_properties())["parser"] = std::string(parser);
         (*pb.mutable_properties())["support_phrase"] = "false";
         TabletIndex index;

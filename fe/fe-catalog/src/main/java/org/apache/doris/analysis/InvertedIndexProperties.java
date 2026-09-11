@@ -62,15 +62,92 @@ public class InvertedIndexProperties {
 
     public static String INVERTED_INDEX_PARSER_FIELD_PATTERN_KEY = "field_pattern";
 
+    // VARIANT value-first index. `variant_index_scope` selects which terms are written:
+    //   paths        -> term(value, path): exact per-path predicates, whole-root / sub-document
+    //                   predicates through a dictionary run (default);
+    //   values       -> term(value): whole-root equality / MATCH as one exact term lookup;
+    //   paths,values -> both.
+    // `variant_index_mode` (root / all_values) is the pre-scope spelling and is normalized to
+    // paths / values. The format version is stamped by the FE, never user-supplied; a BE that does
+    // not know the version treats the index as unusable instead of misreading it.
+    public static final String VARIANT_INDEX_SCOPE_KEY = "variant_index_scope";
+    public static final String VARIANT_INDEX_SCOPE_PATHS = "paths";
+    public static final String VARIANT_INDEX_SCOPE_VALUES = "values";
+    public static final String VARIANT_INDEX_SCOPE_PATHS_AND_VALUES = "paths,values";
+    public static final String VARIANT_INDEX_EXCLUDE_PATHS_KEY = "variant_index_exclude_paths";
     public static final String VARIANT_INDEX_MODE_KEY = "variant_index_mode";
     public static final String VARIANT_INDEX_MODE_ROOT = "root";
     public static final String VARIANT_INDEX_MODE_ALL_VALUES = "all_values";
     public static final String VARIANT_ROOT_FORMAT_VERSION_KEY = "variant_root_format_version";
     public static final String VARIANT_ROOT_FORMAT_VERSION_V1 = "1";
     public static final String VARIANT_ROOT_FORMAT_VERSION_V2 = "2";
+    // Value-first layout [tag][value][sep][path] with typed, order-preserving values.
+    public static final String VARIANT_ROOT_FORMAT_VERSION_V3 = "3";
 
     public static boolean isVariantRootIndexMode(String mode) {
         return VARIANT_INDEX_MODE_ROOT.equals(mode) || VARIANT_INDEX_MODE_ALL_VALUES.equals(mode);
+    }
+
+    /** Canonical scope spelling for a scope or legacy mode value, or null when it is neither. */
+    public static String normalizeVariantIndexScope(String scopeOrMode) {
+        if (scopeOrMode == null) {
+            return null;
+        }
+        String value = scopeOrMode.trim().toLowerCase();
+        if (VARIANT_INDEX_MODE_ROOT.equals(value)) {
+            return VARIANT_INDEX_SCOPE_PATHS;
+        }
+        if (VARIANT_INDEX_MODE_ALL_VALUES.equals(value)) {
+            return VARIANT_INDEX_SCOPE_VALUES;
+        }
+        boolean paths = false;
+        boolean values = false;
+        for (String part : value.split(",")) {
+            String item = part.trim();
+            if (VARIANT_INDEX_SCOPE_PATHS.equals(item)) {
+                paths = true;
+            } else if (VARIANT_INDEX_SCOPE_VALUES.equals(item)) {
+                values = true;
+            } else {
+                return null;
+            }
+        }
+        if (paths && values) {
+            return VARIANT_INDEX_SCOPE_PATHS_AND_VALUES;
+        }
+        if (paths) {
+            return VARIANT_INDEX_SCOPE_PATHS;
+        }
+        if (values) {
+            return VARIANT_INDEX_SCOPE_VALUES;
+        }
+        return null;
+    }
+
+    /** The canonical scope of a VARIANT index, or null when the properties describe no such index. */
+    public static String getVariantIndexScope(Map<String, String> properties) {
+        if (properties == null) {
+            return null;
+        }
+        String scope = normalizeVariantIndexScope(properties.get(VARIANT_INDEX_SCOPE_KEY));
+        if (scope != null) {
+            return scope;
+        }
+        return normalizeVariantIndexScope(properties.get(VARIANT_INDEX_MODE_KEY));
+    }
+
+    public static boolean isVariantRootIndex(Map<String, String> properties) {
+        return getVariantIndexScope(properties) != null;
+    }
+
+    public static boolean variantIndexScopeHasValues(Map<String, String> properties) {
+        String scope = getVariantIndexScope(properties);
+        return scope != null && scope.contains(VARIANT_INDEX_SCOPE_VALUES);
+    }
+
+    public static boolean variantIndexScopeHasPaths(Map<String, String> properties) {
+        String scope = getVariantIndexScope(properties);
+        return scope != null && scope.contains(VARIANT_INDEX_SCOPE_PATHS);
     }
 
     // Default analyzer key constant - matches BE's INVERTED_INDEX_DEFAULT_ANALYZER_KEY

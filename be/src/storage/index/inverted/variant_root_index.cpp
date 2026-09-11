@@ -80,24 +80,103 @@ std::string_view query_value_family(PrimitiveType type) {
     }
 }
 
+namespace {
+
+std::string_view trim(std::string_view text) {
+    while (!text.empty() && (text.front() == ' ' || text.front() == '\t')) {
+        text.remove_prefix(1);
+    }
+    while (!text.empty() && (text.back() == ' ' || text.back() == '\t')) {
+        text.remove_suffix(1);
+    }
+    return text;
+}
+
+std::vector<std::string_view> split_list(std::string_view text) {
+    std::vector<std::string_view> parts;
+    size_t begin = 0;
+    while (begin <= text.size()) {
+        size_t end = text.find(',', begin);
+        if (end == std::string_view::npos) {
+            end = text.size();
+        }
+        const std::string_view part = trim(text.substr(begin, end - begin));
+        if (!part.empty()) {
+            parts.push_back(part);
+        }
+        begin = end + 1;
+    }
+    return parts;
+}
+
+std::optional<VariantIndexScope> parse_scope(std::string_view text) {
+    VariantIndexScope scope;
+    for (const std::string_view part : split_list(text)) {
+        if (part == VARIANT_INDEX_SCOPE_PATHS) {
+            scope.paths = true;
+        } else if (part == VARIANT_INDEX_SCOPE_VALUES) {
+            scope.values = true;
+        } else {
+            return std::nullopt;
+        }
+    }
+    if (!scope.paths && !scope.values) {
+        return std::nullopt;
+    }
+    return scope;
+}
+
+} // namespace
+
+std::optional<VariantIndexScope> variant_index_scope(
+        const std::map<std::string, std::string>& properties) {
+    std::optional<VariantIndexScope> scope;
+    if (const auto it = properties.find(std::string(VARIANT_INDEX_SCOPE_KEY));
+        it != properties.end()) {
+        scope = parse_scope(it->second);
+    } else if (const auto mode = properties.find(std::string(VARIANT_INDEX_MODE_KEY));
+               mode != properties.end()) {
+        if (mode->second == VARIANT_INDEX_MODE_ROOT) {
+            scope = VariantIndexScope {.paths = true};
+        } else if (mode->second == VARIANT_INDEX_MODE_ALL_VALUES) {
+            scope = VariantIndexScope {.values = true};
+        }
+    }
+    if (!scope.has_value()) {
+        return std::nullopt;
+    }
+    const auto version = properties.find(std::string(VARIANT_ROOT_FORMAT_VERSION_KEY));
+    if (version == properties.end() || version->second != VARIANT_ROOT_FORMAT_VERSION_CURRENT) {
+        return std::nullopt;
+    }
+    return scope;
+}
+
+std::vector<std::string> variant_index_exclude_paths(
+        const std::map<std::string, std::string>& properties) {
+    std::vector<std::string> globs;
+    const auto it = properties.find(std::string(VARIANT_INDEX_EXCLUDE_PATHS_KEY));
+    if (it == properties.end()) {
+        return globs;
+    }
+    for (const std::string_view glob : split_list(it->second)) {
+        globs.emplace_back(glob);
+    }
+    return globs;
+}
+
 bool is_root_mode_properties(const std::map<std::string, std::string>& properties) {
-    return is_path_root_mode_properties(properties) || is_all_values_mode_properties(properties);
+    return variant_index_scope(properties).has_value();
 }
 
 bool is_path_root_mode_properties(const std::map<std::string, std::string>& properties) {
-    const auto mode = properties.find(std::string(VARIANT_INDEX_MODE_KEY));
-    const auto version = properties.find(std::string(VARIANT_ROOT_FORMAT_VERSION_KEY));
-    return mode != properties.end() && mode->second == VARIANT_INDEX_MODE_ROOT &&
-           version != properties.end() && version->second == VARIANT_ROOT_FORMAT_VERSION_V1;
+    const auto scope = variant_index_scope(properties);
+    return scope.has_value() && scope->paths;
 }
 
 bool is_all_values_mode_properties(const std::map<std::string, std::string>& properties) {
-    const auto mode = properties.find(std::string(VARIANT_INDEX_MODE_KEY));
-    const auto version = properties.find(std::string(VARIANT_ROOT_FORMAT_VERSION_KEY));
-    return mode != properties.end() && mode->second == VARIANT_INDEX_MODE_ALL_VALUES &&
-           version != properties.end() &&
-           (version->second == VARIANT_ROOT_FORMAT_VERSION_V1 ||
-            version->second == VARIANT_ROOT_FORMAT_VERSION_V2);
+    const auto scope = variant_index_scope(properties);
+    return scope.has_value() && scope->values;
 }
 
 bool is_root_index(const TabletIndex& index) {
@@ -257,8 +336,8 @@ std::shared_ptr<TabletIndex> make_query_index(const TabletIndex& root_index,
     const std::string_view family = query_value_family(path_type);
     // A dynamic path has no single value family: on a Root index it binds as a subtree scan
     // (any typed literal, every leaf below the path); on an AllValues index the path is ignored.
-    const bool subtree =
-            path_type == PrimitiveType::TYPE_VARIANT && !is_all_values_index(root_index);
+    const bool subtree = path_type == PrimitiveType::TYPE_VARIANT &&
+                         is_path_root_mode_properties(root_index.properties());
     DORIS_CHECK(!family.empty() || path_type == PrimitiveType::TYPE_VARIANT);
     TabletIndexPB index_pb;
     root_index.to_schema_pb(&index_pb);

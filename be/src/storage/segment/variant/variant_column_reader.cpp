@@ -1550,7 +1550,8 @@ TabletIndexes VariantColumnReader::find_subcolumn_tablet_indexes(
             // for typed equality, MATCH and, on exact indexes, numeric ranges. The empty path
             // is the whole document.
             const bool dynamic_subtree_supported =
-                    reads_untyped_binary_value && !variant_root_index::is_all_values_index(*index);
+                    reads_untyped_binary_value &&
+                    variant_root_index::is_path_root_mode_properties(index->properties());
             if (all_values_supported || dynamic_subtree_supported ||
                 (analyzed ? is_string_type(path_type) : root_exact_supported)) {
                 sub_column_info.indexes.push_back(
