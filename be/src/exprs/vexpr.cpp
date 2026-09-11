@@ -957,10 +957,13 @@ Status VExpr::_evaluate_inverted_index(VExprContext* context, const FunctionBase
                         continue;
                     }
                 }
-                if (origin_primitive_type != TYPE_VARIANT &&
-                    (storage_type->equals(*target_type) ||
-                     (is_string_type(target_primitive_type) &&
-                      is_string_type(origin_primitive_type)))) {
+                const bool dynamic_variant_text_match = _node_type == TExprNodeType::MATCH_PRED &&
+                                                        origin_primitive_type == TYPE_VARIANT &&
+                                                        is_string_type(target_primitive_type);
+                if (dynamic_variant_text_match || (origin_primitive_type != TYPE_VARIANT &&
+                                                   (storage_type->equals(*target_type) ||
+                                                    (is_string_type(target_primitive_type) &&
+                                                     is_string_type(origin_primitive_type))))) {
                     children_exprs.emplace_back(expr_without_cast(child));
                 }
             } else {

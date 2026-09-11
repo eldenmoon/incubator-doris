@@ -28,6 +28,7 @@
 #include "core/value/variant/variant_value.h"
 #include "exprs/function/parse/variant_string_parse.h"
 #include "gen_cpp/olap_file.pb.h"
+#include "storage/index/inverted/analyzer/analyzer.h"
 #include "storage/tablet/tablet_schema.h"
 
 namespace doris::segment_v2::variant_root_index {
@@ -408,7 +409,12 @@ Status encode_all_values_query_value_terms(const Field& value, std::vector<std::
 std::shared_ptr<TabletIndex> make_query_index(const TabletIndex& root_index,
                                               std::string_view relative_path,
                                               PrimitiveType path_type) {
-    const std::string_view family = query_value_family(path_type);
+    std::string_view family = query_value_family(path_type);
+    if (family.empty() && path_type == PrimitiveType::TYPE_VARIANT &&
+        !is_all_values_index(root_index) &&
+        inverted_index::InvertedIndexAnalyzer::should_analyzer(root_index.properties())) {
+        family = query_value_family(PrimitiveType::TYPE_STRING);
+    }
     DORIS_CHECK(!family.empty() ||
                 (path_type == PrimitiveType::TYPE_VARIANT && is_all_values_index(root_index)));
     TabletIndexPB index_pb;

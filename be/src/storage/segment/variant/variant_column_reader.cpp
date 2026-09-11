@@ -1525,6 +1525,9 @@ TabletIndexes VariantColumnReader::find_subcolumn_tablet_indexes(
         const PrimitiveType path_type = remove_nullable(index_data_type)->get_primitive_type();
         const bool root_exact_supported =
                 !variant_root_index::query_value_family(path_type).empty();
+        const bool reads_untyped_binary_value =
+                path_type == PrimitiveType::TYPE_VARIANT &&
+                dynamic_cast<const BinaryColumnExtractIterator*>(selected_path_reader) != nullptr;
         for (const TabletIndex* index : parent_index) {
             // Root indexes contain scalar leaves only. Array equality and membership predicates
             // need the ordinary child index (when present) or a scalar residual; binding them to
@@ -1540,12 +1543,13 @@ TabletIndexes VariantColumnReader::find_subcolumn_tablet_indexes(
             }
             const bool analyzed =
                     inverted_index::InvertedIndexAnalyzer::should_analyzer(index->properties());
-            const bool all_values_supported =
-                    variant_root_index::is_all_values_index(*index) &&
-                    (root_exact_supported || (path_type == PrimitiveType::TYPE_VARIANT &&
-                                              dynamic_cast<const BinaryColumnExtractIterator*>(
-                                                      selected_path_reader) != nullptr));
-            if (all_values_supported ||
+            const bool all_values_supported = variant_root_index::is_all_values_index(*index) &&
+                                              (root_exact_supported || reads_untyped_binary_value);
+            // A binary path keeps its original dynamic type, so it cannot safely bind exact
+            // scalar equality to one encoding family. Text MATCH remains safe: both the scalar
+            // evaluator and the analyzed root index recursively consume scalar leaf text.
+            const bool dynamic_token_supported = reads_untyped_binary_value && analyzed;
+            if (all_values_supported || dynamic_token_supported ||
                 (analyzed ? is_string_type(path_type) : root_exact_supported)) {
                 sub_column_info.indexes.push_back(
                         variant_root_index::make_query_index(*index, relative_path_str, path_type));
