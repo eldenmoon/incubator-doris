@@ -176,8 +176,7 @@ struct VariantShredder::Impl {
         path_state.last_row_marker = row_marker;
         if (!defer_root_indexes && !options.root_index_writers.empty()) {
             RETURN_IF_ERROR(append_variant_root_index_leaf(options.root_index_writers,
-                                                           path_state.path.get_path(), value,
-                                                           /*is_root_value=*/false));
+                                                           path_state.path.get_path(), value));
         }
         if (value.is_null()) {
             return Status::OK();
@@ -225,9 +224,12 @@ struct VariantShredder::Impl {
     Status visit(VariantRef value, MetadataPathCache& metadata_cache, PathIndex path_index,
                  size_t row) {
         if (value.is_null()) {
-            return options.check_duplicate_json_path || !options.root_index_writers.empty()
-                           ? append_leaf(value, path_index, row)
-                           : Status::OK();
+            // Duplicate-path detection is a property of the load, never of the indexes present:
+            // a JSON null still claims its path only when the duplicate check is enabled. Index
+            // writers ignore null leaves, so routing them here for the writers' sake only made
+            // "add an index" change whether a document with a repeated key loads.
+            return options.check_duplicate_json_path ? append_leaf(value, path_index, row)
+                                                     : Status::OK();
         }
         if (value.basic_type() != VariantBasicType::OBJECT) {
             return append_leaf(value, path_index, row);
@@ -698,7 +700,7 @@ struct VariantShredder::Impl {
                 const std::string_view path =
                         is_root ? std::string_view {} : builders[index]->path().get_path();
                 RETURN_IF_ERROR(append_variant_root_index_leaf(options.root_index_writers, path,
-                                                               batch.value_at(leaf), is_root));
+                                                               batch.value_at(leaf)));
             }
             for (auto* writer : options.root_index_writers) {
                 RETURN_IF_ERROR(writer->end_document());
@@ -816,8 +818,7 @@ Status VariantShredder::append(const ColumnVariantV2::ReadView& view, size_t beg
                     return _impl->fail(std::move(status));
                 }
             } else if (!index_writers.empty()) {
-                status = append_variant_root_index_leaf(index_writers, {}, value,
-                                                        /*is_root_value=*/true);
+                status = append_variant_root_index_leaf(index_writers, {}, value);
                 if (!status.ok()) {
                     return _impl->fail(std::move(status));
                 }

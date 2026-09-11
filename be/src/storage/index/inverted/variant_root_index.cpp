@@ -17,14 +17,15 @@
 
 #include "storage/index/inverted/variant_root_index.h"
 
-#include <cmath>
-#include <limits>
-#include <utility>
+#include <iterator>
+#include <optional>
+#include <string>
+#include <string_view>
+#include <vector>
 
-#include "common/cast_set.h"
 #include "core/field.h"
+#include "core/value/variant/variant_leaf_visitor.h"
 #include "core/value/variant/variant_value.h"
-#include "exprs/function/parse/variant_string_parse.h"
 #include "gen_cpp/olap_file.pb.h"
 #include "storage/index/inverted/analyzer/analyzer.h"
 #include "storage/index/inverted/variant_term_codec.h"
@@ -33,85 +34,25 @@
 namespace doris::segment_v2::variant_root_index {
 namespace {
 
-inline constexpr uint8_t FORMAT_VERSION = 1;
-
-enum class TermTag : uint8_t {
-    INT64 = 2,
-    UINT64 = 3,
-    DOUBLE = 4,
-    BOOL = 5,
-    STRING = 6,
-    TOKEN = 7,
-    ALL_VALUE = 8,
-    ALL_VALUE_TOKEN = 9,
-};
-
-struct StringWriter {
-    std::string* value = nullptr;
-
-    void write(const char* data, size_t size) { value->append(data, size); }
-};
-
-std::string formatted_scalar_to_string(const variant_json::FormattedScalar& value) {
-    return {value.bytes.data(), value.size};
-}
-
-std::string term_prefix(std::string_view path, TermTag tag) {
-    const auto path_size = cast_set<uint32_t>(path.size());
-    std::string result;
-    result.reserve(1 + sizeof(uint32_t) + path.size() + 1);
-    result.push_back(static_cast<char>(FORMAT_VERSION));
-    for (int shift = 24; shift >= 0; shift -= 8) {
-        result.push_back(static_cast<char>((path_size >> shift) & 0xff));
+void append_canonical_number(std::string_view path,
+                             const std::optional<VariantCanonicalNumber>& number,
+                             std::vector<std::string>* terms) {
+    if (!number.has_value()) {
+        return; // NaN: no term
     }
-    result.append(path);
-    result.push_back(static_cast<char>(tag));
-    return result;
-}
-
-// Fixed width payloads use the order preserving bit mappings shared with variant_term_codec, so
-// numeric terms under one (path, tag) prefix sort by value: [lo .. hi] is a dictionary interval
-// rather than the two's complement / raw IEEE scramble of the first layout.
-std::string fixed_width_term(std::string_view path, TermTag tag, uint64_t ordered_bits) {
-    std::string result = term_prefix(path, tag);
-    variant_term_codec::append_be64(&result, ordered_bits);
-    return result;
-}
-
-void append_signed_numeric_term(std::string_view path, int64_t value,
-                                std::vector<std::string>* terms) {
-    terms->push_back(encode_int64_term(path, value));
-}
-
-void append_unsigned_numeric_term(std::string_view path, uint64_t value,
-                                  std::vector<std::string>* terms) {
-    if (value <= static_cast<uint64_t>(std::numeric_limits<int64_t>::max())) {
-        terms->push_back(encode_int64_term(path, static_cast<int64_t>(value)));
-    } else {
-        terms->push_back(encode_uint64_term(path, value));
+    switch (number->kind) {
+    case VariantLeafKind::INT64:
+        terms->push_back(encode_int64_term(path, number->int64_value));
+        break;
+    case VariantLeafKind::UINT64:
+        terms->push_back(encode_uint64_term(path, number->uint64_value));
+        break;
+    case VariantLeafKind::DOUBLE:
+        terms->push_back(encode_double_term(path, number->double_value));
+        break;
+    default:
+        break;
     }
-}
-
-void append_floating_numeric_term(std::string_view path, double value,
-                                  std::vector<std::string>* terms) {
-    if (std::isnan(value)) {
-        return;
-    }
-    // Mixed numeric VARIANT paths are promoted to FLOAT/DOUBLE only when the floating mantissa
-    // can represent the integer width losslessly. Canonicalizing integral floating values into
-    // the same signed/unsigned domain therefore keeps that cross-type equality searchable with
-    // one posting, while paths requiring a lossy promotion remain JSONB and skip root exact.
-    if (std::isfinite(value) && std::trunc(value) == value) {
-        if (value >= -0x1p63 && value < 0x1p63) {
-            append_signed_numeric_term(path, static_cast<int64_t>(value), terms);
-            return;
-        }
-        if (value >= 0x1p63 && value < 0x1p64) {
-            append_unsigned_numeric_term(path, static_cast<uint64_t>(value), terms);
-            return;
-        }
-    }
-    terms->push_back(encode_double_term(path, value));
 }
 
 } // namespace
@@ -168,61 +109,59 @@ bool is_all_values_index(const TabletIndex& index) {
 }
 
 std::string encode_int64_term(std::string_view path, int64_t value) {
-    return fixed_width_term(path, TermTag::INT64, variant_term_codec::ordered_int64_bits(value));
+    return variant_term_codec::term_int64(value, path);
 }
 
 std::string encode_uint64_term(std::string_view path, uint64_t value) {
-    return fixed_width_term(path, TermTag::UINT64, variant_term_codec::ordered_uint64_bits(value));
+    return variant_term_codec::term_uint64(value, path);
 }
 
 std::string encode_double_term(std::string_view path, double value) {
-    // -0.0 folds into 0.0 inside the codec so both spellings share one posting.
-    return fixed_width_term(path, TermTag::DOUBLE, variant_term_codec::ordered_double_bits(value));
+    return variant_term_codec::term_double(value, path);
 }
 
 std::string encode_bool_term(std::string_view path, bool value) {
-    std::string result = term_prefix(path, TermTag::BOOL);
-    result.push_back(static_cast<char>(value ? 1 : 0));
-    return result;
+    return variant_term_codec::term_bool(value, path);
 }
 
 std::string encode_string_term(std::string_view path, std::string_view value) {
-    std::string result = term_prefix(path, TermTag::STRING);
-    result.append(value);
-    return result;
+    return variant_term_codec::term_string(value, path);
 }
 
 std::string encode_token_term(std::string_view path, std::string_view value) {
-    std::string result = term_prefix(path, TermTag::TOKEN);
-    result.append(value);
-    return result;
+    return variant_term_codec::term_token(value, path);
 }
 
 std::string encode_all_value_term(std::string_view value) {
-    std::string result = term_prefix({}, TermTag::ALL_VALUE);
-    result.append(value);
-    return result;
+    return variant_term_codec::root_prefix_string(value);
 }
 
 std::string encode_all_value_token_term(std::string_view value) {
-    std::string result = term_prefix({}, TermTag::ALL_VALUE_TOKEN);
-    result.append(value);
-    return result;
+    return variant_term_codec::root_prefix_token(value);
 }
 
-Status serialize_all_value(const VariantRef& value, std::string* serialized) {
-    DORIS_CHECK(serialized != nullptr);
-    serialized->clear();
-    if (value.is_null()) {
-        return Status::OK();
-    }
-    try {
-        StringWriter writer {.value = serialized};
-        VariantJsonFormatOptions options;
-        to_sql_string(value, writer, options);
-        return Status::OK();
-    } catch (const Exception& exception) {
-        return exception.to_status();
+void append_variant_leaf_terms(std::string_view path, const VariantLeaf& leaf,
+                               std::vector<std::string>* terms) {
+    DORIS_CHECK(terms != nullptr);
+    switch (leaf.kind) {
+    case VariantLeafKind::STRING:
+        terms->push_back(
+                encode_string_term(path, {leaf.string_value.data, leaf.string_value.size}));
+        break;
+    case VariantLeafKind::INT64:
+        terms->push_back(encode_int64_term(path, leaf.int64_value));
+        break;
+    case VariantLeafKind::UINT64:
+        terms->push_back(encode_uint64_term(path, leaf.uint64_value));
+        break;
+    case VariantLeafKind::DOUBLE:
+        terms->push_back(encode_double_term(path, leaf.double_value));
+        break;
+    case VariantLeafKind::BOOL:
+        terms->push_back(encode_bool_term(path, leaf.bool_value));
+        break;
+    case VariantLeafKind::OTHER:
+        break;
     }
 }
 
@@ -230,39 +169,7 @@ Status append_variant_value_terms(std::string_view path, const VariantRef& value
                                   std::vector<std::string>* terms) {
     DORIS_CHECK(terms != nullptr);
     try {
-        if (value.basic_type() == VariantBasicType::SHORT_STRING) {
-            const StringRef string = value.get_string();
-            terms->push_back(encode_string_term(path, string.to_string_view()));
-            return Status::OK();
-        }
-        if (value.basic_type() != VariantBasicType::PRIMITIVE || value.is_null()) {
-            return Status::OK();
-        }
-        switch (value.primitive_id()) {
-        case VariantPrimitiveId::TRUE_VALUE:
-        case VariantPrimitiveId::FALSE_VALUE:
-            terms->push_back(encode_bool_term(path, value.get_bool()));
-            break;
-        case VariantPrimitiveId::INT8:
-        case VariantPrimitiveId::INT16:
-        case VariantPrimitiveId::INT32:
-        case VariantPrimitiveId::INT64:
-            append_signed_numeric_term(path, value.get_int(), terms);
-            break;
-        case VariantPrimitiveId::FLOAT:
-            append_floating_numeric_term(path, static_cast<double>(value.get_float()), terms);
-            break;
-        case VariantPrimitiveId::DOUBLE:
-            append_floating_numeric_term(path, value.get_double(), terms);
-            break;
-        case VariantPrimitiveId::STRING: {
-            const StringRef string = value.get_string();
-            terms->push_back(encode_string_term(path, string.to_string_view()));
-            break;
-        }
-        default:
-            break;
-        }
+        append_variant_leaf_terms(path, classify_variant_leaf(path, value), terms);
         return Status::OK();
     } catch (const Exception& exception) {
         return exception.to_status();
@@ -277,108 +184,51 @@ Status encode_query_value_terms(std::string_view path, const Field& value,
         terms->push_back(encode_bool_term(path, value.get<PrimitiveType::TYPE_BOOLEAN>()));
         break;
     case PrimitiveType::TYPE_TINYINT:
-        append_signed_numeric_term(path, value.get<PrimitiveType::TYPE_TINYINT>(), terms);
+        append_canonical_number(
+                path, canonical_numeric_from_int64(value.get<PrimitiveType::TYPE_TINYINT>()),
+                terms);
         break;
     case PrimitiveType::TYPE_SMALLINT:
-        append_signed_numeric_term(path, value.get<PrimitiveType::TYPE_SMALLINT>(), terms);
+        append_canonical_number(
+                path, canonical_numeric_from_int64(value.get<PrimitiveType::TYPE_SMALLINT>()),
+                terms);
         break;
     case PrimitiveType::TYPE_INT:
-        append_signed_numeric_term(path, value.get<PrimitiveType::TYPE_INT>(), terms);
+        append_canonical_number(
+                path, canonical_numeric_from_int64(value.get<PrimitiveType::TYPE_INT>()), terms);
         break;
     case PrimitiveType::TYPE_BIGINT:
-        append_signed_numeric_term(path, value.get<PrimitiveType::TYPE_BIGINT>(), terms);
+        append_canonical_number(
+                path, canonical_numeric_from_int64(value.get<PrimitiveType::TYPE_BIGINT>()), terms);
         break;
     case PrimitiveType::TYPE_UINT32:
-        append_unsigned_numeric_term(path, value.get<PrimitiveType::TYPE_UINT32>(), terms);
+        append_canonical_number(
+                path, canonical_numeric_from_uint64(value.get<PrimitiveType::TYPE_UINT32>()),
+                terms);
         break;
     case PrimitiveType::TYPE_UINT64:
-        append_unsigned_numeric_term(path, value.get<PrimitiveType::TYPE_UINT64>(), terms);
+        append_canonical_number(
+                path, canonical_numeric_from_uint64(value.get<PrimitiveType::TYPE_UINT64>()),
+                terms);
         break;
     case PrimitiveType::TYPE_FLOAT:
-        append_floating_numeric_term(
-                path, static_cast<double>(value.get<PrimitiveType::TYPE_FLOAT>()), terms);
+        append_canonical_number(path,
+                                canonical_numeric_from_double(static_cast<double>(
+                                        value.get<PrimitiveType::TYPE_FLOAT>())),
+                                terms);
         break;
     case PrimitiveType::TYPE_DOUBLE:
-        append_floating_numeric_term(path, value.get<PrimitiveType::TYPE_DOUBLE>(), terms);
+        append_canonical_number(
+                path, canonical_numeric_from_double(value.get<PrimitiveType::TYPE_DOUBLE>()),
+                terms);
         break;
-    case PrimitiveType::TYPE_CHAR:
-        terms->push_back(encode_string_term(path, value.get<PrimitiveType::TYPE_CHAR>()));
-        break;
-    case PrimitiveType::TYPE_VARCHAR:
-        terms->push_back(encode_string_term(path, value.get<PrimitiveType::TYPE_VARCHAR>()));
-        break;
-    case PrimitiveType::TYPE_STRING:
-        terms->push_back(encode_string_term(path, value.get<PrimitiveType::TYPE_STRING>()));
-        break;
-    default:
-        break;
-    }
-    return Status::OK();
-}
-
-Status serialize_all_values_query_value(const Field& value, std::string* serialized) {
-    DORIS_CHECK(serialized != nullptr);
-    serialized->clear();
-    switch (value.get_type()) {
-    case PrimitiveType::TYPE_BOOLEAN:
-        *serialized = value.get<PrimitiveType::TYPE_BOOLEAN>() ? "true" : "false";
-        break;
-    case PrimitiveType::TYPE_TINYINT:
-        *serialized = formatted_scalar_to_string(
-                variant_json::format_json_int(value.get<PrimitiveType::TYPE_TINYINT>()));
-        break;
-    case PrimitiveType::TYPE_SMALLINT:
-        *serialized = formatted_scalar_to_string(
-                variant_json::format_json_int(value.get<PrimitiveType::TYPE_SMALLINT>()));
-        break;
-    case PrimitiveType::TYPE_INT:
-        *serialized = formatted_scalar_to_string(
-                variant_json::format_json_int(value.get<PrimitiveType::TYPE_INT>()));
-        break;
-    case PrimitiveType::TYPE_BIGINT:
-        *serialized = formatted_scalar_to_string(
-                variant_json::format_json_int(value.get<PrimitiveType::TYPE_BIGINT>()));
-        break;
-    case PrimitiveType::TYPE_UINT32:
-        *serialized = formatted_scalar_to_string(
-                variant_json::format_json_int(value.get<PrimitiveType::TYPE_UINT32>()));
-        break;
-    case PrimitiveType::TYPE_UINT64: {
-        const uint64_t unsigned_value = value.get<PrimitiveType::TYPE_UINT64>();
-        if (unsigned_value > static_cast<uint64_t>(std::numeric_limits<int64_t>::max())) {
-            return Status::Error<ErrorCode::INVERTED_INDEX_EVALUATE_SKIPPED>(
-                    "VARIANT all-values query value cannot be represented exactly");
-        }
-        *serialized = formatted_scalar_to_string(
-                variant_json::format_json_int(static_cast<int64_t>(unsigned_value)));
-        break;
-    }
-    case PrimitiveType::TYPE_FLOAT: {
-        const float float_value = value.get<PrimitiveType::TYPE_FLOAT>();
-        if (!std::isfinite(float_value)) {
-            return Status::Error<ErrorCode::INVERTED_INDEX_EVALUATE_SKIPPED>(
-                    "VARIANT all-values query value cannot be represented exactly");
-        }
-        *serialized = formatted_scalar_to_string(variant_json::format_json_float(float_value));
-        break;
-    }
-    case PrimitiveType::TYPE_DOUBLE: {
-        const double double_value = value.get<PrimitiveType::TYPE_DOUBLE>();
-        if (!std::isfinite(double_value)) {
-            return Status::Error<ErrorCode::INVERTED_INDEX_EVALUATE_SKIPPED>(
-                    "VARIANT all-values query value cannot be represented exactly");
-        }
-        *serialized = formatted_scalar_to_string(variant_json::format_json_double(double_value));
-        break;
-    }
     case PrimitiveType::TYPE_CHAR:
     case PrimitiveType::TYPE_VARCHAR:
     case PrimitiveType::TYPE_STRING:
-        *serialized = std::string(value.as_string_view());
+        terms->push_back(encode_string_term(path, value.as_string_view()));
         break;
     default:
-        return Status::Error<ErrorCode::INVERTED_INDEX_EVALUATE_SKIPPED>(
-                "VARIANT all-values query value cannot be represented exactly");
+        break;
     }
     return Status::OK();
 }
@@ -386,13 +236,18 @@ Status serialize_all_values_query_value(const Field& value, std::string* seriali
 Status encode_all_values_query_value_terms(const Field& value, std::vector<std::string>* terms,
                                            size_t ignore_above) {
     DORIS_CHECK(terms != nullptr);
-    std::string serialized;
-    RETURN_IF_ERROR(serialize_all_values_query_value(value, &serialized));
-    if (serialized.size() > ignore_above) {
+    if (is_string_type(value.get_type()) && value.as_string_view().size() > ignore_above) {
         return Status::Error<ErrorCode::INVERTED_INDEX_EVALUATE_SKIPPED>(
                 "VARIANT all-values equality value exceeds ignore_above");
     }
-    terms->push_back(encode_all_value_term(serialized));
+    std::vector<std::string> encoded;
+    RETURN_IF_ERROR(encode_query_value_terms({}, value, &encoded));
+    if (encoded.empty()) {
+        return Status::Error<ErrorCode::INVERTED_INDEX_EVALUATE_SKIPPED>(
+                "VARIANT all-values query value cannot be represented exactly");
+    }
+    terms->insert(terms->end(), std::make_move_iterator(encoded.begin()),
+                  std::make_move_iterator(encoded.end()));
     return Status::OK();
 }
 

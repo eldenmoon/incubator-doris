@@ -879,12 +879,6 @@ Status SniiIndexReader::_query_variant_root(const IndexQueryContextPtr& context,
     }
     const bool all_values =
             variant_root_index::is_all_values_mode_properties(_index_meta.properties());
-    if (all_values && _index_meta.properties().at(
-                              std::string(variant_root_index::VARIANT_ROOT_FORMAT_VERSION_KEY)) ==
-                              variant_root_index::VARIANT_ROOT_FORMAT_VERSION_V1) {
-        return Status::Error<ErrorCode::INVERTED_INDEX_EVALUATE_SKIPPED>(
-                "Legacy VARIANT all-values indexes require scalar evaluation for recursive leaves");
-    }
     const auto bound_path = _index_meta.properties().find(
             std::string(variant_root_index::VARIANT_ROOT_QUERY_PATH_KEY));
     const bool has_bound_path = bound_path != _index_meta.properties().end();
@@ -909,14 +903,6 @@ Status SniiIndexReader::_query_variant_root(const IndexQueryContextPtr& context,
         }
     }
 
-    // The all-values domain preserves textual floating representations, including the sign
-    // of zero. SQL floating equality cannot use it as a complete candidate set.
-    if (all_values && query_type == InvertedIndexQueryType::EQUAL_QUERY &&
-        (query_value.get_type() == TYPE_FLOAT || query_value.get_type() == TYPE_DOUBLE)) {
-        return Status::Error<ErrorCode::INVERTED_INDEX_EVALUATE_SKIPPED>(
-                "VARIANT all-values floating equality requires scalar evaluation");
-    }
-
     std::vector<std::string> terms;
     InvertedIndexQueryInfo query_info;
     InvertedIndexQueryType execution_query_type = query_type;
@@ -928,10 +914,12 @@ Status SniiIndexReader::_query_variant_root(const IndexQueryContextPtr& context,
                 return Status::Error<ErrorCode::INVERTED_INDEX_EVALUATE_SKIPPED>(
                         "VARIANT token root index cannot evaluate this equality");
             }
-            std::string serialized_query;
-            RETURN_IF_ERROR(variant_root_index::serialize_all_values_query_value(
-                    query_value, &serialized_query));
-            RETURN_IF_ERROR(_parse_query_terms(context, std::move(serialized_query),
+            // Values are typed: only a string literal has tokens in a token index.
+            if (!is_string_type(query_value.get_type())) {
+                return Status::Error<ErrorCode::INVERTED_INDEX_EVALUATE_SKIPPED>(
+                        "VARIANT token all-values equality supports only string values");
+            }
+            RETURN_IF_ERROR(_parse_query_terms(context, std::string(query_value.as_string_view()),
                                                InvertedIndexQueryType::MATCH_ALL_QUERY,
                                                analyzer_ctx, &query_info));
             for (const TermInfo& term : query_info.term_infos) {

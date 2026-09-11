@@ -23,10 +23,12 @@
 #include "common/cast_set.h"
 #include "common/exception.h"
 #include "core/column/column_variant.h"
+#include "core/value/variant/variant_leaf_visitor.h"
 #include "exprs/function/parse/variant_string_parse.h"
 #include "storage/index/inverted/analyzer/analyzer.h"
 #include "storage/index/inverted/inverted_index_parser.h"
 #include "storage/index/inverted/variant_root_index.h"
+#include "storage/index/inverted/variant_term_codec.h"
 #include "storage/tablet/tablet_schema.h"
 #include "util/json/path_in_data.h"
 
@@ -72,45 +74,36 @@ Status VariantRootIndexWriter::begin_document(bool sql_null) {
     _sql_null = sql_null;
     _exact_terms.clear();
     _analyzed_values.clear();
-    _owned_analyzed_values.clear();
+    return Status::OK();
+}
+
+Status VariantRootIndexWriter::add_leaf(const VariantLeaf& leaf) {
+    DORIS_CHECK(_document_open);
+    DORIS_CHECK(!_sql_null);
+    const std::string_view path = _all_values ? std::string_view {} : leaf.path;
+    if (leaf.kind == VariantLeafKind::STRING) {
+        if (_should_analyze) {
+            _analyzed_values.push_back(
+                    {.suffix = variant_term_codec::token_suffix(path),
+                     .value = Slice(leaf.string_value.data, leaf.string_value.size)});
+        } else if (leaf.string_value.size <= _ignore_above) {
+            variant_root_index::append_variant_leaf_terms(path, leaf, &_exact_terms);
+        }
+        return Status::OK();
+    }
+    // Numbers and booleans are exact-only: a token index carries TOKEN terms and nothing else.
+    if (!_should_analyze) {
+        variant_root_index::append_variant_leaf_terms(path, leaf, &_exact_terms);
+    }
     return Status::OK();
 }
 
 Status VariantRootIndexWriter::add_path_value(std::string_view relative_path,
-                                              const VariantRef& value, bool is_root_value) {
-    DORIS_CHECK(_document_open);
-    DORIS_CHECK(!_sql_null);
-    DORIS_CHECK(!_all_values);
-    if (is_root_value) {
-        return Status::OK();
-    }
-
-    const bool is_string = value.basic_type() == VariantBasicType::SHORT_STRING ||
-                           (value.basic_type() == VariantBasicType::PRIMITIVE && !value.is_null() &&
-                            value.primitive_id() == VariantPrimitiveId::STRING);
-    if (!_should_analyze && (!is_string || value.get_string().size <= _ignore_above)) {
-        RETURN_IF_ERROR(variant_root_index::append_variant_value_terms(relative_path, value,
-                                                                       &_exact_terms));
-    }
-    if (is_string && _should_analyze) {
-        const StringRef string = value.get_string();
-        _analyzed_values.push_back(
-                {.prefix = variant_root_index::encode_token_term(relative_path, ""),
-                 .value = Slice(string.data, string.size)});
-    }
-    return Status::OK();
-}
-
-Status VariantRootIndexWriter::add_serialized_all_value(std::string_view serialized) {
-    DORIS_CHECK(_document_open);
-    DORIS_CHECK(!_sql_null);
-    DORIS_CHECK(_all_values);
-    if (_should_analyze) {
-        _owned_analyzed_values.emplace_back(serialized);
-    } else if (serialized.size() <= _ignore_above) {
-        _exact_terms.push_back(variant_root_index::encode_all_value_term(serialized));
-    }
-    return Status::OK();
+                                              const VariantRef& value) {
+    VariantVisitOptions options;
+    options.path_prefix = relative_path;
+    return visit_variant_leaves(value, options,
+                                [this](const VariantLeaf& leaf) { return add_leaf(leaf); });
 }
 
 Status VariantRootIndexWriter::end_document() {
@@ -120,14 +113,12 @@ Status VariantRootIndexWriter::end_document() {
         status = _writer->add_nulls(1);
     } else {
         std::vector<SniiIndexColumnWriter::PrefixedAnalyzedValue> analyzed_values;
-        analyzed_values.reserve(_analyzed_values.size() + _owned_analyzed_values.size());
+        analyzed_values.reserve(_analyzed_values.size());
         for (const AnalyzedValue& value : _analyzed_values) {
-            analyzed_values.push_back({.term_prefix = value.prefix, .value = value.value});
-        }
-        const std::string all_values_prefix =
-                _all_values ? variant_root_index::encode_all_value_token_term("") : std::string {};
-        for (const std::string& value : _owned_analyzed_values) {
-            analyzed_values.push_back({.term_prefix = all_values_prefix, .value = Slice(value)});
+            analyzed_values.push_back({.term_prefix = variant_term_codec::token_prefix(),
+                                       .value = value.value,
+                                       .term_suffix = value.suffix,
+                                       .escape_nul = true});
         }
         status = _writer->add_document(_exact_terms, analyzed_values);
     }
@@ -136,33 +127,6 @@ Status VariantRootIndexWriter::end_document() {
 }
 
 namespace {
-
-Status append_all_values(std::span<VariantRootIndexWriter*> writers, const VariantRef& value) {
-    if (value.basic_type() == VariantBasicType::OBJECT) {
-        const auto object = value.object_view();
-        for (uint32_t index = 0; index < object.size(); ++index) {
-            RETURN_IF_ERROR(append_all_values(writers, object.value_at(index)));
-        }
-        return Status::OK();
-    }
-    if (value.basic_type() == VariantBasicType::ARRAY) {
-        for (uint32_t index = 0; index < value.num_elements(); ++index) {
-            RETURN_IF_ERROR(append_all_values(writers, value.array_at(index)));
-        }
-        return Status::OK();
-    }
-    if (value.is_null()) {
-        return Status::OK();
-    }
-    std::string serialized;
-    RETURN_IF_ERROR(variant_root_index::serialize_all_value(value, &serialized));
-    for (VariantRootIndexWriter* writer : writers) {
-        if (writer->is_all_values()) {
-            RETURN_IF_ERROR(writer->add_serialized_all_value(serialized));
-        }
-    }
-    return Status::OK();
-}
 
 Status visit_root_index_writers(std::span<VariantRootIndexWriter*> writers, const VariantRef& value,
                                 const PathInData& relative_path,
@@ -179,8 +143,7 @@ Status visit_root_index_writers(std::span<VariantRootIndexWriter*> writers, cons
             return Status::InvalidArgument("may contains duplicated entry : {}",
                                            relative_path.get_path());
         }
-        return append_variant_root_index_leaf(writers, relative_path.get_path(), value,
-                                              relative_path.empty());
+        return append_variant_root_index_leaf(writers, relative_path.get_path(), value);
     }
     const VariantRef::ObjectView object = value.object_view();
     for (uint32_t index = 0; index < object.size(); ++index) {
@@ -202,21 +165,21 @@ Status visit_root_index_writers(std::span<VariantRootIndexWriter*> writers, cons
 } // namespace
 
 Status append_variant_root_index_leaf(std::span<VariantRootIndexWriter*> writers,
-                                      std::string_view relative_path, const VariantRef& value,
-                                      bool is_root_value) {
-    bool has_all_values = false;
+                                      std::string_view relative_path, const VariantRef& value) {
     for (VariantRootIndexWriter* writer : writers) {
         DORIS_CHECK(writer != nullptr);
-        if (writer->is_all_values()) {
-            has_all_values = true;
-        } else {
-            RETURN_IF_ERROR(writer->add_path_value(relative_path, value, is_root_value));
+    }
+    if (writers.size() == 1) {
+        return writers.front()->add_path_value(relative_path, value);
+    }
+    VariantVisitOptions options;
+    options.path_prefix = relative_path;
+    return visit_variant_leaves(value, options, [&](const VariantLeaf& leaf) {
+        for (VariantRootIndexWriter* writer : writers) {
+            RETURN_IF_ERROR(writer->add_leaf(leaf));
         }
-    }
-    if (has_all_values) {
-        RETURN_IF_ERROR(append_all_values(writers, value));
-    }
-    return Status::OK();
+        return Status::OK();
+    });
 }
 
 Status append_variant_root_indexes(std::span<VariantRootIndexWriter*> writers,
@@ -335,10 +298,7 @@ size_t VariantRootIndexWriter::size() const {
         result += term.capacity();
     }
     for (const AnalyzedValue& value : _analyzed_values) {
-        result += value.prefix.capacity();
-    }
-    for (const std::string& value : _owned_analyzed_values) {
-        result += value.capacity();
+        result += value.suffix.capacity();
     }
     return result;
 }
