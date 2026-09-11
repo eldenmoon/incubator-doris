@@ -47,9 +47,15 @@ namespace doris::segment_v2 {
 
 class SniiIndexColumnWriter final : public IndexColumnWriter {
 public:
+    // One value to analyze with this index's analyzer. Every token becomes
+    // `term_prefix + token + term_suffix`; with escape_nul the token's 0x00 bytes are written as
+    // 0x00 0x01 first so a caller-supplied 0x00 0x00 terminator in term_suffix stays unambiguous.
+    // The VARIANT index uses this to shape value-first terms: [tag][token][0 0][path].
     struct PrefixedAnalyzedValue {
         std::string_view term_prefix;
         Slice value;
+        std::string_view term_suffix;
+        bool escape_nul = false;
     };
 
     SniiIndexColumnWriter(IndexFileWriter* index_file_writer, const TabletIndex* index_meta,
@@ -107,7 +113,8 @@ public:
 private:
     Status _add_value_tokens(const Slice& value, uint32_t docid, uint32_t position_base,
                              uint32_t* max_position, uint32_t* semantic_length,
-                             std::string_view term_prefix = {});
+                             std::string_view term_prefix = {}, std::string_view term_suffix = {},
+                             bool escape_nul = false);
     inverted_index::CommonGramsSegmentMetadata _build_common_grams_metadata() const;
     // Mirrors _null_docids' capacity into _memory_reporter (delta-charged);
     // release_all zeroes the charge (finish() handoff / close_on_error()).

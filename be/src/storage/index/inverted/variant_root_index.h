@@ -31,6 +31,7 @@ namespace doris {
 
 class Field;
 class TabletIndex;
+struct VariantLeaf;
 struct VariantRef;
 
 namespace segment_v2::variant_root_index {
@@ -53,36 +54,39 @@ bool is_root_index(const TabletIndex& index);
 bool is_all_values_index(const TabletIndex& index);
 std::string_view query_value_family(PrimitiveType type);
 
+// Term layout (see variant_term_codec.h): [tag][value][sep][path]. Both index modes share it:
+//   - a Root index stores every scalar leaf as term(value, path);
+//   - an AllValues index stores the same leaves as term(value, "") -- the root prefix, i.e. the
+//     path-independent "values" namespace. Equality against any path is one exact term lookup.
+// Values are typed: the string "3" and the number 3 are different terms, integral doubles fold
+// into INT64 / UINT64, -0.0 folds into 0.0, and NaN has no term.
 std::string encode_int64_term(std::string_view path, int64_t value);
 std::string encode_uint64_term(std::string_view path, uint64_t value);
 std::string encode_double_term(std::string_view path, double value);
 std::string encode_bool_term(std::string_view path, bool value);
 std::string encode_string_term(std::string_view path, std::string_view value);
 std::string encode_token_term(std::string_view path, std::string_view value);
+// AllValues terms are path-less terms of the same layout.
 std::string encode_all_value_term(std::string_view value);
 std::string encode_all_value_token_term(std::string_view value);
 
-// Serializes one logical JSON value with the same path-independent value semantics used by
-// JSONAllValues: strings stay unquoted, scalars use their textual form, and containers use JSON.
-// JSON null is represented by an empty output and is intentionally not indexed by callers.
-Status serialize_all_value(const VariantRef& value, std::string* serialized);
-
-// Appends the exact equality terms supported for a native Variant V2 leaf. Containers,
-// decimals, temporal values, binary values, UUIDs, and JSON null intentionally append no value
-// term; their predicates remain scalar residuals.
+// Appends the exact equality term for one Variant scalar leaf (none for containers, JSON null,
+// NaN, decimals, temporal, binary and UUID values). Path "" yields the AllValues term.
 Status append_variant_value_terms(std::string_view path, const VariantRef& value,
                                   std::vector<std::string>* terms);
+// Same, for an already classified leaf.
+void append_variant_leaf_terms(std::string_view path, const VariantLeaf& leaf,
+                               std::vector<std::string>* terms);
 
 // Encodes one scalar predicate value into the same exact-term domain used by the writer. A
 // successful call with an empty result means the type is intentionally unsupported by the root
-// index and the caller must fall back to scalar evaluation.
+// index and the caller must fall back to scalar evaluation. Path "" targets the AllValues terms.
 Status encode_query_value_terms(std::string_view path, const Field& value,
                                 std::vector<std::string>* terms);
 
-// Encodes the scalar query types whose textual representation is guaranteed to match
-// serialize_all_value(). Unsupported values return INVERTED_INDEX_EVALUATE_SKIPPED;
-// a successful empty string is a valid value.
-Status serialize_all_values_query_value(const Field& value, std::string* serialized);
+// AllValues equality: typed like encode_query_value_terms(""). Strings longer than ignore_above
+// and unsupported types return INVERTED_INDEX_EVALUATE_SKIPPED so the caller falls back to scalar
+// evaluation rather than returning an empty (wrong) result.
 Status encode_all_values_query_value_terms(const Field& value, std::vector<std::string>* terms,
                                            size_t ignore_above = std::string::npos);
 

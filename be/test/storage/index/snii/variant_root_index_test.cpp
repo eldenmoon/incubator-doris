@@ -67,23 +67,30 @@ std::string legacy_path_term(std::string_view path) {
     return result;
 }
 
-TEST(VariantRootIndexCodecTest, GoldenTermsKeepPathTypeAndValueDistinct) {
-    EXPECT_EQ(encode_string_term("键", "值"), bytes({1, 0, 0, 0, 3}) + "键" + bytes({6}) + "值");
+TEST(VariantRootIndexCodecTest, GoldenTermsAreValueFirstTagValueSeparatorPath) {
+    EXPECT_EQ(encode_string_term("键", "值"), bytes({6}) + "值" + bytes({0, 0}) + "键");
     EXPECT_EQ(encode_string_term("payload.action", "opened"),
-              bytes({1, 0, 0, 0, 14}) + "payload.action" + bytes({6}) + "opened");
+              bytes({6}) + "opened" + bytes({0, 0}) + "payload.action");
     EXPECT_EQ(encode_token_term("payload.comment.body", "index"),
-              bytes({1, 0, 0, 0, 20}) + "payload.comment.body" + bytes({7}) + "index");
+              bytes({7}) + "index" + bytes({0, 0}) + "payload.comment.body");
+    EXPECT_EQ(encode_string_term("p", std::string_view("a\0b", 3)),
+              bytes({6, 'a', 0, 1, 'b', 0, 0, 'p'}));
     EXPECT_NE(encode_string_term("a", "bc"), encode_string_term("ab", "c"));
     EXPECT_NE(encode_string_term("a", "1"), encode_int64_term("a", 1));
+    EXPECT_NE(encode_string_term("a", "x"), encode_token_term("a", "x"));
+    // Every term of one value shares one prefix, whatever the path: the root prefix.
+    EXPECT_TRUE(encode_string_term("a.b", "x").starts_with(encode_all_value_term("x")));
+    EXPECT_TRUE(encode_int64_term("a.b", 5).starts_with(encode_int64_term("", 5)));
+    EXPECT_FALSE(encode_string_term("a.b", "xy").starts_with(encode_all_value_term("x")));
 }
 
 TEST(VariantRootIndexCodecTest, NumericTermsUseOrderPreservingBigEndianPayloads) {
     EXPECT_EQ(encode_int64_term("n", -1),
-              bytes({1, 0, 0, 0, 1, 'n', 2, 0x7f, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff}));
-    EXPECT_EQ(encode_int64_term("n", 0), bytes({1, 0, 0, 0, 1, 'n', 2, 0x80, 0, 0, 0, 0, 0, 0, 0}));
-    EXPECT_EQ(encode_uint64_term("n", 42), bytes({1, 0, 0, 0, 1, 'n', 3, 0, 0, 0, 0, 0, 0, 0, 42}));
-    EXPECT_EQ(encode_double_term("n", 1.5),
-              bytes({1, 0, 0, 0, 1, 'n', 4, 0xbf, 0xf8, 0, 0, 0, 0, 0, 0}));
+              bytes({2, 0x7f, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 'n'}));
+    EXPECT_EQ(encode_int64_term("n", 0), bytes({2, 0x80, 0, 0, 0, 0, 0, 0, 0, 'n'}));
+    EXPECT_EQ(encode_uint64_term("n", 42), bytes({3, 0, 0, 0, 0, 0, 0, 0, 42, 'n'}));
+    EXPECT_EQ(encode_double_term("n", 1.5), bytes({4, 0xbf, 0xf8, 0, 0, 0, 0, 0, 0, 'n'}));
+    EXPECT_EQ(encode_bool_term("n", true), bytes({5, 1, 'n'}));
     EXPECT_EQ(encode_double_term("n", -0.0), encode_double_term("n", 0.0));
 
     // Terms under one path sort by value, which is what makes a numeric range a dictionary
@@ -177,41 +184,56 @@ TEST(VariantRootIndexCodecTest, RootModeRecognitionRequiresSupportedFormat) {
              {std::string(VARIANT_ROOT_FORMAT_VERSION_KEY), "2"}}));
 }
 
-TEST(VariantRootIndexCodecTest, AllValuesTermsDropPathAndUseSerializedValueDomain) {
-    EXPECT_EQ(encode_all_value_term("apache/doris"), bytes({1, 0, 0, 0, 0, 8}) + "apache/doris");
-    EXPECT_EQ(encode_all_value_token_term("doris"), bytes({1, 0, 0, 0, 0, 9}) + "doris");
+TEST(VariantRootIndexCodecTest, AllValuesTermsArePathlessTypedTerms) {
+    EXPECT_EQ(encode_all_value_term("apache/doris"), bytes({6}) + "apache/doris" + bytes({0, 0}));
+    EXPECT_EQ(encode_all_value_term("apache/doris"), encode_string_term("", "apache/doris"));
+    EXPECT_EQ(encode_all_value_token_term("doris"), bytes({7}) + "doris" + bytes({0, 0}));
+    EXPECT_EQ(encode_all_value_token_term("doris"), encode_token_term("", "doris"));
     EXPECT_NE(encode_all_value_term("123"), encode_string_term("repo.id", "123"));
+    // Typed: the string "123" and the number 123 are different values.
+    EXPECT_NE(encode_all_value_term("123"), encode_int64_term("", 123));
 
-    std::vector<std::string> terms;
-    ASSERT_TRUE(encode_all_values_query_value_terms(Field::create_field<TYPE_BIGINT>(123), &terms)
-                        .ok());
-    EXPECT_EQ(terms, std::vector<std::string>({encode_all_value_term("123")}));
-    terms.clear();
-    ASSERT_TRUE(encode_all_values_query_value_terms(
-                        Field::create_field<TYPE_STRING>("apache/doris"), &terms)
-                        .ok());
-    EXPECT_EQ(terms, std::vector<std::string>({encode_all_value_term("apache/doris")}));
+    const auto query_terms = [](const Field& field) {
+        std::vector<std::string> terms;
+        EXPECT_TRUE(encode_all_values_query_value_terms(field, &terms).ok());
+        return terms;
+    };
+    EXPECT_EQ(query_terms(Field::create_field<TYPE_BIGINT>(123)),
+              std::vector<std::string>({encode_int64_term("", 123)}));
+    EXPECT_EQ(query_terms(Field::create_field<TYPE_STRING>("apache/doris")),
+              std::vector<std::string>({encode_all_value_term("apache/doris")}));
+    EXPECT_EQ(query_terms(Field::create_field<TYPE_DOUBLE>(1.5)),
+              std::vector<std::string>({encode_double_term("", 1.5)}));
+    EXPECT_EQ(query_terms(Field::create_field<TYPE_DOUBLE>(-0.0)),
+              std::vector<std::string>({encode_int64_term("", 0)}));
+    EXPECT_EQ(query_terms(Field::create_field<TYPE_BOOLEAN>(true)),
+              std::vector<std::string>({encode_bool_term("", true)}));
 }
 
 TEST(VariantRootIndexCodecTest, AllValuesIgnoredQueryValuesRequireFallback) {
-    for (const auto& value :
-         {Field::create_field<TYPE_BIGINT>(1234), Field::create_field<TYPE_STRING>("abcd")}) {
-        std::vector<std::string> terms;
-        auto status = encode_all_values_query_value_terms(value, &terms, 3);
-        EXPECT_TRUE(status.is<ErrorCode::INVERTED_INDEX_EVALUATE_SKIPPED>()) << status;
-        EXPECT_TRUE(terms.empty());
-        ASSERT_TRUE(encode_all_values_query_value_terms(value, &terms, 4).ok());
-        EXPECT_EQ(terms.size(), 1);
-    }
+    std::vector<std::string> terms;
+    // ignore_above bounds string values only; numbers are fixed width.
+    ASSERT_TRUE(
+            encode_all_values_query_value_terms(Field::create_field<TYPE_BIGINT>(1234), &terms, 3)
+                    .ok());
+    EXPECT_EQ(terms.size(), 1);
+    terms.clear();
+    const auto text = Field::create_field<TYPE_STRING>("abcd");
+    auto status = encode_all_values_query_value_terms(text, &terms, 3);
+    EXPECT_TRUE(status.is<ErrorCode::INVERTED_INDEX_EVALUATE_SKIPPED>()) << status;
+    EXPECT_TRUE(terms.empty());
+    ASSERT_TRUE(encode_all_values_query_value_terms(text, &terms, 4).ok());
+    EXPECT_EQ(terms.size(), 1);
 }
 
 TEST(VariantRootIndexCodecTest, AllValuesUnsupportedValueIsDistinctFromEmptyString) {
-    std::string text;
     const auto unsupported = Field::create_field<TYPE_LARGEINT>(static_cast<Int128>(1));
-    EXPECT_TRUE(serialize_all_values_query_value(unsupported, &text)
-                        .is<ErrorCode::INVERTED_INDEX_EVALUATE_SKIPPED>());
     std::vector<std::string> terms;
     EXPECT_TRUE(encode_all_values_query_value_terms(unsupported, &terms)
+                        .is<ErrorCode::INVERTED_INDEX_EVALUATE_SKIPPED>());
+    EXPECT_TRUE(terms.empty());
+    const auto nan = Field::create_field<TYPE_DOUBLE>(std::numeric_limits<double>::quiet_NaN());
+    EXPECT_TRUE(encode_all_values_query_value_terms(nan, &terms)
                         .is<ErrorCode::INVERTED_INDEX_EVALUATE_SKIPPED>());
     EXPECT_TRUE(terms.empty());
     const auto empty = Field::create_field<TYPE_STRING>("");
@@ -490,6 +512,99 @@ TEST_F(VariantRootIndexWriterTest, FansOutOneTraversalToExactAndTokenIndexes) {
     expect_term(**token, encode_token_term("dotted.path", "second"), {3});
 }
 
+TEST_F(VariantRootIndexWriterTest, RootIndexRecursesArraysUnderTheArrayPath) {
+    TabletIndexPB exact_pb;
+    exact_pb.set_index_id(77);
+    exact_pb.set_index_name("payload_root_array_idx");
+    exact_pb.set_index_type(IndexType::INVERTED);
+    exact_pb.add_col_unique_id(3);
+    (*exact_pb.mutable_properties())[std::string(VARIANT_INDEX_MODE_KEY)] = VARIANT_INDEX_MODE_ROOT;
+    (*exact_pb.mutable_properties())[std::string(VARIANT_ROOT_FORMAT_VERSION_KEY)] =
+            VARIANT_ROOT_FORMAT_VERSION_V1;
+    (*exact_pb.mutable_properties())["parser"] = "none";
+    TabletIndex exact_index;
+    exact_index.init_from_pb(exact_pb);
+    TabletIndexPB token_pb = exact_pb;
+    token_pb.set_index_id(78);
+    token_pb.set_index_name("payload_root_array_token_idx");
+    (*token_pb.mutable_properties())["parser"] = "english";
+    (*token_pb.mutable_properties())["support_phrase"] = "false";
+    TabletIndex token_index;
+    token_index.init_from_pb(token_pb);
+
+    const std::string prefix = std::string(TEST_DIR) + "/arrays";
+    io::FileWriterPtr file_writer;
+    ASSERT_TRUE(io::global_local_filesystem()
+                        ->create_file(InvertedIndexDescriptor::get_index_file_path_v2(prefix),
+                                      &file_writer)
+                        .ok());
+    IndexFileWriter index_file_writer(io::global_local_filesystem(), prefix, "array_rowset",
+                                      /*seg_id=*/0, InvertedIndexStorageFormatPB::SNII,
+                                      std::move(file_writer));
+    ::doris::segment_v2::VariantRootIndexWriter exact_writer(&index_file_writer, &exact_index,
+                                                             /*is_direct_load=*/false,
+                                                             /*check_duplicate_json_path=*/false);
+    ::doris::segment_v2::VariantRootIndexWriter token_writer(&index_file_writer, &token_index,
+                                                             /*is_direct_load=*/false,
+                                                             /*check_duplicate_json_path=*/false);
+    ASSERT_TRUE(exact_writer.init().ok());
+    ASSERT_TRUE(token_writer.init().ok());
+
+    auto values = ColumnVariantV2::create();
+    DataTypeVariantV2SerDe serde;
+    DataTypeSerDe::FormatOptions format_options;
+    for (const std::string_view json : {
+                 R"({"tags":["database","doris"],"items":[{"k":"v"},{"k":7},{"k":null}],"n":[[1],[2.0]]})",
+                 R"({"tags":[],"items":[{"k":[true]}],"commits":[{"message":"Root search"}]})",
+                 R"(["scalar root", 3])",
+         }) {
+        Slice slice(json.data(), json.size());
+        ASSERT_TRUE(serde.deserialize_one_cell_from_json(*values, slice, format_options).ok());
+    }
+    std::array<::doris::segment_v2::VariantRootIndexWriter*, 2> writers = {&exact_writer,
+                                                                           &token_writer};
+    ASSERT_TRUE(
+            append_variant_root_indexes(writers, values->read_view(), 0, values->size(), {}).ok());
+    ASSERT_TRUE(exact_writer.finish().ok());
+    ASSERT_TRUE(token_writer.finish().ok());
+    ASSERT_TRUE(index_file_writer.begin_close().ok());
+    ASSERT_TRUE(index_file_writer.finish_close().ok());
+
+    IndexFileReader index_file_reader(io::global_local_filesystem(), prefix,
+                                      InvertedIndexStorageFormatPB::SNII);
+    ASSERT_TRUE(index_file_reader.init().ok());
+    auto exact = index_file_reader.open_snii_index(&exact_index);
+    ASSERT_TRUE(exact.has_value()) << exact.error();
+    auto token = index_file_reader.open_snii_index(&token_index);
+    ASSERT_TRUE(token.has_value()) << token.error();
+    EXPECT_EQ((*exact)->stats().doc_count, 3U);
+    EXPECT_EQ((*token)->stats().doc_count, 3U);
+
+    const auto expect_term = [](const snii::reader::LogicalIndexReader& reader,
+                                const std::string& term, std::vector<uint32_t> expected) {
+        std::vector<uint32_t> docids;
+        ASSERT_TRUE(snii::query::term_query(reader, term, &docids).ok());
+        EXPECT_EQ(docids, expected);
+    };
+    // Array elements are keyed by the array's own path, however deeply nested.
+    expect_term(**exact, encode_string_term("tags", "database"), {0});
+    expect_term(**exact, encode_string_term("tags", "doris"), {0});
+    expect_term(**exact, encode_string_term("items.k", "v"), {0});
+    expect_term(**exact, encode_int64_term("items.k", 7), {0});
+    expect_term(**exact, encode_bool_term("items.k", true), {1});
+    expect_term(**exact, encode_int64_term("n", 1), {0});
+    expect_term(**exact, encode_int64_term("n", 2), {0});
+    expect_term(**exact, encode_double_term("n", 2.0), {});
+    // Root scalars and root array elements live at the empty path.
+    expect_term(**exact, encode_string_term("", "scalar root"), {2});
+    expect_term(**exact, encode_int64_term("", 3), {2});
+    expect_term(**token, encode_token_term("commits.message", "root"), {1});
+    expect_term(**token, encode_token_term("commits.message", "search"), {1});
+    expect_term(**token, encode_token_term("tags", "doris"), {0});
+    expect_term(**token, encode_token_term("", "scalar"), {2});
+    expect_term(**token, encode_int64_term("n", 1), {});
+}
+
 // NOLINTNEXTLINE(readability-function-cognitive-complexity) -- Pins row-domain and term semantics.
 TEST_F(VariantRootIndexWriterTest, AllValuesIndexesRootScalarsArraysAndCrossPathTokens) {
     TabletIndexPB exact_pb;
@@ -576,7 +691,8 @@ TEST_F(VariantRootIndexWriterTest, AllValuesIndexesRootScalarsArraysAndCrossPath
         EXPECT_EQ(docids, expected);
     };
     expect_term(**exact, encode_all_value_term(""), {0});
-    expect_term(**exact, encode_all_value_term("123"), {0});
+    expect_term(**exact, encode_all_value_term("123"), {});
+    expect_term(**exact, encode_int64_term("", 123), {0});
     expect_term(**exact, encode_all_value_term("database"), {0});
     expect_term(**exact, encode_all_value_term("doris"), {0});
     expect_term(**exact, encode_all_value_term("leafvalue"), {1});

@@ -35,6 +35,7 @@ namespace doris {
 class PathInData;
 class ColumnVariant;
 class TabletIndex;
+struct VariantLeaf;
 
 namespace segment_v2 {
 
@@ -51,9 +52,12 @@ public:
 
     Status init();
     Status begin_document(bool sql_null);
-    Status add_path_value(std::string_view relative_path, const VariantRef& value,
-                          bool is_root_value);
-    Status add_serialized_all_value(std::string_view serialized);
+    // Adds every scalar leaf below `value` (a scalar, or a container that is recursed with
+    // VariantLeafVisitor) under `relative_path`; "" is the document root.
+    Status add_path_value(std::string_view relative_path, const VariantRef& value);
+    // Adds one already classified leaf. Root indexes key it by leaf.path, AllValues indexes by
+    // the empty path; STRING leaves become exact terms (<= ignore_above) or analyzer tokens.
+    Status add_leaf(const VariantLeaf& leaf);
     Status end_document();
     Status finish();
     void close_on_error();
@@ -63,7 +67,7 @@ public:
 
 private:
     struct AnalyzedValue {
-        std::string prefix;
+        std::string suffix; // [0 0][path]; the SNII writer escapes the token and appends this
         Slice value;
     };
 
@@ -79,14 +83,12 @@ private:
     std::unique_ptr<SniiIndexColumnWriter> _writer;
     std::vector<std::string> _exact_terms;
     std::vector<AnalyzedValue> _analyzed_values;
-    std::vector<std::string> _owned_analyzed_values;
 };
 
-// Fan out one canonical leaf to every root index writer. AllValues serialization is shared across
-// analyzer identities; each writer still owns its independent term and docid stream.
+// Visits the leaves below `value` once and fans each one out to every writer. Each writer still
+// owns its independent term and docid stream.
 Status append_variant_root_index_leaf(std::span<VariantRootIndexWriter*> writers,
-                                      std::string_view relative_path, const VariantRef& value,
-                                      bool is_root_value);
+                                      std::string_view relative_path, const VariantRef& value);
 
 // Appends one logical Variant document stream to every writer while traversing each input row
 // once. Each writer still owns an independent SNII docid domain and analyzer identity.

@@ -557,6 +557,25 @@ TEST(VariantTermCodecTest, IntegerRangeScanIsADictionaryIntervalFilteredByPathSu
     }
 }
 
+TEST(VariantTermCodecTest, TokenPrefixAndSuffixComposeTheTokenTerm) {
+    // The analyzer lane builds prefix + escape(token) + suffix; it must equal term_token().
+    const auto compose = [](std::string_view token, std::string_view path) {
+        std::string out(token_prefix());
+        for (const char c : token) {
+            out.push_back(c);
+            if (c == '\0') {
+                out.push_back('\1');
+            }
+        }
+        out.append(token_suffix(path));
+        return out;
+    };
+    EXPECT_EQ(compose("index", "payload.body"), term_token("index", "payload.body"));
+    EXPECT_EQ(compose("", ""), term_token("", ""));
+    EXPECT_EQ(compose(std::string_view("a\0b", 3), "p"),
+              term_token(std::string_view("a\0b", 3), "p"));
+}
+
 TEST(VariantTermCodecTest, PrefixUpperBoundIsTheSmallestTermAboveThePrefix) {
     EXPECT_EQ(prefix_upper_bound(bytes({0x02, 0x80, 0x00})), bytes({0x02, 0x80, 0x01}));
     EXPECT_EQ(prefix_upper_bound(bytes({0x02, 0xff, 0xff})), bytes({0x03}));

@@ -144,6 +144,22 @@ inline void append_escaped_value(std::string* out, std::string_view value) {
     out->push_back(TERMINATOR_SUFFIX);
 }
 
+// Pieces for callers that let an analyzer produce the token bytes: a TOKEN term is
+// token_prefix() + escape(token) + token_suffix(path).
+inline std::string_view token_prefix() {
+    static constexpr char prefix[] = {static_cast<char>(Tag::TOKEN)};
+    return {prefix, 1};
+}
+
+inline std::string token_suffix(std::string_view path) {
+    std::string out;
+    out.reserve(STRING_TERMINATOR_WIDTH + path.size());
+    out.push_back(ESCAPE_BYTE);
+    out.push_back(TERMINATOR_SUFFIX);
+    out.append(path);
+    return out;
+}
+
 // ---------------------------------------------------------------------------------------------
 // Root prefixes: tag + encoded value. Also the exact term for the "values" scope (no path).
 // ---------------------------------------------------------------------------------------------

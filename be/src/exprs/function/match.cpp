@@ -25,11 +25,11 @@
 #include "core/column/column_nullable.h"
 #include "core/column/variant_v2/column_variant_v2.h"
 #include "core/field.h"
+#include "core/value/variant/variant_leaf_visitor.h"
 #include "runtime/query_context.h"
 #include "runtime/runtime_state.h"
 #include "storage/index/index_reader_helper.h"
 #include "storage/index/inverted/analyzer/analyzer.h"
-#include "storage/index/inverted/variant_root_index.h"
 #include "util/debug_points.h"
 #include "util/hyperscan_util.h"
 
@@ -50,46 +50,36 @@ const InvertedIndexAnalyzerCtx* get_match_analyzer_ctx(FunctionContext* context)
     return analyzer_ctx;
 }
 
+// Collects the tokens of every STRING leaf of one Variant document, the scalar mirror of what an
+// AllValues token index stores: values are typed, so numbers and booleans never produce text
+// tokens, and objects / arrays are traversed with the same VariantLeafVisitor as the index writer.
 Status append_variant_all_values_tokens(const InvertedIndexAnalyzerCtx* analyzer_ctx,
                                         const VariantRef& value,
                                         std::vector<segment_v2::TermInfo>* tokens) {
     DORIS_CHECK(tokens != nullptr);
-    if (value.basic_type() == VariantBasicType::OBJECT) {
-        const VariantRef::ObjectView object = value.object_view();
-        for (uint32_t index = 0; index < object.size(); ++index) {
-            RETURN_IF_ERROR(
-                    append_variant_all_values_tokens(analyzer_ctx, object.value_at(index), tokens));
-        }
+    if (analyzer_ctx == nullptr) {
         return Status::OK();
     }
-    if (value.basic_type() == VariantBasicType::ARRAY) {
-        for (uint32_t index = 0; index < value.num_elements(); ++index) {
-            RETURN_IF_ERROR(
-                    append_variant_all_values_tokens(analyzer_ctx, value.array_at(index), tokens));
-        }
-        return Status::OK();
-    }
-    if (value.is_null() || analyzer_ctx == nullptr) {
-        return Status::OK();
-    }
-
-    std::string serialized;
-    RETURN_IF_ERROR(segment_v2::variant_root_index::serialize_all_value(value, &serialized));
     const bool requires_analysis =
             analyzer_ctx->requires_analysis() && analyzer_ctx->analyzer != nullptr;
-    if (!requires_analysis) {
-        tokens->emplace_back(std::move(serialized));
+    return visit_variant_leaves(value, {}, [&](const VariantLeaf& leaf) {
+        if (leaf.kind != VariantLeafKind::STRING) {
+            return Status::OK();
+        }
+        const std::string_view text(leaf.string_value.data, leaf.string_value.size);
+        if (!requires_analysis) {
+            tokens->emplace_back(std::string(text));
+            return Status::OK();
+        }
+        auto reader = segment_v2::inverted_index::InvertedIndexAnalyzer::create_reader(
+                analyzer_ctx->char_filter_map);
+        reader->init(text.data(), cast_set<int>(text.size()), true);
+        auto value_tokens = segment_v2::inverted_index::InvertedIndexAnalyzer::get_analyse_result(
+                reader, analyzer_ctx->analyzer.get());
+        tokens->insert(tokens->end(), std::make_move_iterator(value_tokens.begin()),
+                       std::make_move_iterator(value_tokens.end()));
         return Status::OK();
-    }
-
-    auto reader = segment_v2::inverted_index::InvertedIndexAnalyzer::create_reader(
-            analyzer_ctx->char_filter_map);
-    reader->init(serialized.data(), cast_set<int>(serialized.size()), true);
-    auto value_tokens = segment_v2::inverted_index::InvertedIndexAnalyzer::get_analyse_result(
-            reader, analyzer_ctx->analyzer.get());
-    tokens->insert(tokens->end(), std::make_move_iterator(value_tokens.begin()),
-                   std::make_move_iterator(value_tokens.end()));
-    return Status::OK();
+    });
 }
 
 } // namespace
