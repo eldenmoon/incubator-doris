@@ -18,6 +18,7 @@
 package org.apache.doris.nereids.trees.plans.commands.info;
 
 import org.apache.doris.analysis.AnnIndexPropertiesChecker;
+import org.apache.doris.analysis.InvertedIndexProperties;
 import org.apache.doris.analysis.InvertedIndexUtil;
 import org.apache.doris.catalog.Column;
 import org.apache.doris.catalog.Env;
@@ -107,7 +108,15 @@ public class IndexDefinition {
         if (properties != null) {
             this.properties.putAll(properties);
         }
-
+        String variantScope = InvertedIndexProperties.getVariantIndexScope(this.properties);
+        if (variantScope != null) {
+            // Canonical spelling: the scope key replaces the legacy mode key, and the FE stamps
+            // the on-disk format version the BE writes and reads. Users never set the version.
+            this.properties.remove(InvertedIndexUtil.VARIANT_INDEX_MODE_KEY);
+            this.properties.put(InvertedIndexUtil.VARIANT_INDEX_SCOPE_KEY, variantScope);
+            this.properties.putIfAbsent(InvertedIndexUtil.INVERTED_INDEX_SUPPORT_PHRASE_KEY,
+                    "false");
+        }
         if (indexType == IndexType.NGRAM_BF) {
             this.properties.putIfAbsent(NGRAM_SIZE_KEY, DEFAULT_NGRAM_SIZE);
             this.properties.putIfAbsent(NGRAM_BF_SIZE_KEY, DEFAULT_NGRAM_BF_SIZE);
@@ -259,6 +268,8 @@ public class IndexDefinition {
             }
 
             if (indexType == IndexType.INVERTED) {
+                validateVariantRootIndex(colType.isVariantType(), keysType,
+                        enableUniqueKeyMergeOnWrite, invertedIndexFileStorageFormat);
                 try {
                     InvertedIndexUtil.checkInvertedIndexParser(indexColName,
                             colType.toCatalogDataType().getPrimitiveType(), properties,
@@ -380,6 +391,8 @@ public class IndexDefinition {
             }
 
             if (indexType == IndexType.INVERTED) {
+                validateVariantRootIndex(colType.isVariantType(), keysType,
+                        enableUniqueKeyMergeOnWrite, invertedIndexFileStorageFormat);
                 try {
                     InvertedIndexUtil.checkInvertedIndexParser(indexColName, colType, properties,
                             invertedIndexFileStorageFormat);
@@ -470,6 +483,13 @@ public class IndexDefinition {
     }
 
     public Index translateToCatalogStyle() {
+        if (isVariantRootIndex()) {
+            // The catalog index carries the on-disk format version the BE writes and reads. It is
+            // stamped here, after validation rejected any user-supplied version, so a BE that does
+            // not implement this version treats the index as unusable instead of misreading it.
+            properties.putIfAbsent(InvertedIndexUtil.VARIANT_ROOT_FORMAT_VERSION_KEY,
+                    InvertedIndexUtil.VARIANT_ROOT_FORMAT_VERSION_V3);
+        }
         return new Index(Env.getCurrentEnv().getNextId(), name, cols, indexType, properties,
                 comment);
     }
@@ -534,6 +554,72 @@ public class IndexDefinition {
         return properties;
     }
 
+    public boolean isVariantRootIndex() {
+        return indexType == IndexType.INVERTED && InvertedIndexUtil.isVariantRootIndex(properties);
+    }
+
+    private void validateVariantRootIndex(boolean isVariant, KeysType keysType,
+            boolean enableUniqueKeyMergeOnWrite,
+            TInvertedIndexFileStorageFormat invertedIndexFileStorageFormat) {
+        String scope = properties.get(InvertedIndexUtil.VARIANT_INDEX_SCOPE_KEY);
+        String mode = properties.get(InvertedIndexUtil.VARIANT_INDEX_MODE_KEY);
+        String formatVersion = properties.get(InvertedIndexUtil.VARIANT_ROOT_FORMAT_VERSION_KEY);
+        String excludePaths = properties.get(InvertedIndexUtil.VARIANT_INDEX_EXCLUDE_PATHS_KEY);
+        if (scope == null && mode == null) {
+            if (formatVersion != null) {
+                throw new AnalysisException(
+                        "variant_root_format_version requires variant_index_scope");
+            }
+            if (excludePaths != null) {
+                throw new AnalysisException(
+                        "variant_index_exclude_paths requires variant_index_scope");
+            }
+            return;
+        }
+        if (scope != null && mode != null
+                && !scope.equals(InvertedIndexProperties.normalizeVariantIndexScope(mode))) {
+            throw new AnalysisException(
+                    "variant_index_mode=" + mode + " conflicts with variant_index_scope=" + scope);
+        }
+        String normalizedScope = InvertedIndexProperties.normalizeVariantIndexScope(
+                scope != null ? scope : mode);
+        if (normalizedScope == null) {
+            throw new AnalysisException(
+                    "variant_index_scope must be paths, values or paths,values"
+                            + " (variant_index_mode accepts root or all_values)");
+        }
+        if (!isVariant) {
+            throw new AnalysisException(
+                    "variant_index_scope=" + normalizedScope + " can only be used on VARIANT columns");
+        }
+        if (excludePaths != null) {
+            for (String pattern : excludePaths.split(",")) {
+                if (pattern.trim().isEmpty()) {
+                    throw new AnalysisException(
+                            "variant_index_exclude_paths must be a comma separated list of path globs");
+                }
+            }
+        }
+        if (!Config.enable_variant_v2) {
+            throw new AnalysisException("VARIANT root index requires enable_variant_v2=true");
+        }
+        if (invertedIndexFileStorageFormat != TInvertedIndexFileStorageFormat.SNII) {
+            throw new AnalysisException("VARIANT root index requires inverted_index_storage_format=SNII");
+        }
+        if (formatVersion != null
+                && !InvertedIndexUtil.VARIANT_ROOT_FORMAT_VERSION_V3.equals(formatVersion)) {
+            throw new AnalysisException("unsupported variant_root_format_version: " + formatVersion);
+        }
+        if ("true".equals(properties.get(InvertedIndexUtil.INVERTED_INDEX_SUPPORT_PHRASE_KEY))) {
+            throw new AnalysisException("VARIANT root index does not support support_phrase=true");
+        }
+        if (keysType != KeysType.DUP_KEYS
+                && !(keysType == KeysType.UNIQUE_KEYS && enableUniqueKeyMergeOnWrite)) {
+            throw new AnalysisException(
+                    "VARIANT root index supports only DUP_KEYS or UNIQUE_KEYS merge-on-write tables");
+        }
+    }
+
     private void validateBloomFilterProperties() {
         if (properties.isEmpty()) {
             return;
@@ -585,11 +671,7 @@ public class IndexDefinition {
      */
     public boolean isAnalyzedInvertedIndex() {
         return indexType == IndexType.INVERTED
-                && properties != null
-                && (properties.containsKey(InvertedIndexUtil.INVERTED_INDEX_PARSER_KEY)
-                || properties.containsKey(InvertedIndexUtil.INVERTED_INDEX_PARSER_KEY_ALIAS)
-                || properties.containsKey(InvertedIndexUtil.INVERTED_INDEX_ANALYZER_NAME_KEY)
-                || properties.containsKey(InvertedIndexUtil.INVERTED_INDEX_NORMALIZER_NAME_KEY));
+                && InvertedIndexProperties.isAnalyzed(properties);
     }
 
     public String getAnalyzerIdentity() {

@@ -80,6 +80,13 @@ SniiIndexInput make_input(uint32_t doc_count, std::vector<uint32_t> null_docids,
     return input;
 }
 
+SniiIndexInput make_docs_only_input(uint32_t doc_count, std::vector<uint32_t> null_docids,
+                                    std::vector<TermPostings> terms) {
+    SniiIndexInput input = make_input(doc_count, std::move(null_docids), std::move(terms));
+    input.config = format::IndexConfig::kDocsOnly;
+    return input;
+}
+
 inverted_index::CommonGramsSegmentMetadata common_grams_metadata(uint64_t doc_count,
                                                                  uint64_t token_count) {
     inverted_index::CommonGramsQueryIdentity identity {.common_grams_dictionary_identity = "dict-a",
@@ -477,6 +484,82 @@ TEST(SniiIndexCompactionTest, MergesDeletesNullsAndInterleavedSourcesByteIdentic
     EXPECT_EQ(merged_indexes[1].stats().doc_count, 2U);
     EXPECT_EQ(merged_indexes[1].stats().indexed_doc_count, 1U);
     EXPECT_EQ(merged_indexes[1].stats().null_count, 1U);
+}
+
+TEST(SniiIndexCompactionTest, MergesDocsOnlyTermsWithTheExactDestinationRowDomain) {
+    OpenedIndex source_zero;
+    OpenedIndex source_one;
+    build_index(make_docs_only_input(
+                        /*doc_count=*/4, /*null_docids=*/ {1},
+                        {make_docs_only_gram("action=opened", {0, 2}),
+                         make_docs_only_gram("repo=apache/doris", {0, 3})}),
+                &source_zero, reader::LogicalIndexOpenMode::kCompaction);
+    build_index(make_docs_only_input(
+                        /*doc_count=*/3, /*null_docids=*/ {2},
+                        {make_docs_only_gram("action=opened", {1}),
+                         make_docs_only_gram("repo=apache/doris", {0, 1})}),
+                &source_one, reader::LogicalIndexOpenMode::kCompaction);
+
+    const RowIdConversionMap conversion = {
+            {{0, 0}, {0, 2}, {1, 0}, kDeleted},
+            {{0, 1}, {0, 3}, {1, 1}},
+    };
+    const std::vector<uint32_t> destination_rows = {4, 2};
+    auto validated = make_validated_conversion(&conversion, {4, 3}, destination_rows);
+    ASSERT_NE(validated, nullptr);
+
+    compaction::SniiCompactionEligibility eligibility;
+    eligibility.kind = compaction::SniiStreamedMergeKind::kDocsOnlyT1;
+    std::unique_ptr<SniiPlainT2MergePlan> plan;
+    assert_ok(SniiPlainT2MergePlan::prepare({&source_zero.index, &source_one.index}, *validated,
+                                            eligibility,
+                                            /*total_read_ahead_budget_bytes=*/1U << 20, &plan));
+    ASSERT_NE(plan, nullptr);
+    EXPECT_EQ(plan->destination_index_config(), format::IndexConfig::kDocsOnly);
+    EXPECT_EQ(plan->destination_null_docids(0), (std::vector<uint32_t> {2}));
+    EXPECT_EQ(plan->destination_null_docids(1), (std::vector<uint32_t> {1}));
+
+    std::array<MemoryFile, 2> merged_files;
+    std::array<std::unique_ptr<SniiCompoundWriter>, 2> compounds;
+    std::array<SniiStreamedIndexSession*, 2> sessions = {nullptr, nullptr};
+    for (size_t i = 0; i < compounds.size(); ++i) {
+        compounds[i] = std::make_unique<SniiCompoundWriter>(&merged_files[i]);
+        SniiIndexInput input =
+                make_docs_only_input(destination_rows[i], plan->destination_null_docids(i), {});
+        assert_ok(compounds[i]->begin_streamed_index(std::move(input), &sessions[i]));
+    }
+    assert_ok(plan->execute(sessions));
+    for (auto& compound : compounds) {
+        assert_ok(compound->finish());
+    }
+
+    std::array<OpenedIndex, 2> expected;
+    build_index(make_docs_only_input(
+                        /*doc_count=*/4, /*null_docids=*/ {2},
+                        {make_docs_only_gram("action=opened", {0, 3}),
+                         make_docs_only_gram("repo=apache/doris", {0, 1, 3})}),
+                &expected[0]);
+    build_index(make_docs_only_input(
+                        /*doc_count=*/2, /*null_docids=*/ {1},
+                        {make_docs_only_gram("action=opened", {0})}),
+                &expected[1]);
+    expect_identical_index_image(&merged_files[0], &expected[0].file);
+    expect_identical_index_image(&merged_files[1], &expected[1].file);
+
+    std::array<reader::SniiSegmentReader, 2> merged_segments;
+    std::array<reader::LogicalIndexReader, 2> merged_indexes;
+    for (size_t i = 0; i < merged_files.size(); ++i) {
+        assert_ok(reader::SniiSegmentReader::open(&merged_files[i], &merged_segments[i]));
+        assert_ok(merged_segments[i].open_index(kIndexId, kIndexSuffix, &merged_indexes[i]));
+        EXPECT_EQ(merged_indexes[i].stats().doc_count, destination_rows[i]);
+        EXPECT_EQ(merged_indexes[i].stats().indexed_doc_count,
+                  destination_rows[i] - plan->destination_null_docids(i).size());
+    }
+    std::vector<uint32_t> docs;
+    assert_ok(term_query(merged_indexes[0], "action=opened", &docs));
+    EXPECT_EQ(docs, (std::vector<uint32_t> {0, 3}));
+    assert_ok(term_query(merged_indexes[1], "action=opened", &docs));
+    EXPECT_EQ(docs, (std::vector<uint32_t> {0}));
 }
 
 TEST(SniiIndexCompactionTest, MergesTwentyFourRunSourcesByteIdenticallyToReferenceRebuild) {

@@ -54,6 +54,7 @@
 #include "storage/index/inverted/common_grams/common_grams_segment_metadata.h"
 #include "storage/index/inverted/inverted_index_cache.h"
 #include "storage/index/inverted/inverted_index_reader.h"
+#include "storage/index/inverted/variant_root_index.h"
 #include "storage/index/snii/encoding/byte_sink.h"
 #include "storage/index/snii/encoding/crc32c.h"
 #include "storage/index/snii/format/core_metadata.h"
@@ -210,6 +211,24 @@ void init_index_meta(TabletIndex* meta, int64_t index_id = kIndexId,
     meta->init_from_pb(pb);
 }
 
+void init_root_index_meta(TabletIndex* meta) {
+    TabletIndexPB pb;
+    pb.set_index_type(IndexType::INVERTED);
+    pb.set_index_id(kIndexId);
+    pb.set_index_name("root_idx");
+    pb.add_col_unique_id(0);
+    (*pb.mutable_properties())[std::string(variant_root_index::VARIANT_INDEX_MODE_KEY)] =
+            std::string(variant_root_index::VARIANT_INDEX_MODE_ROOT);
+    (*pb.mutable_properties())[std::string(variant_root_index::VARIANT_ROOT_FORMAT_VERSION_KEY)] =
+            std::string(variant_root_index::VARIANT_ROOT_FORMAT_VERSION_CURRENT);
+    (*pb.mutable_properties())[std::string(variant_root_index::VARIANT_ROOT_QUERY_PATH_KEY)] =
+            "repo";
+    (*pb.mutable_properties())[std::string(
+            variant_root_index::VARIANT_ROOT_QUERY_VALUE_FAMILY_KEY)] = "string";
+    (*pb.mutable_properties())["parser"] = "none";
+    meta->init_from_pb(pb);
+}
+
 // Rows in the segment write_positional_segment() lays down. Named because the
 // readers built over it must be told the same number: the count fast path bounds
 // the index document domain against the segment row count.
@@ -251,6 +270,29 @@ void write_positional_segment() {
     assert_ok(
             file.append(doris::snii::Slice(memory_file.data().data(), memory_file.data().size())));
     assert_ok(file.finalize());
+}
+
+Status write_root_keyword_segment(std::string_view index_path_prefix) {
+    doris::snii::writer::SniiIndexInput input;
+    input.index_id = kIndexId;
+    input.index_suffix = "";
+    input.config = doris::snii::format::IndexConfig::kDocsOnly;
+    input.doc_count = 3;
+    input.terms = {make_term(variant_root_index::encode_string_term("repo", "apache/doris"),
+                             {{.docid = 1, .positions = {}}})};
+    input.null_docids = {2};
+
+    MemoryFile memory_file;
+    doris::snii::writer::SniiCompoundWriter compound(&memory_file);
+    RETURN_IF_ERROR(compound.add_logical_index(input));
+    RETURN_IF_ERROR(compound.finish());
+
+    doris::snii::io::LocalFileWriter local_file;
+    RETURN_IF_ERROR(local_file.open(
+            InvertedIndexDescriptor::get_index_file_path_v2(std::string(index_path_prefix))));
+    RETURN_IF_ERROR(local_file.append(
+            doris::snii::Slice(memory_file.data().data(), memory_file.data().size())));
+    return local_file.finalize();
 }
 
 std::shared_ptr<inverted_index::CustomAnalyzerProvider> make_common_grams_provider() {
@@ -942,6 +984,241 @@ TEST_F(SniiIndexReaderCountFallback, FunctionMatchCacheHitLoadsNullFromSelectedR
     EXPECT_EQ(cache_hit.stats.inverted_index_query_cache_hit, 1);
     EXPECT_EQ(searcher_opens.load(std::memory_order_relaxed), 1);
     EXPECT_TRUE(has_cached_null_bitmap(_meta, opened));
+}
+
+TEST_F(SniiIndexReaderCountFallback, RootPreparedTermsReuseCommonCacheAndNullDomain) {
+    const std::string path = std::string(kTestDir) + "/root_prepared_terms";
+    TabletIndex root_meta;
+    init_root_index_meta(&root_meta);
+    assert_ok(write_root_keyword_segment(path));
+
+    OpenedSniiIndex opened;
+    assert_ok(open_snii_index(&root_meta, path, &opened));
+    const Field query_value = Field::create_field<TYPE_STRING>(std::string("apache/doris"));
+
+    QueryExecutionContext cold(/*enable_query_cache=*/true);
+    std::shared_ptr<roaring::Roaring> cold_bitmap;
+    assert_ok(opened.index_reader->query(cold.context, "payload.repo", query_value,
+                                         InvertedIndexQueryType::EQUAL_QUERY, cold_bitmap));
+    ASSERT_NE(cold_bitmap, nullptr);
+    EXPECT_EQ(bitmap_docids(*cold_bitmap), (std::vector<uint32_t> {1}));
+    EXPECT_EQ(cold.stats.inverted_index_query_cache_hit, 0);
+    EXPECT_TRUE(has_cached_null_bitmap(root_meta, opened));
+
+    QueryExecutionContext warm(/*enable_query_cache=*/true);
+    std::shared_ptr<roaring::Roaring> warm_bitmap;
+    assert_ok(opened.index_reader->query(warm.context, "payload.repo", query_value,
+                                         InvertedIndexQueryType::EQUAL_QUERY, warm_bitmap));
+    ASSERT_NE(warm_bitmap, nullptr);
+    EXPECT_EQ(bitmap_docids(*warm_bitmap), (std::vector<uint32_t> {1}));
+    EXPECT_EQ(warm.stats.inverted_index_query_cache_hit, 1);
+}
+
+// ---- value-first dictionary scans through the public reader entry point ----
+
+void init_value_first_root_meta(TabletIndex* meta, std::string bound_path,
+                                std::optional<std::string> family, bool subtree) {
+    TabletIndexPB pb;
+    pb.set_index_type(IndexType::INVERTED);
+    pb.set_index_id(kIndexId);
+    pb.set_index_name("value_first_root_idx");
+    pb.add_col_unique_id(0);
+    (*pb.mutable_properties())[std::string(variant_root_index::VARIANT_INDEX_MODE_KEY)] =
+            std::string(variant_root_index::VARIANT_INDEX_MODE_ROOT);
+    (*pb.mutable_properties())[std::string(variant_root_index::VARIANT_ROOT_FORMAT_VERSION_KEY)] =
+            std::string(variant_root_index::VARIANT_ROOT_FORMAT_VERSION_CURRENT);
+    (*pb.mutable_properties())[std::string(variant_root_index::VARIANT_ROOT_QUERY_PATH_KEY)] =
+            std::move(bound_path);
+    if (family.has_value()) {
+        (*pb.mutable_properties())[std::string(
+                variant_root_index::VARIANT_ROOT_QUERY_VALUE_FAMILY_KEY)] = *family;
+    }
+    if (subtree) {
+        (*pb.mutable_properties())[std::string(
+                variant_root_index::VARIANT_ROOT_QUERY_SUBTREE_KEY)] = "1";
+    }
+    (*pb.mutable_properties())["parser"] = "none";
+    meta->init_from_pb(pb);
+}
+
+// Six rows of a Root exact index written as the value-first writer would lay them out:
+//   0: {"a":{"x":"v"},"n":5}       1: {"a":"v","n":10}        2: {"b":{"a":{"x":"v"}},"n":-3}
+//   3: {"a":{"y":7},"n":2^63}      4: {"n":7.5}               5: NULL
+Status write_value_first_root_segment(std::string_view index_path_prefix) {
+    using namespace variant_root_index;
+    std::vector<doris::snii::writer::TermPostings> terms {
+            make_term(encode_string_term("a.x", "v"), {{.docid = 0, .positions = {}}}),
+            make_term(encode_string_term("a", "v"), {{.docid = 1, .positions = {}}}),
+            make_term(encode_string_term("b.a.x", "v"), {{.docid = 2, .positions = {}}}),
+            make_term(encode_int64_term("a.y", 7), {{.docid = 3, .positions = {}}}),
+            make_term(encode_int64_term("n", 5), {{.docid = 0, .positions = {}}}),
+            make_term(encode_int64_term("n", 10), {{.docid = 1, .positions = {}}}),
+            make_term(encode_int64_term("n", -3), {{.docid = 2, .positions = {}}}),
+            make_term(encode_uint64_term("n", uint64_t {1} << 63), {{.docid = 3, .positions = {}}}),
+            make_term(encode_double_term("n", 7.5), {{.docid = 4, .positions = {}}}),
+    };
+    std::sort(terms.begin(), terms.end(),
+              [](const auto& left, const auto& right) { return left.term < right.term; });
+
+    doris::snii::writer::SniiIndexInput input;
+    input.index_id = kIndexId;
+    input.index_suffix = "";
+    input.config = doris::snii::format::IndexConfig::kDocsOnly;
+    input.doc_count = 6;
+    input.terms = std::move(terms);
+    input.null_docids = {5};
+
+    MemoryFile memory_file;
+    doris::snii::writer::SniiCompoundWriter compound(&memory_file);
+    RETURN_IF_ERROR(compound.add_logical_index(input));
+    RETURN_IF_ERROR(compound.finish());
+
+    doris::snii::io::LocalFileWriter local_file;
+    RETURN_IF_ERROR(local_file.open(
+            InvertedIndexDescriptor::get_index_file_path_v2(std::string(index_path_prefix))));
+    RETURN_IF_ERROR(local_file.append(
+            doris::snii::Slice(memory_file.data().data(), memory_file.data().size())));
+    return local_file.finalize();
+}
+
+TEST_F(SniiIndexReaderCountFallback, ValueFirstRootSubtreeAndWholeRootEqualityScanDictionary) {
+    const std::string path = std::string(kTestDir) + "/value_first_scan";
+    assert_ok(write_value_first_root_segment(path));
+
+    // Whole document: every path of the value.
+    TabletIndex whole_root;
+    init_value_first_root_meta(&whole_root, "", std::nullopt, /*subtree=*/true);
+    OpenedSniiIndex opened;
+    assert_ok(open_snii_index(&whole_root, path, &opened));
+    {
+        QueryExecutionContext execution(/*enable_query_cache=*/false);
+        std::shared_ptr<roaring::Roaring> bitmap;
+        assert_ok(opened.index_reader->query(execution.context, "payload",
+                                             Field::create_field<TYPE_STRING>(std::string("v")),
+                                             InvertedIndexQueryType::EQUAL_QUERY, bitmap));
+        ASSERT_NE(bitmap, nullptr);
+        EXPECT_EQ(bitmap_docids(*bitmap), (std::vector<uint32_t> {0, 1, 2}));
+        EXPECT_EQ(execution.stats.variant_index_scan_terms, 3);
+        EXPECT_EQ(execution.stats.variant_index_scan_postings, 3);
+    }
+    {
+        // Typed: the number 7 lives at a.y only; the string "7" does not exist.
+        QueryExecutionContext execution(/*enable_query_cache=*/false);
+        std::shared_ptr<roaring::Roaring> bitmap;
+        assert_ok(opened.index_reader->query(execution.context, "payload",
+                                             Field::create_field<TYPE_BIGINT>(7),
+                                             InvertedIndexQueryType::EQUAL_QUERY, bitmap));
+        EXPECT_EQ(bitmap_docids(*bitmap), (std::vector<uint32_t> {3}));
+        assert_ok(opened.index_reader->query(execution.context, "payload",
+                                             Field::create_field<TYPE_STRING>(std::string("7")),
+                                             InvertedIndexQueryType::EQUAL_QUERY, bitmap));
+        EXPECT_TRUE(bitmap->isEmpty());
+        // Keyword MATCH is whole-value equality of STRING leaves.
+        assert_ok(opened.index_reader->query(execution.context, "payload",
+                                             Field::create_field<TYPE_STRING>(std::string("v")),
+                                             InvertedIndexQueryType::MATCH_ANY_QUERY, bitmap));
+        EXPECT_EQ(bitmap_docids(*bitmap), (std::vector<uint32_t> {0, 1, 2}));
+    }
+    // The query cache keys scans by their prefixes: a second run is a cache hit with the same
+    // rows and no dictionary work.
+    {
+        QueryExecutionContext cold(/*enable_query_cache=*/true);
+        std::shared_ptr<roaring::Roaring> bitmap;
+        assert_ok(opened.index_reader->query(cold.context, "payload",
+                                             Field::create_field<TYPE_STRING>(std::string("v")),
+                                             InvertedIndexQueryType::EQUAL_QUERY, bitmap));
+        EXPECT_EQ(cold.stats.inverted_index_query_cache_hit, 0);
+        QueryExecutionContext warm(/*enable_query_cache=*/true);
+        assert_ok(opened.index_reader->query(warm.context, "payload",
+                                             Field::create_field<TYPE_STRING>(std::string("v")),
+                                             InvertedIndexQueryType::EQUAL_QUERY, bitmap));
+        EXPECT_EQ(bitmap_docids(*bitmap), (std::vector<uint32_t> {0, 1, 2}));
+        EXPECT_EQ(warm.stats.inverted_index_query_cache_hit, 1);
+        EXPECT_EQ(warm.stats.variant_index_scan_terms, 0);
+    }
+
+    // Sub-document "a": the leaf a itself and everything below it, not b.a.x.
+    TabletIndex subtree;
+    init_value_first_root_meta(&subtree, "a", std::nullopt, /*subtree=*/true);
+    OpenedSniiIndex opened_subtree;
+    assert_ok(open_snii_index(&subtree, path, &opened_subtree));
+    {
+        QueryExecutionContext execution(/*enable_query_cache=*/false);
+        std::shared_ptr<roaring::Roaring> bitmap;
+        assert_ok(opened_subtree.index_reader->query(
+                execution.context, "payload.a", Field::create_field<TYPE_STRING>(std::string("v")),
+                InvertedIndexQueryType::EQUAL_QUERY, bitmap));
+        EXPECT_EQ(bitmap_docids(*bitmap), (std::vector<uint32_t> {0, 1}));
+        EXPECT_EQ(execution.stats.variant_index_scan_terms, 3);
+        EXPECT_EQ(execution.stats.variant_index_scan_postings, 2);
+        assert_ok(opened_subtree.index_reader->query(execution.context, "payload.a",
+                                                     Field::create_field<TYPE_BIGINT>(7),
+                                                     InvertedIndexQueryType::EQUAL_QUERY, bitmap));
+        EXPECT_EQ(bitmap_docids(*bitmap), (std::vector<uint32_t> {3}));
+    }
+}
+
+TEST_F(SniiIndexReaderCountFallback, ValueFirstRootNumericRangeScansEveryNumericTag) {
+    const std::string path = std::string(kTestDir) + "/value_first_range";
+    assert_ok(write_value_first_root_segment(path));
+    TabletIndex bound;
+    init_value_first_root_meta(&bound, "n", std::string("integral"), /*subtree=*/false);
+    OpenedSniiIndex opened;
+    assert_ok(open_snii_index(&bound, path, &opened));
+
+    const auto rows = [&](const Field& literal, InvertedIndexQueryType type,
+                          OlapReaderStatistics* stats_out = nullptr) {
+        QueryExecutionContext execution(/*enable_query_cache=*/false);
+        std::shared_ptr<roaring::Roaring> bitmap;
+        const Status status =
+                opened.index_reader->query(execution.context, "payload.n", literal, type, bitmap);
+        EXPECT_TRUE(status.ok()) << status;
+        if (stats_out != nullptr) {
+            *stats_out = execution.stats;
+        }
+        if (!status.ok() || bitmap == nullptr) {
+            return std::vector<uint32_t> {0xdead};
+        }
+        return bitmap_docids(*bitmap);
+    };
+    // n: 0 -> 5, 1 -> 10, 2 -> -3, 3 -> 2^63, 4 -> 7.5
+    OlapReaderStatistics stats;
+    EXPECT_EQ(rows(Field::create_field<TYPE_BIGINT>(5), InvertedIndexQueryType::GREATER_THAN_QUERY,
+                   &stats),
+              (std::vector<uint32_t> {1, 3, 4}));
+    EXPECT_GT(stats.variant_index_scan_terms, 0);
+    EXPECT_EQ(
+            rows(Field::create_field<TYPE_BIGINT>(5), InvertedIndexQueryType::GREATER_EQUAL_QUERY),
+            (std::vector<uint32_t> {0, 1, 3, 4}));
+    EXPECT_EQ(rows(Field::create_field<TYPE_BIGINT>(5), InvertedIndexQueryType::LESS_THAN_QUERY),
+              (std::vector<uint32_t> {2}));
+    EXPECT_EQ(rows(Field::create_field<TYPE_BIGINT>(5), InvertedIndexQueryType::LESS_EQUAL_QUERY),
+              (std::vector<uint32_t> {0, 2}));
+    // A fractional bound sits between the integer 7 and the double 7.5.
+    EXPECT_EQ(rows(Field::create_field<TYPE_DOUBLE>(7.25),
+                   InvertedIndexQueryType::GREATER_THAN_QUERY),
+              (std::vector<uint32_t> {1, 3, 4}));
+    EXPECT_EQ(rows(Field::create_field<TYPE_DOUBLE>(7.5), InvertedIndexQueryType::LESS_EQUAL_QUERY),
+              (std::vector<uint32_t> {0, 2, 4}));
+    EXPECT_EQ(rows(Field::create_field<TYPE_DOUBLE>(7.5), InvertedIndexQueryType::LESS_THAN_QUERY),
+              (std::vector<uint32_t> {0, 2}));
+    // An int64 upper bound never reaches the UINT64 tag; an unbounded upper side does.
+    EXPECT_EQ(rows(Field::create_field<TYPE_BIGINT>(std::numeric_limits<int64_t>::max()),
+                   InvertedIndexQueryType::LESS_EQUAL_QUERY),
+              (std::vector<uint32_t> {0, 1, 2, 4}));
+    EXPECT_EQ(rows(Field::create_field<TYPE_BIGINT>(std::numeric_limits<int64_t>::max()),
+                   InvertedIndexQueryType::GREATER_THAN_QUERY),
+              (std::vector<uint32_t> {3}));
+    EXPECT_EQ(rows(Field::create_field<TYPE_DOUBLE>(1e300),
+                   InvertedIndexQueryType::GREATER_THAN_QUERY),
+              (std::vector<uint32_t> {}));
+    // Non-numeric literals are left to scalar evaluation.
+    QueryExecutionContext execution(/*enable_query_cache=*/false);
+    std::shared_ptr<roaring::Roaring> bitmap;
+    const Status skipped = opened.index_reader->query(
+            execution.context, "payload.n", Field::create_field<TYPE_STRING>(std::string("5")),
+            InvertedIndexQueryType::GREATER_THAN_QUERY, bitmap);
+    EXPECT_TRUE(skipped.is<ErrorCode::INVERTED_INDEX_EVALUATE_SKIPPED>()) << skipped;
 }
 
 TEST_F(SniiIndexReaderCountFallback, PublicPhraseQueryLeaderRecordsPrxWork) {

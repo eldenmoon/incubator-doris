@@ -1367,6 +1367,10 @@ public class CreateTableInfo {
                     Map<String, DataType> fieldPatternToDataType = new HashMap<>();
                     for (IndexDefinition indexDef : indexDefs) {
                         String fieldPattern = InvertedIndexUtil.getInvertedIndexFieldPattern(indexDef.getProperties());
+                        if (indexDef.isVariantRootIndex() && !fieldPattern.isEmpty()) {
+                            throw new AnalysisException(
+                                    "VARIANT root index cannot declare field_pattern");
+                        }
                         if (fieldPattern.isEmpty()) {
                             fieldPatternToIndexDef.computeIfAbsent(fieldPattern, k -> new ArrayList<>()).add(indexDef);
                             fieldPatternToDataType.put(fieldPattern, column.getType());

@@ -21,6 +21,7 @@
 #include <limits>
 #include <numeric>
 #include <optional>
+#include <queue>
 #include <unordered_map>
 #include <utility>
 
@@ -34,6 +35,8 @@
 #include "exec/common/hash_table/phmap_fwd_decl.h"
 #include "exec/common/variant_util.h"
 #include "exprs/function/parse/variant_jsonb_parse.h"
+#include "storage/segment/variant/v2/variant_assembler_internal.h"
+#include "storage/segment/variant/v2/variant_root_index_writer.h"
 #include "storage/tablet/tablet_schema.h"
 #include "util/json/path_in_data.h"
 #include "util/jsonb_writer.h"
@@ -101,6 +104,12 @@ struct VariantShredder::Impl {
 
     explicit Impl(VariantShredderOptions options_) : options(std::move(options_)) {
         paths.emplace_back(PathInData());
+        defer_root_indexes = options.physical_layout == VariantShredderPhysicalLayout::ORDINARY &&
+                             !options.root_index_writers.empty() &&
+                             options.tablet_schema != nullptr &&
+                             !options.tablet_schema->column_by_uid(options.parent_column_unique_id)
+                                      .get_sub_columns()
+                                      .empty();
         if (options.physical_layout == VariantShredderPhysicalLayout::ORDINARY &&
             options.sparse_bucket_count == 0) {
             failure = Status::InvalidArgument(
@@ -165,6 +174,10 @@ struct VariantShredder::Impl {
             return Status::OK();
         }
         path_state.last_row_marker = row_marker;
+        if (!defer_root_indexes && !options.root_index_writers.empty()) {
+            RETURN_IF_ERROR(append_variant_root_index_leaf(options.root_index_writers,
+                                                           path_state.path.get_path(), value));
+        }
         if (value.is_null()) {
             return Status::OK();
         }
@@ -211,6 +224,10 @@ struct VariantShredder::Impl {
     Status visit(VariantRef value, MetadataPathCache& metadata_cache, PathIndex path_index,
                  size_t row) {
         if (value.is_null()) {
+            // Duplicate-path detection is a property of the load, never of the indexes present:
+            // a JSON null still claims its path only when the duplicate check is enabled. Index
+            // writers ignore null leaves, so routing them here for the writers' sake only made
+            // "add an index" change whether a document with a repeated key loads.
             return options.check_duplicate_json_path ? append_leaf(value, path_index, row)
                                                      : Status::OK();
         }
@@ -625,6 +642,73 @@ struct VariantShredder::Impl {
         return publish_materialized(selection, candidate_builders, result);
     }
 
+    // Typed paths are indexed only after the same conversion used by storage. Merge compact
+    // rowids instead of scanning every path for every row or reconstructing complete objects.
+    // NOLINTNEXTLINE(readability-function-cognitive-complexity): keep encoded leaf ownership and synchronous writer consumption in one row scope.
+    Status write_converted_root_indexes(const VariantShreddedColumns& result,
+                                        const DorisVector<VariantPathBuilder*>& builders) {
+        using namespace variant_v2::variant_assembler_detail;
+        using Position = std::pair<size_t, size_t>;
+        std::priority_queue<Position, DorisVector<Position>, std::greater<>> pending;
+        DorisVector<PreparedMaterializedColumn> values;
+        DorisVector<size_t> positions(builders.size(), 0);
+        values.reserve(builders.size());
+        for (size_t index = 0; index < builders.size(); ++index) {
+            const auto* builder = builders[index];
+            if (builder->rowids().empty()) {
+                values.emplace_back();
+                continue;
+            }
+            values.push_back(prepare_materialized_column(builder->type(), builder->column().get(),
+                                                         builder->rowids().size()));
+            pending.emplace(builder->rowids().front(), index);
+        }
+        const auto& roots = assert_cast<const ColumnString&>(*result.root_jsonb);
+        DorisVector<size_t> row_paths;
+        row_paths.reserve(builders.size() + 1);
+        for (size_t row = 0; row < rows; ++row) {
+            row_paths.clear();
+            VariantBatchBuilder encoded;
+            if (!index_nulls[row] && !roots.get_data_at(row).empty()) {
+                auto output = encoded.begin_row();
+                jsonb_to_variant(roots.get_data_at(row), output, 0);
+                output.finish();
+                row_paths.push_back(builders.size());
+            }
+            while (!pending.empty() && pending.top().first == row) {
+                const size_t index = pending.top().second;
+                pending.pop();
+                const size_t position = positions[index]++;
+                DCHECK(!index_nulls[row]);
+                auto output = encoded.begin_row();
+                RETURN_IF_ERROR(append_materialized_value(values[index], position, output, 0));
+                output.finish();
+                row_paths.push_back(index);
+                if (positions[index] < builders[index]->rowids().size()) {
+                    pending.emplace(builders[index]->rowids()[positions[index]], index);
+                }
+            }
+            // Root token values borrow bytes until end_document; retain all encoded leaves
+            // for this row through synchronous SNII consumption.
+            auto batch = encoded.finish_batch();
+            for (auto* writer : options.root_index_writers) {
+                RETURN_IF_ERROR(writer->begin_document(index_nulls[row] != 0));
+            }
+            for (size_t leaf = 0; leaf < row_paths.size(); ++leaf) {
+                const size_t index = row_paths[leaf];
+                const bool is_root = index == builders.size();
+                const std::string_view path =
+                        is_root ? std::string_view {} : builders[index]->path().get_path();
+                RETURN_IF_ERROR(append_variant_root_index_leaf(options.root_index_writers, path,
+                                                               batch.value_at(leaf)));
+            }
+            for (auto* writer : options.root_index_writers) {
+                RETURN_IF_ERROR(writer->end_document());
+            }
+        }
+        return Status::OK();
+    }
+
     Status finish_impl(VariantShreddedColumns* result) {
         RETURN_IF_ERROR(complete_builder_rows(rows));
         DorisVector<VariantPathSelectionCandidate> candidates;
@@ -637,10 +721,15 @@ struct VariantShredder::Impl {
         } else {
             RETURN_IF_ERROR(finish_ordinary(candidates, candidate_builders, storage_types, result));
         }
+        if (defer_root_indexes) {
+            RETURN_IF_ERROR(write_converted_root_indexes(*result, candidate_builders));
+        }
         return Status::OK();
     }
 
     VariantShredderOptions options;
+    bool defer_root_indexes = false;
+    DorisVector<uint8_t> index_nulls;
     State state = State::COLLECTING;
     Status failure;
     size_t rows = 0;
@@ -691,10 +780,23 @@ Status VariantShredder::append(const ColumnVariantV2::ReadView& view, size_t beg
             metadata_caches.emplace_back(view.metadata_at(static_cast<uint32_t>(metadata_index)));
         }
 
+        const std::span<VariantRootIndexWriter*> index_writers =
+                _impl->defer_root_indexes ? std::span<VariantRootIndexWriter*> {}
+                                          : _impl->options.root_index_writers;
         for (size_t offset = 0; offset < length; ++offset) {
             const bool outer_null = !outer_nulls.empty() && outer_nulls[offset] != 0;
+            if (_impl->defer_root_indexes) {
+                _impl->index_nulls.push_back(outer_null);
+            }
+            for (VariantRootIndexWriter* writer : index_writers) {
+                DORIS_CHECK(writer != nullptr);
+                RETURN_IF_ERROR(writer->begin_document(outer_null));
+            }
             if (outer_null) {
                 _impl->append_default_root();
+                for (VariantRootIndexWriter* writer : index_writers) {
+                    RETURN_IF_ERROR(writer->end_document());
+                }
                 ++_impl->rows;
                 continue;
             }
@@ -712,6 +814,17 @@ Status VariantShredder::append(const ColumnVariantV2::ReadView& view, size_t beg
             }
             if (value.basic_type() == VariantBasicType::OBJECT) {
                 status = _impl->visit(value, metadata_caches[metadata_index], 0, _impl->rows);
+                if (!status.ok()) {
+                    return _impl->fail(std::move(status));
+                }
+            } else if (!index_writers.empty()) {
+                status = append_variant_root_index_leaf(index_writers, {}, value);
+                if (!status.ok()) {
+                    return _impl->fail(std::move(status));
+                }
+            }
+            for (VariantRootIndexWriter* writer : index_writers) {
+                status = writer->end_document();
                 if (!status.ok()) {
                     return _impl->fail(std::move(status));
                 }
@@ -745,7 +858,7 @@ Status VariantShredder::finish(VariantShreddedColumns* output) {
 }
 
 size_t VariantShredder::byte_size() const {
-    size_t size = sizeof(Impl);
+    size_t size = sizeof(Impl) + _impl->index_nulls.capacity();
     size += _impl->path_indices.bucket_count() * sizeof(void*);
     for (const auto& [path, index] : _impl->path_indices) {
         static_cast<void>(index);

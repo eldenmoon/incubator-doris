@@ -25,6 +25,7 @@
 #include <atomic>
 #include <cctype>
 #include <charconv>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <roaring/roaring.hh>
@@ -45,6 +46,8 @@
 #include "storage/index/inverted/inverted_index_cache.h"
 #include "storage/index/inverted/inverted_index_iterator.h"
 #include "storage/index/inverted/token_filter/common_grams_filter.h"
+#include "storage/index/inverted/variant_root_index.h"
+#include "storage/index/inverted/variant_root_index_scan.h"
 #include "storage/index/snii/format/null_bitmap.h"
 #include "storage/index/snii/query/boolean_query.h"
 #include "storage/index/snii/query/count_query.h"
@@ -603,7 +606,6 @@ Status SniiIndexReader::_query(const IndexQueryContextPtr& context, const std::s
         context->stats->inverted_index_query_timer = query_ns_before + exclusive_query_ns;
     });
     SCOPED_RAW_TIMER(&context->stats->inverted_index_query_timer);
-    const std::string search_str = query_value.get<PrimitiveType::TYPE_STRING>();
     const auto finish_query =
             [&](const ::doris::snii::reader::LogicalIndexReader* reader) -> Status {
         if (null_bitmap_cache_handle == nullptr) {
@@ -614,8 +616,19 @@ Status SniiIndexReader::_query(const IndexQueryContextPtr& context, const std::s
         const int64_t null_ns_after = context->stats->inverted_index_query_null_bitmap_timer;
         DORIS_CHECK_GE(null_ns_after, null_ns_before);
         requested_null_ns += null_ns_after - null_ns_before;
+        if (!status.ok()) {
+            // A fabricated count is observable only after the requested null bitmap has also
+            // succeeded. Preserve the pre-refactor reply contract on this failure path.
+            context->count_on_index_fastpath_hit = false;
+        }
         return status;
     };
+    if (variant_root_index::is_root_mode_properties(_index_meta.properties())) {
+        RETURN_IF_ERROR(_query_variant_root(context, column_name, query_value, query_type, bit_map,
+                                            analyzer_ctx));
+        return finish_query(nullptr);
+    }
+    const std::string search_str = query_value.get<PrimitiveType::TYPE_STRING>();
 
     if (int ignore_above =
                 std::stoi(get_parser_ignore_above_value_from_properties(_index_meta.properties()));
@@ -752,85 +765,83 @@ Status SniiIndexReader::_query(const IndexQueryContextPtr& context, const std::s
                 "SNII scoring does not support a single-token phrase-prefix query");
     }
     std::vector<std::string> terms = to_terms(execution_query_info);
+    RETURN_IF_ERROR(_execute_prepared_query(
+            context, column_name,
+            {.query_type = query_type,
+             .query_info = execution_query_info,
+             .search_str = search_str,
+             .max_expansions = max_expansions,
+             .common_grams_query_shape = common_grams_query_eligible,
+             .force_plain = force_plain,
+             .common_grams_cost_model = common_grams_cost_model,
+             .analyzer_ctx = effective_analyzer_context,
+             .single_flight_key = &single_flight_key,
+             .logical_reader = logical_reader},
+            &terms, actual_similarity, cache_key, &cache_handler, allow_result_cache, &bit_map));
+    return finish_query(logical_reader);
+}
 
-    // G02 count-only fast path: the SegmentIterator asserted (via the context
-    // flag) that only the match COUNT of this predicate matters, so eligible
-    // shapes are answered from dict-entry df without decoding postings. Placed
-    // AFTER the query-cache lookup (a cached row-accurate bitmap is free and
-    // counts correctly) and BEFORE single-flight; the fabricated [0, df) bitmap
-    // is returned early and NEVER inserted into the query cache or published to
-    // single-flight followers -- both are keyed identically to row-accurate
-    // queries and must only ever serve real row ids.
+// Executes one already-prepared query after its caller has selected the reader, established the
+// result-cache key, and (when necessary) encoded physical terms. Keeping this tail shared makes
+// cache publication, single-flight, count shaping, and scoring identical for all SNII callers.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity): keeping the shared query lifecycle in
+// one place avoids duplicating its cache, single-flight, count, and scoring ordering.
+Status SniiIndexReader::_execute_prepared_query(
+        const IndexQueryContextPtr& context, std::string_view column_name,
+        const SniiQueryBitmapRequest& request, std::vector<std::string>* terms,
+        bool actual_similarity, const InvertedIndexQueryCache::CacheKey& cache_key,
+        InvertedIndexQueryCacheHandle* cache_handler, bool allow_result_cache,
+        std::shared_ptr<roaring::Roaring>* bit_map) {
+    DORIS_CHECK(terms != nullptr);
+    DORIS_CHECK(bit_map != nullptr);
+    DORIS_CHECK(request.logical_reader != nullptr);
+    const auto* logical_reader = request.logical_reader;
+    auto* cache = InvertedIndexQueryCache::instance();
+
+    // G02 count-only fast path: the SegmentIterator asserted (via the context flag) that only
+    // the match COUNT of this predicate matters. A cached bitmap is handled before reaching this
+    // tail, and a fabricated bitmap is never cached or published to single-flight followers.
     if (context->count_on_index_fastpath) {
         bool count_handled = false;
         std::shared_ptr<roaring::Roaring> count_bitmap;
-        RETURN_IF_ERROR(_try_count_only_fastpath(context, query_type, execution_query_info, terms,
-                                                 &count_handled, &count_bitmap, logical_reader));
+        RETURN_IF_ERROR(_try_count_only_fastpath(context, request.query_type, request.query_info,
+                                                 *terms, &count_handled, &count_bitmap,
+                                                 logical_reader, request.prepared_terms));
         if (count_handled) {
-            bit_map = std::move(count_bitmap);
-            RETURN_IF_ERROR(finish_query(logical_reader));
-            // G03 reply: tell the SegmentIterator the bitmap is count-shaped
-            // (cardinality exact, row ids fabricated) so it may short-circuit
-            // row emission. Deliberately NOT set on the cache-hit return above
-            // or on the decode path below -- those bitmaps are row-accurate
-            // and keep today's emission.
+            *bit_map = std::move(count_bitmap);
             context->count_on_index_fastpath_hit = true;
             return Status::OK();
         }
     }
 
-    // Under a cold cache, parallel scanners _lazy_init the same segment concurrently and each
-    // would otherwise miss the searcher/query caches and redundantly open + decode this segment's
-    // index. Collapse identical concurrent queries into one shared execution (see SingleFlight).
-    static ::doris::segment_v2::inverted_index::SingleFlight<
-            std::pair<Status, std::shared_ptr<roaring::Roaring>>>
-            query_single_flight;
     std::shared_ptr<roaring::Roaring> result_bitmap;
     std::vector<::doris::snii::query::PhraseMatch> phrase_matches;
-    auto* phrase_matches_out =
-            actual_similarity && uses_phrase_frequency_scoring(query_type, execution_query_info)
-                    ? &phrase_matches
-                    : nullptr;
+    auto* phrase_matches_out = actual_similarity && uses_phrase_frequency_scoring(
+                                                            request.query_type, request.query_info)
+                                       ? &phrase_matches
+                                       : nullptr;
     Status single_flight_status;
     if (!allow_result_cache) {
         single_flight_status =
-                _compute_query_bitmap(context,
-                                      {.query_type = query_type,
-                                       .query_info = execution_query_info,
-                                       .search_str = search_str,
-                                       .max_expansions = max_expansions,
-                                       .common_grams_query_shape = common_grams_query_eligible,
-                                       .force_plain = force_plain,
-                                       .common_grams_cost_model = common_grams_cost_model,
-                                       .analyzer_ctx = effective_analyzer_context,
-                                       .physical_raw_query_key = single_flight_key,
-                                       .logical_reader = logical_reader},
-                                      &terms, &result_bitmap, phrase_matches_out);
+                _compute_query_bitmap(context, request, terms, &result_bitmap, phrase_matches_out);
     } else {
         DORIS_CHECK(phrase_matches_out == nullptr);
+        DORIS_CHECK(request.single_flight_key != nullptr);
+        static ::doris::segment_v2::inverted_index::SingleFlight<
+                std::pair<Status, std::shared_ptr<roaring::Roaring>>>
+                query_single_flight;
         single_flight_status = run_query_single_flight(
-                query_single_flight, single_flight_key, &result_bitmap,
+                query_single_flight, *request.single_flight_key, &result_bitmap,
 #ifdef BE_TEST
                 _single_flight_follower_joined_observer, _single_flight_follower_joined_opaque,
                 _single_flight_leader_before_compute_observer,
                 _single_flight_leader_before_compute_opaque,
 #endif
                 [&](std::shared_ptr<roaring::Roaring>* out) {
-                    auto status = _compute_query_bitmap(
-                            context,
-                            {.query_type = query_type,
-                             .query_info = execution_query_info,
-                             .search_str = search_str,
-                             .max_expansions = max_expansions,
-                             .common_grams_query_shape = common_grams_query_eligible,
-                             .force_plain = force_plain,
-                             .common_grams_cost_model = common_grams_cost_model,
-                             .analyzer_ctx = effective_analyzer_context,
-                             .physical_raw_query_key = single_flight_key,
-                             .logical_reader = logical_reader},
-                            &terms, out, nullptr);
+                    const Status status =
+                            _compute_query_bitmap(context, request, terms, out, nullptr);
                     if (status.ok()) {
-                        insert_query_cache(context, cache, cache_key, *out, &cache_handler,
+                        insert_query_cache(context, cache, cache_key, *out, cache_handler,
                                            allow_result_cache);
                     }
                     return status;
@@ -843,17 +854,379 @@ Status SniiIndexReader::_query(const IndexQueryContextPtr& context, const std::s
         RETURN_IF_ERROR(
                 ::doris::snii::stats::SniiStatsProvider::open(logical_reader, &segment_stats));
         if (phrase_matches_out != nullptr) {
-            RETURN_IF_ERROR(score_phrase_matches(context, column_name, query_type,
-                                                 execution_query_info, *logical_reader,
-                                                 segment_stats, *result_bitmap, phrase_matches));
-        } else if (uses_plain_term_frequency_scoring(query_type, execution_query_info)) {
-            RETURN_IF_ERROR(score_plain_term_candidates(context, column_name, execution_query_info,
+            RETURN_IF_ERROR(score_phrase_matches(context, column_name, request.query_type,
+                                                 request.query_info, *logical_reader, segment_stats,
+                                                 *result_bitmap, phrase_matches));
+        } else if (uses_plain_term_frequency_scoring(request.query_type, request.query_info)) {
+            RETURN_IF_ERROR(score_plain_term_candidates(context, column_name, request.query_info,
                                                         *logical_reader, segment_stats,
                                                         *result_bitmap));
         }
     }
-    bit_map = result_bitmap;
-    return finish_query(logical_reader);
+    *bit_map = std::move(result_bitmap);
+    return Status::OK();
+}
+
+Status SniiIndexReader::_query_variant_root(const IndexQueryContextPtr& context,
+                                            const std::string& column_name,
+                                            const Field& query_value,
+                                            InvertedIndexQueryType query_type,
+                                            std::shared_ptr<roaring::Roaring>& bit_map,
+                                            const InvertedIndexAnalyzerCtx* analyzer_ctx) {
+    using ::doris::snii::reader::LogicalIndexReader;
+    const bool range_query = query_type == InvertedIndexQueryType::GREATER_THAN_QUERY ||
+                             query_type == InvertedIndexQueryType::GREATER_EQUAL_QUERY ||
+                             query_type == InvertedIndexQueryType::LESS_THAN_QUERY ||
+                             query_type == InvertedIndexQueryType::LESS_EQUAL_QUERY;
+    if (query_type != InvertedIndexQueryType::EQUAL_QUERY &&
+        query_type != InvertedIndexQueryType::MATCH_ANY_QUERY &&
+        query_type != InvertedIndexQueryType::MATCH_ALL_QUERY && !range_query) {
+        return Status::Error<ErrorCode::INVERTED_INDEX_EVALUATE_SKIPPED>(
+                "VARIANT root index supports only equality, IN, ranges, MATCH_ANY, and MATCH_ALL");
+    }
+    const auto scope = variant_root_index::variant_index_scope(_index_meta.properties());
+    if (!scope.has_value()) {
+        return Status::Error<ErrorCode::INVERTED_INDEX_EVALUATE_SKIPPED>(
+                "VARIANT index format version is not usable by this BE");
+    }
+    const auto bound_path = _index_meta.properties().find(
+            std::string(variant_root_index::VARIANT_ROOT_QUERY_PATH_KEY));
+    // A binding to a dynamic (VARIANT typed) path is a subtree query: the predicate applies to
+    // every scalar leaf at or below the path. The empty subtree is the whole document.
+    const bool subtree_query = _index_meta.properties().contains(
+            std::string(variant_root_index::VARIANT_ROOT_QUERY_SUBTREE_KEY));
+    const bool has_bound_path = bound_path != _index_meta.properties().end() &&
+                                !bound_path->second.empty() && !subtree_query;
+    const std::string_view path = bound_path != _index_meta.properties().end()
+                                          ? std::string_view(bound_path->second)
+                                          : std::string_view {};
+    // The `paths` scope answers path queries with one term and subtree / whole-root queries
+    // with a dictionary run over the value. The `values` scope answers whole-document queries
+    // with one path-less term (preferred when both scopes are stored); bound to a scalar path
+    // on a values-only index it yields candidates (the value exists somewhere in the row) that
+    // the iterator marks for residual evaluation. A sub-document needs the paths scope.
+    const bool whole_document = !has_bound_path && path.empty();
+    const bool all_values = scope->values && (whole_document || (has_bound_path && !scope->paths));
+    const bool scan_mode = !all_values && !has_bound_path;
+    if (!all_values && !scope->paths) {
+        return Status::Error<ErrorCode::INVERTED_INDEX_EVALUATE_SKIPPED>(
+                "VARIANT values-only index cannot bind a sub-document");
+    }
+    if (has_bound_path) {
+        const auto bound_family = _index_meta.properties().find(
+                std::string(variant_root_index::VARIANT_ROOT_QUERY_VALUE_FAMILY_KEY));
+        const std::string_view query_family =
+                variant_root_index::query_value_family(query_value.get_type());
+        // Integral and floating literals share one canonical number line (integral doubles
+        // fold into INT64 / UINT64), so either family may query a numeric path exactly.
+        const auto numeric_family = [](std::string_view family) {
+            return family == "integral" || family == "floating";
+        };
+        const bool family_compatible =
+                bound_family == _index_meta.properties().end() ||
+                bound_family->second == query_family ||
+                (numeric_family(bound_family->second) && numeric_family(query_family));
+        if ((!all_values && bound_family == _index_meta.properties().end()) ||
+            query_family.empty() || !family_compatible) {
+            return Status::Error<ErrorCode::INVERTED_INDEX_EVALUATE_SKIPPED>(
+                    "VARIANT root index path type is incompatible with the query value type");
+        }
+    }
+    const bool should_analyze =
+            inverted_index::InvertedIndexAnalyzer::should_analyzer(_index_meta.properties());
+    const auto ignore_above = cast_set<size_t>(
+            std::stoul(get_parser_ignore_above_value_from_properties(_index_meta.properties())));
+
+    const auto validate_row_domain = [&](const LogicalIndexReader* logical_reader) -> Status {
+        const auto& stats = logical_reader->stats();
+        InvertedIndexQueryCacheHandle row_domain_null_bitmap;
+        const Status null_status =
+                _read_null_bitmap(context, &row_domain_null_bitmap, logical_reader);
+        const std::shared_ptr<roaring::Roaring> null_docids = row_domain_null_bitmap.get_bitmap();
+        if (!null_status.ok() || null_docids == nullptr || stats.doc_count != _rows_of_segment ||
+            stats.indexed_doc_count + stats.null_count != stats.doc_count ||
+            null_docids->cardinality() != stats.null_count ||
+            (!null_docids->isEmpty() && null_docids->maximum() >= stats.doc_count)) {
+            return Status::Error<ErrorCode::INVERTED_INDEX_EVALUATE_SKIPPED>(
+                    "VARIANT root index row domain is incomplete for this segment");
+        }
+        return Status::OK();
+    };
+
+    // Dictionary scans produce exact row sets straight from the term dictionary; they share the
+    // query cache and the row-domain guard with the term path below.
+    using ScanCompute = std::function<Status(const LogicalIndexReader&, roaring::Roaring*,
+                                             variant_root_index::ScanStats*)>;
+    const auto execute_scan = [&](std::string scan_key, const ScanCompute& compute) -> Status {
+        const InvertedIndexRawQuerySemantic raw_semantic {.raw_query_bytes = std::move(scan_key),
+                                                          .query_type = query_type,
+                                                          .slop = 0,
+                                                          .ordered = false};
+        const auto index_file_key = _index_file_reader->get_index_file_cache_key(&_index_meta);
+        InvertedIndexQueryCache::CacheKey cache_key {.index_path = index_file_key,
+                                                     .column_name = column_name,
+                                                     .query_type = query_type,
+                                                     .value = raw_semantic.encode()};
+        auto* cache = InvertedIndexQueryCache::instance();
+        InvertedIndexQueryCacheHandle cache_handler;
+        if (handle_query_cache(context, cache, cache_key, &cache_handler, bit_map, true)) {
+            return Status::OK();
+        }
+        snii_doris::DorisSniiFileReader::ScopedIOContext io_context_scope(context->io_ctx);
+        InvertedIndexCacheHandle searcher_cache_handle;
+        std::unique_ptr<LogicalIndexReader> uncached_reader;
+        const LogicalIndexReader* logical_reader = nullptr;
+        RETURN_IF_ERROR(_get_logical_reader(context, &searcher_cache_handle, &uncached_reader,
+                                            &logical_reader));
+        RETURN_IF_ERROR(validate_row_domain(logical_reader));
+        variant_root_index::ScanStats scan_stats;
+        auto result = std::make_shared<roaring::Roaring>();
+        RETURN_IF_ERROR(compute(*logical_reader, result.get(), &scan_stats));
+        context->stats->variant_index_scan_terms += cast_set<int64_t>(scan_stats.terms_visited);
+        context->stats->variant_index_scan_postings += cast_set<int64_t>(scan_stats.terms_matched);
+        insert_query_cache(context, cache, cache_key, result, &cache_handler, true);
+        bit_map = std::move(result);
+        return Status::OK();
+    };
+    const auto scan_prefix_into = [&](const LogicalIndexReader& reader,
+                                      const std::string& root_prefix, roaring::Roaring* out,
+                                      variant_root_index::ScanStats* stats) -> Status {
+        std::vector<uint32_t> docids;
+        RETURN_IF_ERROR(
+                variant_root_index::scan_root_prefix(reader, root_prefix, path, &docids, stats));
+        out->addMany(docids.size(), docids.data());
+        return Status::OK();
+    };
+    const auto scan_key = [&](std::string_view kind, const std::vector<std::string>& prefixes) {
+        std::string key(kind);
+        key.append(":");
+        key.append(path);
+        for (const std::string& prefix : prefixes) {
+            key.append(":");
+            key.append(std::to_string(prefix.size()));
+            key.append(":");
+            key.append(prefix);
+        }
+        return key;
+    };
+
+    if (range_query) {
+        if (!has_bound_path || all_values || should_analyze) {
+            return Status::Error<ErrorCode::INVERTED_INDEX_EVALUATE_SKIPPED>(
+                    "VARIANT root range needs an exact index bound to one path");
+        }
+        std::optional<variant_root_index::NumericBound> literal =
+                variant_root_index::numeric_query_bound(query_value, /*inclusive=*/true);
+        if (!literal.has_value()) {
+            return Status::Error<ErrorCode::INVERTED_INDEX_EVALUATE_SKIPPED>(
+                    "VARIANT root range value is not a finite number");
+        }
+        auto lower = variant_root_index::NumericBound::unbounded_low();
+        auto upper = variant_root_index::NumericBound::unbounded_high();
+        switch (query_type) {
+        case InvertedIndexQueryType::GREATER_THAN_QUERY:
+            lower = *literal;
+            lower.inclusive = false;
+            break;
+        case InvertedIndexQueryType::GREATER_EQUAL_QUERY:
+            lower = *literal;
+            break;
+        case InvertedIndexQueryType::LESS_THAN_QUERY:
+            upper = *literal;
+            upper.inclusive = false;
+            break;
+        default:
+            upper = *literal;
+            break;
+        }
+        std::string key = "range:";
+        key.append(path);
+        key.append(":");
+        key.append(std::to_string(static_cast<int>(query_type)));
+        key.append(":");
+        key.append(literal->integral ? std::to_string(literal->int_value)
+                                     : std::to_string(literal->value));
+        return execute_scan(std::move(key),
+                            [&](const LogicalIndexReader& reader, roaring::Roaring* out,
+                                variant_root_index::ScanStats* stats) -> Status {
+                                std::vector<uint32_t> docids;
+                                RETURN_IF_ERROR(variant_root_index::scan_numeric_range(
+                                        reader, path, lower, upper, &docids, stats));
+                                out->addMany(docids.size(), docids.data());
+                                return Status::OK();
+                            });
+    }
+
+    std::vector<std::string> terms;
+    InvertedIndexQueryInfo query_info;
+    InvertedIndexQueryType execution_query_type = query_type;
+    if (query_type == InvertedIndexQueryType::EQUAL_QUERY) {
+        if (should_analyze) {
+            // Equality needs exact terms; a token index only knows analyzer tokens, and "all
+            // tokens present" is a superset of equality. Leave it to scalar evaluation.
+            return Status::Error<ErrorCode::INVERTED_INDEX_EVALUATE_SKIPPED>(
+                    "VARIANT token index cannot evaluate equality");
+        }
+        if (query_value.is_null()) {
+            return Status::Error<ErrorCode::INVERTED_INDEX_EVALUATE_SKIPPED>(
+                    "VARIANT exact root index does not evaluate NULL or missing paths");
+        }
+        if (is_string_type(query_value.get_type()) &&
+            query_value.as_string_view().size() > ignore_above) {
+            return Status::Error<ErrorCode::INVERTED_INDEX_EVALUATE_SKIPPED>(
+                    "VARIANT root equality value exceeds ignore_above");
+        }
+        if (scan_mode) {
+            std::vector<std::string> prefixes;
+            RETURN_IF_ERROR(
+                    variant_root_index::encode_query_value_terms({}, query_value, &prefixes));
+            if (prefixes.empty()) {
+                return Status::Error<ErrorCode::INVERTED_INDEX_EVALUATE_SKIPPED>(
+                        "VARIANT root equality type is unsupported");
+            }
+            return execute_scan(scan_key("eq", prefixes),
+                                [&](const LogicalIndexReader& reader, roaring::Roaring* out,
+                                    variant_root_index::ScanStats* stats) -> Status {
+                                    return scan_prefix_into(reader, prefixes.front(), out, stats);
+                                });
+        }
+        if (all_values) {
+            RETURN_IF_ERROR(variant_root_index::encode_all_values_query_value_terms(
+                    query_value, &terms, ignore_above));
+        } else {
+            RETURN_IF_ERROR(
+                    variant_root_index::encode_query_value_terms(path, query_value, &terms));
+        }
+        if (terms.empty()) {
+            return Status::Error<ErrorCode::INVERTED_INDEX_EVALUATE_SKIPPED>(
+                    "VARIANT root equality type is unsupported");
+        }
+    } else {
+        if (!is_string_type(query_value.get_type())) {
+            return Status::Error<ErrorCode::INVERTED_INDEX_EVALUATE_SKIPPED>(
+                    "VARIANT root MATCH value is not a string");
+        }
+        if (!should_analyze) {
+            // Keyword lane: MATCH is whole-value equality of STRING leaves, as on any
+            // non-analyzed inverted index.
+            if (query_value.as_string_view().size() > ignore_above) {
+                return Status::Error<ErrorCode::INVERTED_INDEX_EVALUATE_SKIPPED>(
+                        "VARIANT root MATCH value exceeds ignore_above");
+            }
+            if (scan_mode) {
+                const std::vector<std::string> prefixes {
+                        variant_root_index::encode_all_value_term(query_value.as_string_view())};
+                return execute_scan(scan_key("match", prefixes),
+                                    [&](const LogicalIndexReader& reader, roaring::Roaring* out,
+                                        variant_root_index::ScanStats* stats) -> Status {
+                                        return scan_prefix_into(reader, prefixes.front(), out,
+                                                                stats);
+                                    });
+            }
+            terms.push_back(all_values ? variant_root_index::encode_all_value_term(
+                                                 query_value.as_string_view())
+                                       : variant_root_index::encode_string_term(
+                                                 path, query_value.as_string_view()));
+            execution_query_type = InvertedIndexQueryType::EQUAL_QUERY;
+        } else {
+            RETURN_IF_ERROR(_parse_query_terms(context, std::string(query_value.as_string_view()),
+                                               query_type, analyzer_ctx, &query_info));
+            if (scan_mode) {
+                std::vector<std::string> prefixes;
+                for (const TermInfo& term : query_info.term_infos) {
+                    DORIS_CHECK(term.is_single_term());
+                    prefixes.push_back(variant_root_index::encode_all_value_token_term(
+                            term.get_single_term()));
+                }
+                if (prefixes.empty()) {
+                    bit_map = std::make_shared<roaring::Roaring>();
+                    return Status::OK();
+                }
+                const bool intersect = query_type == InvertedIndexQueryType::MATCH_ALL_QUERY;
+                return execute_scan(scan_key(intersect ? "match_all" : "match_any", prefixes),
+                                    [&](const LogicalIndexReader& reader, roaring::Roaring* out,
+                                        variant_root_index::ScanStats* stats) -> Status {
+                                        // MATCH_ALL is "every token appears in some leaf of the subtree",
+                                        // across leaves, like JSONAllValues.
+                                        bool first = true;
+                                        for (const std::string& prefix : prefixes) {
+                                            roaring::Roaring token_rows;
+                                            RETURN_IF_ERROR(scan_prefix_into(reader, prefix,
+                                                                             &token_rows, stats));
+                                            if (!intersect) {
+                                                *out |= token_rows;
+                                            } else if (first) {
+                                                *out = std::move(token_rows);
+                                            } else {
+                                                *out &= token_rows;
+                                            }
+                                            first = false;
+                                            if (intersect && out->isEmpty()) {
+                                                break;
+                                            }
+                                        }
+                                        return Status::OK();
+                                    });
+            }
+            for (const TermInfo& term : query_info.term_infos) {
+                DORIS_CHECK(term.is_single_term());
+                terms.push_back(all_values ? variant_root_index::encode_all_value_token_term(
+                                                     term.get_single_term())
+                                           : variant_root_index::encode_token_term(
+                                                     path, term.get_single_term()));
+            }
+        }
+        if (terms.empty()) {
+            bit_map = std::make_shared<roaring::Roaring>();
+            return Status::OK();
+        }
+    }
+
+    std::string physical_query_key;
+    for (const std::string& term : terms) {
+        physical_query_key.append(std::to_string(term.size()));
+        physical_query_key.push_back(':');
+        physical_query_key.append(term);
+    }
+    const bool actual_similarity =
+            context->collection_similarity &&
+            IndexReaderHelper::is_need_similarity_score(execution_query_type, &_index_meta);
+    const InvertedIndexRawQuerySemantic raw_semantic {.raw_query_bytes = physical_query_key,
+                                                      .query_type = execution_query_type,
+                                                      .slop = query_info.slop,
+                                                      .ordered = query_info.ordered};
+    const auto index_file_key = _index_file_reader->get_index_file_cache_key(&_index_meta);
+    InvertedIndexQueryCache::CacheKey cache_key {.index_path = index_file_key,
+                                                 .column_name = column_name,
+                                                 .query_type = execution_query_type,
+                                                 .value = raw_semantic.encode()};
+    const std::string single_flight_key = cache_key.encode();
+    auto* cache = InvertedIndexQueryCache::instance();
+    InvertedIndexQueryCacheHandle cache_handler;
+    const bool allow_result_cache = !actual_similarity;
+    if (handle_query_cache(context, cache, cache_key, &cache_handler, bit_map,
+                           allow_result_cache)) {
+        return Status::OK();
+    }
+
+    snii_doris::DorisSniiFileReader::ScopedIOContext io_context_scope(context->io_ctx);
+    InvertedIndexCacheHandle searcher_cache_handle;
+    std::unique_ptr<::doris::snii::reader::LogicalIndexReader> uncached_reader;
+    const ::doris::snii::reader::LogicalIndexReader* logical_reader = nullptr;
+    RETURN_IF_ERROR(_get_logical_reader(context, &searcher_cache_handle, &uncached_reader,
+                                        &logical_reader));
+
+    RETURN_IF_ERROR(validate_row_domain(logical_reader));
+
+    return _execute_prepared_query(context, column_name,
+                                   {.query_type = execution_query_type,
+                                    .query_info = query_info,
+                                    .search_str = {},
+                                    .single_flight_key = &single_flight_key,
+                                    .prepared_terms = &terms,
+                                    .logical_reader = logical_reader},
+                                   &terms, actual_similarity, cache_key, &cache_handler,
+                                   allow_result_cache, &bit_map);
 }
 
 Status SniiIndexReader::_compute_query_bitmap(
@@ -869,20 +1242,24 @@ Status SniiIndexReader::_compute_query_bitmap(
     const inverted_index::CommonGramsPlanCostModel common_grams_cost_model =
             request.common_grams_cost_model;
     const InvertedIndexAnalyzerCtx* analyzer_ctx = request.analyzer_ctx;
-    const std::string_view physical_raw_query_key = request.physical_raw_query_key;
+    const std::string_view single_flight_key =
+            request.single_flight_key == nullptr ? std::string_view {} : *request.single_flight_key;
     const std::string_view search_str = request.search_str;
     const int32_t max_expansions = request.max_expansions;
     const ::doris::snii::reader::LogicalIndexReader* logical_reader = request.logical_reader;
 
     DORIS_CHECK(preanalyzed_terms != nullptr);
     DORIS_CHECK(logical_reader != nullptr);
-    DORIS_CHECK(request_query_info.term_infos.size() == preanalyzed_terms->size());
+    if (request.prepared_terms == nullptr) {
+        DORIS_CHECK(request_query_info.term_infos.size() == preanalyzed_terms->size());
+    }
     if (phrase_matches != nullptr) {
         phrase_matches->clear();
     }
     const auto* common_grams_metadata = logical_reader->common_grams_metadata();
     InvertedIndexQueryInfo query_info = request_query_info;
-    std::vector<std::string> routed_terms = *preanalyzed_terms;
+    std::vector<std::string> routed_terms =
+            request.prepared_terms == nullptr ? *preanalyzed_terms : *request.prepared_terms;
     auto* terms = &routed_terms;
 
     const auto* common_grams_identity =
@@ -935,7 +1312,7 @@ Status SniiIndexReader::_compute_query_bitmap(
         common_grams_plain_fallback = CommonGramsPlainFallback::kNoGram;
     } else if (common_grams_candidate && common_grams_compatible) {
         DORIS_CHECK(phrase_matches == nullptr);
-        DORIS_CHECK(!physical_raw_query_key.empty());
+        DORIS_CHECK(!single_flight_key.empty());
         const auto debug_override = ::doris::snii::query::common_grams_plan_debug_override();
         ::doris::snii::SniiPrxExecutionProfileScope execution_profile(*context->stats);
 
@@ -971,9 +1348,11 @@ Status SniiIndexReader::_compute_query_bitmap(
     case InvertedIndexQueryType::MATCH_ANY_QUERY:
     case InvertedIndexQueryType::MATCH_ALL_QUERY:
     case InvertedIndexQueryType::MATCH_PHRASE_QUERY: {
-        bool all_representable = false;
-        RETURN_IF_ERROR(::doris::snii::query::internal::route_query_terms(
-                *logical_reader, query_info, terms, &all_representable));
+        bool all_representable = true;
+        if (request.prepared_terms == nullptr) {
+            RETURN_IF_ERROR(::doris::snii::query::internal::route_query_terms(
+                    *logical_reader, query_info, terms, &all_representable));
+        }
         if (terms->empty() && (query_type == InvertedIndexQueryType::EQUAL_QUERY ||
                                query_type == InvertedIndexQueryType::MATCH_ANY_QUERY)) {
             *out = std::make_shared<roaring::Roaring>();
@@ -1060,7 +1439,8 @@ Status SniiIndexReader::_try_count_only_fastpath(
         const IndexQueryContextPtr& context, InvertedIndexQueryType query_type,
         const InvertedIndexQueryInfo& query_info, const std::vector<std::string>& terms,
         bool* handled, std::shared_ptr<roaring::Roaring>* out,
-        const ::doris::snii::reader::LogicalIndexReader* preopened_reader) {
+        const ::doris::snii::reader::LogicalIndexReader* preopened_reader,
+        const std::vector<std::string>* prepared_terms) {
     *handled = false;
     // Shape guard: only exact-term query types. Prefix/regexp/wildcard/
     // phrase-prefix expand the term set, so no single dict entry carries the
@@ -1116,11 +1496,16 @@ Status SniiIndexReader::_try_count_only_fastpath(
 
     std::string physical_term_scratch;
     std::string_view physical_term;
-    bool representable = false;
-    DORIS_CHECK(query_info.term_infos.size() == 1);
-    RETURN_IF_ERROR(::doris::snii::query::internal::route_query_term_view(
-            *logical_reader, query_info.term_infos.front(), &physical_term_scratch, &physical_term,
-            &representable));
+    bool representable = prepared_terms != nullptr;
+    if (prepared_terms != nullptr) {
+        DORIS_CHECK_EQ(prepared_terms->size(), 1);
+        physical_term = prepared_terms->front();
+    } else {
+        DORIS_CHECK(query_info.term_infos.size() == 1);
+        RETURN_IF_ERROR(::doris::snii::query::internal::route_query_term_view(
+                *logical_reader, query_info.term_infos.front(), &physical_term_scratch,
+                &physical_term, &representable));
+    }
     uint64_t count = 0;
     if (representable) {
         RETURN_IF_ERROR(

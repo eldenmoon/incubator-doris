@@ -35,6 +35,7 @@ namespace doris {
 namespace segment_v2 {
 class IndexColumnWriter;
 class IndexFileWriter;
+class VariantRootIndexWriter;
 } // namespace segment_v2
 class OlapBlockDataConvertor;
 
@@ -111,7 +112,14 @@ private:
     // convertor ordinal g.
     Status _write_snii_index_data(
             const TabletSchemaSPtr& tablet_schema, Block* block, const SniiIndexRewritePlan& plan,
-            const std::vector<std::vector<std::pair<int64_t, int64_t>>>& group_writer_signs);
+            const std::vector<std::vector<std::pair<int64_t, int64_t>>>& group_writer_signs,
+            const std::vector<std::vector<segment_v2::VariantRootIndexWriter*>>&
+                    group_root_writers);
+    // Feeds the VARIANT column at `position` of the block into the value-first index writers of
+    // its group: the logical document is indexed, not converted column bytes.
+    Status _write_variant_root_index_data(
+            Block* block, size_t position,
+            const std::vector<segment_v2::VariantRootIndexWriter*>& writers);
     Status _write_inverted_index_data(TabletSchemaSPtr tablet_schema, int64_t segment_idx,
                                       Block* block);
     Status _add_data(const std::string& column_name,
@@ -138,6 +146,10 @@ private:
     // "<segment_id, index_id>" -> IndexColumnWriter
     std::unordered_map<std::pair<int64_t, int64_t>, std::unique_ptr<segment_v2::IndexColumnWriter>>
             _index_column_writers;
+    // "<segment_id, index_id>" -> VARIANT value-first index writer (BUILD INDEX on a VARIANT column)
+    std::unordered_map<std::pair<int64_t, int64_t>,
+                       std::unique_ptr<segment_v2::VariantRootIndexWriter>>
+            _variant_root_index_writers;
     std::unordered_map<int64_t, std::unique_ptr<IndexFileWriter>> _index_file_writers;
     // <rowset_id, segment_id>
     std::unordered_map<std::pair<std::string, int64_t>, std::unique_ptr<IndexFileReader>>

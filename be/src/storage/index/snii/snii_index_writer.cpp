@@ -216,7 +216,9 @@ void SniiIndexColumnWriter::set_direct_load(bool is_direct_load) {
 
 Status SniiIndexColumnWriter::_add_value_tokens(const Slice& value, uint32_t docid,
                                                 uint32_t position_base, uint32_t* max_position,
-                                                uint32_t* semantic_length) {
+                                                uint32_t* semantic_length,
+                                                std::string_view term_prefix,
+                                                std::string_view term_suffix, bool escape_nul) {
     DCHECK(max_position != nullptr);
     DCHECK(semantic_length != nullptr);
     *max_position = position_base;
@@ -234,10 +236,29 @@ Status SniiIndexColumnWriter::_add_value_tokens(const Slice& value, uint32_t doc
     // (the old get_analyse_result lane; profile: 3.4-4.7% of import CPU burned
     // in token realloc). Golden-byte pins (snii_writer_golden_bytes_test.cpp)
     // hold this path byte-identical to the materializing one it replaced.
+    const bool shaped = !term_prefix.empty() || !term_suffix.empty() || escape_nul;
     auto consume_token = [&](std::string_view term, int32_t token_position, bool retain_positions) {
         const uint32_t position =
                 _has_positions ? position_base + cast_set<uint32_t>(token_position) : 0;
-        _term_buffer->add_token(term, docid, position, retain_positions);
+        if (!shaped) {
+            _term_buffer->add_token(term, docid, position, retain_positions);
+        } else {
+            _prefixed_term_scratch.clear();
+            _prefixed_term_scratch.reserve(term_prefix.size() + term.size() + term_suffix.size());
+            _prefixed_term_scratch.append(term_prefix);
+            if (escape_nul) {
+                for (const char c : term) {
+                    _prefixed_term_scratch.push_back(c);
+                    if (c == '\0') {
+                        _prefixed_term_scratch.push_back('\1');
+                    }
+                }
+            } else {
+                _prefixed_term_scratch.append(term);
+            }
+            _prefixed_term_scratch.append(term_suffix);
+            _term_buffer->add_token(_prefixed_term_scratch, docid, position, retain_positions);
+        }
         *max_position = std::max(*max_position, position);
     };
 
@@ -291,9 +312,8 @@ Status SniiIndexColumnWriter::_add_value_tokens(const Slice& value, uint32_t doc
                     previous_logical_term_size = event.logical_term.size();
                 }
             } else {
-                std::unique_ptr<lucene::analysis::TokenStream> owned_token_stream(
-                        _analyzer->tokenStream(L"", _char_string_reader));
-                auto* token_stream = owned_token_stream.get();
+                auto* token_stream = _analyzer->reusableTokenStream(L"", _char_string_reader);
+                token_stream->reset();
                 // EXACT InvertedIndexAnalyzer::get_analyse_result semantics,
                 // including the subtle one: an empty token's position increment is
                 // dropped WITH the token (not accumulated into the next).
@@ -307,7 +327,6 @@ Status SniiIndexColumnWriter::_add_value_tokens(const Slice& value, uint32_t doc
                         consume_token(term, position, _has_positions);
                     }
                 }
-                token_stream->close();
             }
         } catch (const CLuceneError& e) {
             return _latch_analysis_failure(Status::Error<ErrorCode::INVERTED_INDEX_ANALYZER_ERROR>(
@@ -317,6 +336,28 @@ Status SniiIndexColumnWriter::_add_value_tokens(const Slice& value, uint32_t doc
                     "SNII analyze value failed: {}", e.what()));
         }
     }
+    return Status::OK();
+}
+
+Status SniiIndexColumnWriter::add_document(std::span<const std::string> exact_terms,
+                                           std::span<const PrefixedAnalyzedValue> analyzed_values) {
+    if (!_failure_status.ok()) {
+        return _failure_status;
+    }
+    if (_has_positions || _uses_common_grams) {
+        return Status::Error<ErrorCode::INVERTED_INDEX_NOT_SUPPORTED>(
+                "Pre-analyzed SNII documents require a docs-only plain index");
+    }
+    for (const std::string& term : exact_terms) {
+        _term_buffer->add_token(term, _rid, 0, false);
+    }
+    for (const PrefixedAnalyzedValue& value : analyzed_values) {
+        uint32_t max_position = 0;
+        uint32_t semantic_length = 0;
+        RETURN_IF_ERROR(_add_value_tokens(value.value, _rid, 0, &max_position, &semantic_length,
+                                          value.term_prefix, value.term_suffix, value.escape_nul));
+    }
+    ++_rid;
     return Status::OK();
 }
 

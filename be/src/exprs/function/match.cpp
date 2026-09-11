@@ -19,7 +19,13 @@
 
 #include <hs/hs.h>
 
+#include <iterator>
+
+#include "common/cast_set.h"
+#include "core/column/column_nullable.h"
+#include "core/column/variant_v2/column_variant_v2.h"
 #include "core/field.h"
+#include "core/value/variant/variant_leaf_visitor.h"
 #include "runtime/query_context.h"
 #include "runtime/runtime_state.h"
 #include "storage/index/index_reader_helper.h"
@@ -42,6 +48,38 @@ const InvertedIndexAnalyzerCtx* get_match_analyzer_ctx(FunctionContext* context)
                 context->get_function_state(FunctionContext::FRAGMENT_LOCAL));
     }
     return analyzer_ctx;
+}
+
+// Collects the tokens of every STRING leaf of one Variant document, the scalar mirror of what an
+// AllValues token index stores: values are typed, so numbers and booleans never produce text
+// tokens, and objects / arrays are traversed with the same VariantLeafVisitor as the index writer.
+Status append_variant_all_values_tokens(const InvertedIndexAnalyzerCtx* analyzer_ctx,
+                                        const VariantRef& value,
+                                        std::vector<segment_v2::TermInfo>* tokens) {
+    DORIS_CHECK(tokens != nullptr);
+    if (analyzer_ctx == nullptr) {
+        return Status::OK();
+    }
+    const bool requires_analysis =
+            analyzer_ctx->requires_analysis() && analyzer_ctx->analyzer != nullptr;
+    return visit_variant_leaves(value, {}, [&](const VariantLeaf& leaf) {
+        if (leaf.kind != VariantLeafKind::STRING) {
+            return Status::OK();
+        }
+        const std::string_view text(leaf.string_value.data, leaf.string_value.size);
+        if (!requires_analysis) {
+            tokens->emplace_back(std::string(text));
+            return Status::OK();
+        }
+        auto reader = segment_v2::inverted_index::InvertedIndexAnalyzer::create_reader(
+                analyzer_ctx->char_filter_map);
+        reader->init(text.data(), cast_set<int>(text.size()), true);
+        auto value_tokens = segment_v2::inverted_index::InvertedIndexAnalyzer::get_analyse_result(
+                reader, analyzer_ctx->analyzer.get());
+        tokens->insert(tokens->end(), std::make_move_iterator(value_tokens.begin()),
+                       std::make_move_iterator(value_tokens.end()));
+        return Status::OK();
+    });
 }
 
 } // namespace
@@ -104,7 +142,8 @@ Status FunctionMatchBase::evaluate_inverted_index(
         // the index has no null rows.
         null_bitmap = std::make_shared<roaring::Roaring>();
     }
-    segment_v2::InvertedIndexResultBitmap result(param.roaring, null_bitmap);
+    segment_v2::InvertedIndexResultBitmap result(param.roaring, null_bitmap,
+                                                 param.requires_recheck);
     bitmap_result = result;
     bitmap_result.mask_out_null();
 
@@ -128,6 +167,78 @@ Status FunctionMatchBase::execute_impl(FunctionContext* context, Block& block,
     const auto* analyzer_ctx = get_match_analyzer_ctx(context);
     const ColumnPtr source_col =
             block.get_by_position(arguments[0]).column->convert_to_full_column_if_const();
+    const IColumn* physical_source = source_col.get();
+    const NullMap* outer_nulls = nullptr;
+    if (const auto* nullable = check_and_get_column<ColumnNullable>(physical_source)) {
+        outer_nulls = &nullable->get_null_map_data();
+        physical_source = &nullable->get_nested_column();
+    }
+    if (const auto* variant = check_and_get_column<ColumnVariantV2>(physical_source)) {
+        const InvertedIndexQueryType query_type = get_query_type_from_fn_name();
+        if (query_type != InvertedIndexQueryType::MATCH_ANY_QUERY &&
+            query_type != InvertedIndexQueryType::MATCH_ALL_QUERY) {
+            return Status::Error<ErrorCode::INVERTED_INDEX_NOT_SUPPORTED>(
+                    "VARIANT root supports only MATCH, MATCH_ANY, and MATCH_ALL");
+        }
+        RETURN_IF_ERROR(check(context, get_name()));
+
+        auto result_values = ColumnUInt8::create();
+        ColumnUInt8::Container& result_data = result_values->get_data();
+        result_data.resize_fill(input_rows_count);
+        const auto query_tokens =
+                analyse_query_str_token(analyzer_ctx, match_query_str, column_name);
+        if (query_tokens.empty()) {
+            block.replace_by_position(result, std::move(result_values));
+            return Status::OK();
+        }
+
+        Status evaluation_status = Status::OK();
+        try {
+            const std::span<const NullMap::value_type> null_map =
+                    outer_nulls == nullptr ? std::span<const NullMap::value_type> {}
+                                           : std::span<const NullMap::value_type> {
+                                                     outer_nulls->data(), outer_nulls->size()};
+            visit_variant_v2_values(
+                    *variant, 0, input_rows_count, null_map, [](size_t) {},
+                    [&](size_t row, const VariantRef& value) {
+                        if (!evaluation_status.ok()) {
+                            return;
+                        }
+                        std::vector<segment_v2::TermInfo> data_tokens;
+                        evaluation_status =
+                                append_variant_all_values_tokens(analyzer_ctx, value, &data_tokens);
+                        if (!evaluation_status.ok()) {
+                            return;
+                        }
+                        size_t matched = 0;
+                        for (const auto& query_token : query_tokens) {
+                            const auto found =
+                                    std::find_if(data_tokens.begin(), data_tokens.end(),
+                                                 [&](const segment_v2::TermInfo& data_token) {
+                                                     return data_token.get_single_term() ==
+                                                            query_token.get_single_term();
+                                                 });
+                            if (found != data_tokens.end()) {
+                                ++matched;
+                                if (query_type == InvertedIndexQueryType::MATCH_ANY_QUERY) {
+                                    break;
+                                }
+                            } else if (query_type == InvertedIndexQueryType::MATCH_ALL_QUERY) {
+                                break;
+                            }
+                        }
+                        result_data[row] = query_type == InvertedIndexQueryType::MATCH_ANY_QUERY
+                                                   ? matched != 0
+                                                   : matched == query_tokens.size();
+                    });
+        } catch (const Exception& exception) {
+            return exception.to_status();
+        }
+        RETURN_IF_ERROR(evaluation_status);
+        block.replace_by_position(result, std::move(result_values));
+        return Status::OK();
+    }
+
     const auto* values = check_and_get_column<ColumnString>(source_col.get());
     const ColumnArray* array_col = nullptr;
     if (is_column<ColumnArray>(source_col.get())) {
@@ -162,9 +273,25 @@ Status FunctionMatchBase::execute_impl(FunctionContext* context, Block& block,
     ColumnUInt8::Container& vec_res = res->get_data();
     // set default value to 0, and match functions only need to set 1/true
     vec_res.resize_fill(input_rows_count);
-    RETURN_IF_ERROR(execute_match(context, column_name, match_query_str, input_rows_count, values,
-                                  analyzer_ctx, (array_col ? &(array_col->get_offsets()) : nullptr),
-                                  vec_res));
+    const auto query_type = get_query_type_from_fn_name();
+    if (array_col && query_type != InvertedIndexQueryType::MATCH_ANY_QUERY &&
+        query_type != InvertedIndexQueryType::MATCH_ALL_QUERY) {
+        // Phrase and regexp predicates apply within each element. Reuse scalar execution so
+        // concatenating tokens cannot manufacture a phrase across array boundaries.
+        ColumnUInt8::Container element_matches(values->size(), 0);
+        RETURN_IF_ERROR(execute_match(context, column_name, match_query_str, values->size(), values,
+                                      analyzer_ctx, nullptr, element_matches));
+        size_t element = 0;
+        for (size_t row = 0; row < input_rows_count; ++row) {
+            for (const size_t end = array_col->get_offsets()[row]; element < end; ++element) {
+                vec_res[row] |= element_matches[element];
+            }
+        }
+    } else {
+        RETURN_IF_ERROR(execute_match(context, column_name, match_query_str, input_rows_count,
+                                      values, analyzer_ctx,
+                                      array_col ? &array_col->get_offsets() : nullptr, vec_res));
+    }
     block.replace_by_position(result, std::move(res));
 
     return Status::OK();
@@ -248,9 +375,11 @@ inline std::vector<segment_v2::TermInfo> FunctionMatchBase::analyse_data_token(
             auto reader = doris::segment_v2::inverted_index::InvertedIndexAnalyzer::create_reader(
                     analyzer_ctx->char_filter_map);
             reader->init(str_ref.data, (int)str_ref.size, true);
-            data_tokens =
+            auto element_tokens =
                     doris::segment_v2::inverted_index::InvertedIndexAnalyzer::get_analyse_result(
                             reader, analyzer_ctx->analyzer.get());
+            data_tokens.insert(data_tokens.end(), std::make_move_iterator(element_tokens.begin()),
+                               std::make_move_iterator(element_tokens.end()));
         }
     } else {
         const auto& str_ref = string_col->get_data_at(current_block_row_idx);
@@ -269,7 +398,8 @@ inline std::vector<segment_v2::TermInfo> FunctionMatchBase::analyse_data_token(
 }
 
 Status FunctionMatchBase::check(FunctionContext* context, const std::string& function_name) const {
-    if (!context->state()->query_options().enable_match_without_inverted_index) {
+    if (!context->state()->query_options().enable_match_without_inverted_index &&
+        !context->is_index_recheck()) {
         return Status::Error<ErrorCode::INVERTED_INDEX_NOT_SUPPORTED>(
                 "{} not support execute_match", function_name);
     }

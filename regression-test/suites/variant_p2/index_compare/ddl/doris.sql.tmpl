@@ -1,0 +1,21 @@
+CREATE TABLE `${TABLE}` (
+    `id` BIGINT NOT NULL,
+    `type` VARCHAR(30) NULL,
+    `actor` VARIANT<PROPERTIES(
+        "variant_max_subcolumns_count" = "1024")> NULL,
+    `repo` VARIANT<PROPERTIES(
+        "variant_max_subcolumns_count" = "1024")> NULL,
+    `payload` VARIANT<PROPERTIES(
+        "variant_max_subcolumns_count" = "1024")> NULL,
+    `public` BOOLEAN NULL,
+    `created_at` DATETIME NULL,
+    `org` JSON NULL${INDEXES}
+)
+DUPLICATE KEY(`id`)
+DISTRIBUTED BY HASH(`id`) BUCKETS 8
+PROPERTIES (
+    "replication_num" = "1",
+    "disable_auto_compaction" = "true",
+    "inverted_index_storage_format" = "SNII",
+    "compression" = "ZSTD"
+);

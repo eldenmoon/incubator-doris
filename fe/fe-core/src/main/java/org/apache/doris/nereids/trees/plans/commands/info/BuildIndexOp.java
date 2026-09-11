@@ -133,7 +133,6 @@ public class BuildIndexOp extends AlterTableOp {
         if (existedIdx == null) {
             throw new AnalysisException("Index[" + indexName + "] is not exist in table[" + tableName.getTbl() + "]");
         }
-
         IndexType indexType = existedIdx.getIndexType();
         OlapTable olapTable = (OlapTable) table;
         // A parsed inverted index normally needs no explicit build in cloud mode, because adding it
