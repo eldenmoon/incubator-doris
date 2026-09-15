@@ -87,6 +87,7 @@
 #include "re2/re2.h"
 #include "runtime/exec_env.h"
 #include "runtime/runtime_state.h"
+#include "storage/index/inverted/variant_root_index.h"
 #include "storage/olap_common.h"
 #include "storage/rowset/beta_rowset.h"
 #include "storage/rowset/rowset.h"
@@ -1350,10 +1351,17 @@ void VariantCompactionUtil::get_compaction_subcolumns_from_data_types(
 Status VariantCompactionUtil::get_extended_compaction_schema(
         const std::vector<RowsetSharedPtr>& rowsets, TabletSchemaSPtr& target) {
     std::unordered_map<int32_t, VariantExtendedInfo> uid_to_variant_extended_info;
+    const auto has_root_index = [&](const TabletColumn& column) {
+        const auto parent_indexes = target->inverted_indexs(column.unique_id());
+        return std::ranges::any_of(parent_indexes, [](const TabletIndex* index) {
+            return segment_v2::variant_root_index::is_root_index(*index);
+        });
+    };
     const bool needs_variant_extended_info =
-            std::ranges::any_of(target->columns(), [](const TabletColumnPtr& column) {
-                return column->is_variant_type() && (should_check_variant_path_stats(*column) ||
-                                                     column->variant_enable_nested_group());
+            std::ranges::any_of(target->columns(), [&](const TabletColumnPtr& column) {
+                return column->is_variant_type() && !has_root_index(*column) &&
+                       (should_check_variant_path_stats(*column) ||
+                        column->variant_enable_nested_group());
             });
     if (needs_variant_extended_info) {
         // collect path stats from all rowsets and segments
@@ -1376,6 +1384,18 @@ Status VariantCompactionUtil::get_extended_compaction_schema(
             continue;
         }
         VLOG_DEBUG << "column " << column->name() << " unique id " << column->unique_id();
+
+        if (has_root_index(*column)) {
+            // A values index rebuild consumes the complete logical object. Keeping this column as
+            // one compaction field selects the hierarchical reader and lets the Variant writer
+            // shred the same logical value after the values indexes have observed it.
+            // The values index exists on Variant V2 columns only. Flagging the logical column
+            // makes the compaction assemble it as Variant V2 and re-shred it through the V2
+            // writer, whose leaves reach the index writers directly; the legacy ColumnVariant
+            // path would rebuild the index from JSON text.
+            output_schema->mutable_column(output_schema->num_columns() - 1).set_variant_is_v2(true);
+            continue;
+        }
 
         const auto info_it = uid_to_variant_extended_info.find(column->unique_id());
         const VariantExtendedInfo empty_extended_info;
@@ -1777,7 +1797,14 @@ bool inherit_index(const std::vector<const TabletIndex*>& parent_indexes,
     if (field_is_numeric_type(column_type) ||
         (is_array_nested_type &&
          (field_is_numeric_type(column_type) || field_is_slice_type(column_type)))) {
-        auto index_ptr = std::make_shared<TabletIndex>(*parent_indexes[0]);
+        const auto parent_index = std::find_if(
+                parent_indexes.begin(), parent_indexes.end(), [](const TabletIndex* index) {
+                    return !segment_v2::variant_root_index::is_root_index(*index);
+                });
+        if (parent_index == parent_indexes.end()) {
+            return false;
+        }
+        auto index_ptr = std::make_shared<TabletIndex>(**parent_index);
         index_ptr->set_escaped_escaped_index_suffix_path(suffix_path);
         // no need parse for bkd index or array index
         index_ptr->remove_parser_and_analyzer();
@@ -1787,11 +1814,14 @@ bool inherit_index(const std::vector<const TabletIndex*>& parent_indexes,
     // string type need to inherit all indexes
     else if (field_is_slice_type(column_type) && !is_array_nested_type) {
         for (const auto& index : parent_indexes) {
+            if (segment_v2::variant_root_index::is_root_index(*index)) {
+                continue;
+            }
             auto index_ptr = std::make_shared<TabletIndex>(*index);
             index_ptr->set_escaped_escaped_index_suffix_path(suffix_path);
             subcolumns_indexes.emplace_back(std::move(index_ptr));
         }
-        return true;
+        return !subcolumns_indexes.empty();
     }
     return false;
 }

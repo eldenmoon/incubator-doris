@@ -17,7 +17,7 @@
 
 #include "storage/predicate/null_predicate.h"
 
-#include <string.h>
+#include <cstring>
 
 #include <roaring/roaring.hh>
 
@@ -42,6 +42,10 @@ PredicateType NullPredicate::type() const {
 Status NullPredicate::evaluate(const IndexFieldNameAndTypePair& name_with_type,
                                IndexIterator* iterator, uint32_t num_rows,
                                roaring::Roaring* bitmap) const {
+    if (iterator->is_variant_root_index()) {
+        return Status::Error<ErrorCode::INVERTED_INDEX_EVALUATE_SKIPPED>(
+                "VARIANT root index does not index path NULL semantics");
+    }
     if (iterator->has_null()) {
         InvertedIndexQueryCacheHandle null_bitmap_cache_handle;
         RETURN_IF_ERROR(iterator->read_null_bitmap(&null_bitmap_cache_handle));
@@ -76,7 +80,9 @@ uint16_t NullPredicate::_evaluate_inner(const IColumn& column, uint16_t* sel, ui
         evaluate_by_selector<is_nullable>(pred_col, size, sel, new_size, with_null, without_null);
         return new_size;
     } else {
-        if (_is_null) return 0;
+        if (_is_null) {
+            return 0;
+        }
     }
     return size;
 }
@@ -91,13 +97,17 @@ void NullPredicate::evaluate_or(const IColumn& column, const uint16_t* sel, uint
         } else {
             auto& null_map = nullable->get_null_map_data();
             for (uint16_t i = 0; i < size; ++i) {
-                if (flags[i]) continue;
+                if (flags[i]) {
+                    continue;
+                }
                 uint16_t idx = sel[i];
                 flags[i] |= (null_map[idx] == _is_null);
             }
         }
     } else {
-        if (!_is_null) memset(flags, true, size);
+        if (!_is_null) {
+            memset(flags, true, size);
+        }
     }
 }
 
@@ -111,13 +121,17 @@ void NullPredicate::evaluate_and(const IColumn& column, const uint16_t* sel, uin
         } else {
             auto& null_map = nullable->get_null_map_data();
             for (uint16_t i = 0; i < size; ++i) {
-                if (flags[i]) continue;
+                if (flags[i]) {
+                    continue;
+                }
                 uint16_t idx = sel[i];
                 flags[i] &= (null_map[idx] == _is_null);
             }
         }
     } else {
-        if (_is_null) memset(flags, false, size);
+        if (_is_null) {
+            memset(flags, false, size);
+        }
     }
 }
 
@@ -131,7 +145,9 @@ void NullPredicate::evaluate_vec(const IColumn& column, uint16_t size, bool* fla
             flags[i] = (null_map[i] == _is_null);
         }
     } else {
-        if (_is_null) memset(flags, false, size);
+        if (_is_null) {
+            memset(flags, false, size);
+        }
     }
 }
 

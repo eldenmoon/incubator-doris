@@ -201,7 +201,8 @@ public:
             const RowsetSharedPtr& rs,
             std::unordered_map<int32_t, PathToNoneNullValues>* uid_to_path_stats);
 
-    // Build the temporary schema for compaction, this will reduce the memory usage of compacting variant columns
+    // Build the temporary schema for compaction. A Variant root that carries a values index stays
+    // logical so the index can be rebuilt from the complete object.
     static Status get_extended_compaction_schema(const std::vector<RowsetSharedPtr>& rowsets,
                                                  TabletSchemaSPtr& target);
 

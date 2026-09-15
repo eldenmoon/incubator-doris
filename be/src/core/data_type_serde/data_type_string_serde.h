@@ -133,7 +133,15 @@ public:
                 bw.write("\\\"", 2);
                 break;
             default:
-                bw.write(it);
+                if (static_cast<unsigned char>(it) < 0x20) {
+                    // JSON has no short escape for the other control characters.
+                    static constexpr char kHex[] = "0123456789abcdef";
+                    const char escaped[6] = {'\\', 'u', '0', '0', kHex[(it >> 4) & 0x0f],
+                                             kHex[it & 0x0f]};
+                    bw.write(escaped, 6);
+                } else {
+                    bw.write(it);
+                }
             }
         }
     }

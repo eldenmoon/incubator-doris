@@ -349,9 +349,14 @@ public:
             if (context->get_index_context()->has_index_result_for_expr(child.get())) {
                 const auto* index_result =
                         context->get_index_context()->get_index_result_for_expr(child.get());
-                roaring::Roaring full_result;
-                full_result.addRange(0, segment_num_rows);
-                res = index_result->op_not(&full_result);
+                if (index_result->requires_recheck()) {
+                    // The complement of a candidate superset is not a safe candidate for NOT.
+                    all_pass = false;
+                } else {
+                    roaring::Roaring full_result;
+                    full_result.addRange(0, segment_num_rows);
+                    res = index_result->op_not(&full_result);
+                }
             } else {
                 all_pass = false;
             }
@@ -475,7 +480,7 @@ public:
             auto* __restrict lhs_null_map_tmp = create_null_map_column(temp_null_map, lhs_null_map);
             auto* __restrict rhs_null_map_tmp = create_null_map_column(temp_null_map, rhs_null_map);
             auto* __restrict lhs_data_column_tmp = lhs_data_column;
-            auto* __restrict rhs_data_column_tmp = rhs_data_column;
+            const auto* __restrict rhs_data_column_tmp = rhs_data_column;
 
             do_null_pred<is_and_op>(lhs_data_column_tmp, lhs_null_map_tmp, rhs_data_column_tmp,
                                     rhs_null_map_tmp, res_datas, res_nulls, size);

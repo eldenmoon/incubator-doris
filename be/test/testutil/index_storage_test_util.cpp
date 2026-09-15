@@ -447,10 +447,11 @@ Status validate_direct_variant_column(const VariantColumnSpec& column_spec, cons
         }
         nested_column = &nullable_column->get_nested_column();
     }
-    if (check_and_get_column<ColumnVariant>(nested_column) == nullptr) {
+    if (check_and_get_column<ColumnVariant>(nested_column) == nullptr &&
+        check_and_get_column<ColumnVariantV2>(nested_column) == nullptr) {
         return Status::InvalidArgument(
-                "direct variant column {} must be ColumnVariant or ColumnNullable(ColumnVariant), "
-                "actual={}",
+                "direct variant column {} must be ColumnVariant, ColumnVariantV2, or a nullable "
+                "wrapper around either; actual={}",
                 column_spec.name, column->get_name());
     }
     return Status::OK();

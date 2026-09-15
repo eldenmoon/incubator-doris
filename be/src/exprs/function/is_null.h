@@ -18,7 +18,7 @@
 // https://github.com/ClickHouse/ClickHouse/blob/master/src/Functions/IsNull.cpp
 // and modified by Doris
 
-#include <stddef.h>
+#include <cstddef>
 
 #include <algorithm>
 #include <boost/iterator/iterator_facade.hpp>
@@ -96,6 +96,12 @@ public:
             return Status::OK();
         }
         auto* index_iter = iterators[0];
+        if (index_iter->is_variant_root_index()) {
+            // The root null bitmap describes SQL NULL values of the whole VARIANT column. It
+            // cannot answer NULL semantics for a nested path, where a missing path and a JSON
+            // null also evaluate to SQL NULL after extraction.
+            return Status::OK();
+        }
         if (!index_iter->has_null()) {
             return Status::OK();
         }

@@ -59,8 +59,11 @@
 #include "runtime/runtime_state.h"
 #include "storage/index/index_file_reader.h"
 #include "storage/index/indexed_column_reader.h"
+#include "storage/index/inverted/analyzer/analyzer.h"
+#include "storage/index/inverted/variant_root_index.h"
 #include "storage/index/primary_key_index.h"
 #include "storage/index/short_key_index.h"
+#include "storage/index/snii/snii_index_reader.h"
 #include "storage/index/zone_map/zonemap_eval_context.h"
 #include "storage/iterator/vgeneric_iterators.h"
 #include "storage/iterators.h"
@@ -1022,6 +1025,19 @@ Status Segment::new_index_iterator(const TabletColumn& tablet_column, const Tabl
         _be_exec_version = read_options.runtime_state->be_exec_version();
     }
     RETURN_IF_ERROR(_create_column_meta_once(read_options.stats, &read_options.io_ctx));
+    if (index_meta != nullptr && variant_root_index::is_root_index(*index_meta) &&
+        index_meta->properties().contains(
+                std::string(variant_root_index::VARIANT_ROOT_QUERY_PATH_KEY))) {
+        RETURN_IF_ERROR(_index_file_reader_open.call([&] { return _open_index_file_reader(); }));
+        const bool should_analyze =
+                inverted_index::InvertedIndexAnalyzer::should_analyzer(index_meta->properties());
+        auto index_reader = SniiIndexReader::create_shared(
+                index_meta, _index_file_reader,
+                should_analyze ? InvertedIndexReaderType::FULLTEXT
+                               : InvertedIndexReaderType::STRING_TYPE,
+                _num_rows, false);
+        return index_reader->new_iterator(iter);
+    }
     std::shared_ptr<ColumnReader> reader;
     auto st = get_column_reader(tablet_column, &reader, read_options.stats, &read_options.io_ctx);
     if (st.is<ErrorCode::NOT_FOUND>()) {

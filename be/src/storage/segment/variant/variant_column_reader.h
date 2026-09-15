@@ -215,9 +215,10 @@ public:
     int64_t get_metadata_size() const override;
 
     // Return shared_ptr to ensure the lifetime of TabletIndex objects
-    TabletIndexes find_subcolumn_tablet_indexes(const TabletColumn& target_column,
-                                                const DataTypePtr& data_type,
-                                                OlapReaderStatistics* stats = nullptr);
+    TabletIndexes find_subcolumn_tablet_indexes(
+            const TabletColumn& target_column, const DataTypePtr& data_type,
+            const ColumnIterator* selected_path_reader = nullptr,
+            OlapReaderStatistics* stats = nullptr);
 
     bool exist_in_sparse_column(const PathInData& path) const;
 
@@ -363,7 +364,8 @@ private:
                             const StorageReadOptions* opt, ColumnReaderCache* column_reader_cache,
                             PathToBinaryColumnCache* binary_column_cache_ptr);
 
-    static bool _need_read_flat_leaves(const StorageReadOptions* opts);
+    static bool _need_read_flat_leaves(const StorageReadOptions* opts,
+                                       const TabletColumn& target_col);
     bool _can_use_nested_group_read_path() const;
     // Only root-path reads need the extra merge; child-path reads are already served by the
     // specific iterator selected in the plan.

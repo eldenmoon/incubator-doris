@@ -64,6 +64,10 @@ public:
 
     Status evaluate(const IndexFieldNameAndTypePair& name_with_type, IndexIterator* iterator,
                     uint32_t num_rows, roaring::Roaring* bitmap) const override {
+        if (iterator != nullptr && iterator->is_variant_root_index()) {
+            return Status::Error<ErrorCode::INVERTED_INDEX_EVALUATE_SKIPPED>(
+                    "VARIANT root index does not index path NULL semantics");
+        }
         roaring::Roaring null_rows_in_bitmap;
         if (iterator != nullptr) {
             bool has_null = DORIS_TRY(iterator->has_null());
