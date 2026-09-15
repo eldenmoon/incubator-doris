@@ -1349,17 +1349,19 @@ void VariantCompactionUtil::get_compaction_subcolumns_from_data_types(
 // ordinary extracted subcolumns. NG typed paths still use get_compaction_typed_columns(), keeping
 // typed-column rules out of the NG-specific regular-path filtering.
 Status VariantCompactionUtil::get_extended_compaction_schema(
-        const std::vector<RowsetSharedPtr>& rowsets, TabletSchemaSPtr& target) {
+        const std::vector<RowsetSharedPtr>& rowsets, TabletSchemaSPtr& target,
+        const std::set<std::pair<int32_t, int64_t>>& merged_snii_indexes) {
     std::unordered_map<int32_t, VariantExtendedInfo> uid_to_variant_extended_info;
-    const auto has_root_index = [&](const TabletColumn& column) {
+    const auto has_unmerged_root_index = [&](const TabletColumn& column) {
         const auto parent_indexes = target->inverted_indexs(column.unique_id());
-        return std::ranges::any_of(parent_indexes, [](const TabletIndex* index) {
-            return segment_v2::variant_root_index::is_root_index(*index);
+        return std::ranges::any_of(parent_indexes, [&](const TabletIndex* index) {
+            return segment_v2::variant_root_index::is_root_index(*index) &&
+                   !merged_snii_indexes.contains({column.unique_id(), index->index_id()});
         });
     };
     const bool needs_variant_extended_info =
             std::ranges::any_of(target->columns(), [&](const TabletColumnPtr& column) {
-                return column->is_variant_type() && !has_root_index(*column) &&
+                return column->is_variant_type() && !has_unmerged_root_index(*column) &&
                        (should_check_variant_path_stats(*column) ||
                         column->variant_enable_nested_group());
             });
@@ -1385,10 +1387,12 @@ Status VariantCompactionUtil::get_extended_compaction_schema(
         }
         VLOG_DEBUG << "column " << column->name() << " unique id " << column->unique_id();
 
-        if (has_root_index(*column)) {
-            // A values index rebuild consumes the complete logical object. Keeping this column as
+        if (has_unmerged_root_index(*column)) {
+            // A root index rebuild consumes the complete logical object. Keeping this column as
             // one compaction field selects the hierarchical reader and lets the Variant writer
-            // shred the same logical value after the values indexes have observed it.
+            // shred the same logical value after all root indexes have observed it. If every root
+            // index merges natively, no writer needs the logical object and regular extracted
+            // columns are safe again.
             // The values index exists on Variant V2 columns only. Flagging the logical column
             // makes the compaction assemble it as Variant V2 and re-shred it through the V2
             // writer, whose leaves reach the index writers directly; the legacy ColumnVariant

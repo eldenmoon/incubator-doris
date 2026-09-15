@@ -78,7 +78,9 @@ size_t SniiPostingReadContext::DecoderWorkspace::capacity_bytes() const {
 
 void SniiPostingReadContext::DecoderWorkspace::init_memory_reporter(
         writer::MemoryReporter* memory_reporter) {
-    if (memory_reporter == nullptr) return;
+    if (memory_reporter == nullptr) {
+        return;
+    }
     docs_scratch_reservation = memory_reporter->make_reservation();
     prx_scratch_reservation = memory_reporter->make_reservation();
     docids_reservation = memory_reporter->make_reservation();
@@ -600,11 +602,7 @@ Status SniiPostingCursor::init() {
     if (!read_context_->failed_status().ok()) {
         return read_context_->failed_status();
     }
-    if (index_->tier() == format::IndexTier::kT1) {
-        return Status::Error<ErrorCode::INVERTED_INDEX_NOT_SUPPORTED, false>(
-                "posting_cursor: positions index is required");
-    }
-    if (!index_->has_positions()) {
+    if (term_has_positions_ && !index_->has_positions()) {
         return posting_corruption("positions tier lacks positions capability", source_ordinal_);
     }
     if (source_ordinal_ >= rowid_conversion_->source_segment_count()) {
@@ -912,7 +910,7 @@ Status SniiPostingCursor::map_decoded_chunk() {
             }
             const size_t begin = workspace_->position_offsets[ordinal];
             const size_t end = workspace_->position_offsets[ordinal + 1];
-            const uint32_t frequency = static_cast<uint32_t>(end - begin);
+            const auto frequency = static_cast<uint32_t>(end - begin);
             if (write_position != begin) {
                 std::copy(workspace_->positions_flat.begin() + begin,
                           workspace_->positions_flat.begin() + end,

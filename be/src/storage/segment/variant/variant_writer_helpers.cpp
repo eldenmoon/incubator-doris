@@ -71,6 +71,10 @@ Status init_variant_root_index_writers(
                     "VARIANT column {} has duplicate root index analyzer identity {}",
                     parent_column.name(), analyzer_key);
         }
+        if (opts.rowset_ctx->snii_indexes_to_do_compaction.contains(
+                    {parent_column.unique_id(), index->index_id()})) {
+            continue;
+        }
         if (opts.index_file_writer == nullptr ||
             opts.index_file_writer->get_storage_format() != InvertedIndexStorageFormatPB::SNII) {
             return Status::Error<ErrorCode::INVERTED_INDEX_NOT_SUPPORTED>(
