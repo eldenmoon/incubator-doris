@@ -94,8 +94,8 @@ public class InvertedIndexUtil {
             InvertedIndexProperties.VARIANT_INDEX_MODE_ALL_VALUES;
     public static final String VARIANT_ROOT_FORMAT_VERSION_KEY =
             InvertedIndexProperties.VARIANT_ROOT_FORMAT_VERSION_KEY;
-    public static final String VARIANT_ROOT_FORMAT_VERSION_V3 =
-            InvertedIndexProperties.VARIANT_ROOT_FORMAT_VERSION_V3;
+    public static final String VARIANT_ROOT_FORMAT_VERSION_CURRENT =
+            InvertedIndexProperties.VARIANT_ROOT_FORMAT_VERSION_CURRENT;
     public static final String VARIANT_INDEX_SCOPE_KEY = InvertedIndexProperties.VARIANT_INDEX_SCOPE_KEY;
 
     public static boolean isVariantRootIndex(Map<String, String> properties) {

@@ -108,20 +108,6 @@ public class IndexDefinition {
         if (properties != null) {
             this.properties.putAll(properties);
         }
-        String variantScope = InvertedIndexProperties.getVariantIndexScope(this.properties);
-        if (variantScope != null) {
-            // Canonical spelling: the scope key replaces the legacy mode key (a conflicting mode
-            // is kept so that validation reports it), and the FE stamps the on-disk format
-            // version the BE writes and reads. Users never set the version.
-            String mode = this.properties.get(InvertedIndexUtil.VARIANT_INDEX_MODE_KEY);
-            if (mode == null
-                    || variantScope.equals(InvertedIndexProperties.normalizeVariantIndexScope(mode))) {
-                this.properties.remove(InvertedIndexUtil.VARIANT_INDEX_MODE_KEY);
-            }
-            this.properties.put(InvertedIndexUtil.VARIANT_INDEX_SCOPE_KEY, variantScope);
-            this.properties.putIfAbsent(InvertedIndexUtil.INVERTED_INDEX_SUPPORT_PHRASE_KEY,
-                    "false");
-        }
         if (indexType == IndexType.NGRAM_BF) {
             this.properties.putIfAbsent(NGRAM_SIZE_KEY, DEFAULT_NGRAM_SIZE);
             this.properties.putIfAbsent(NGRAM_BF_SIZE_KEY, DEFAULT_NGRAM_BF_SIZE);
@@ -488,15 +474,21 @@ public class IndexDefinition {
     }
 
     /**
-     * Builds the catalog index. A VARIANT values index carries the on-disk format version the BE
-     * writes and reads: it is stamped here, after validation rejected any other user-supplied
-     * version, so a BE that does not implement it treats the index as unusable instead of
-     * misreading it.
+     * Builds the catalog index. A VARIANT root index is written in its canonical spelling, after
+     * validateVariantRootIndex() accepted the user's spelling as given: the scope key replaces
+     * the legacy mode key, phrase positions are off (the index stores none), and the on-disk
+     * format version the BE writes and reads is stamped so that a BE which does not implement
+     * it treats the index as unusable instead of misreading it. SHOW CREATE TABLE prints this
+     * spelling and validation accepts it back.
      */
     public Index translateToCatalogStyle() {
         if (isVariantRootIndex()) {
+            properties.remove(InvertedIndexUtil.VARIANT_INDEX_MODE_KEY);
+            properties.put(InvertedIndexUtil.VARIANT_INDEX_SCOPE_KEY,
+                    InvertedIndexProperties.VARIANT_INDEX_SCOPE_VALUES);
+            properties.putIfAbsent(InvertedIndexUtil.INVERTED_INDEX_SUPPORT_PHRASE_KEY, "false");
             properties.putIfAbsent(InvertedIndexUtil.VARIANT_ROOT_FORMAT_VERSION_KEY,
-                    InvertedIndexUtil.VARIANT_ROOT_FORMAT_VERSION_V3);
+                    InvertedIndexUtil.VARIANT_ROOT_FORMAT_VERSION_CURRENT);
         }
         return new Index(Env.getCurrentEnv().getNextId(), name, cols, indexType, properties,
                 comment);
@@ -566,6 +558,12 @@ public class IndexDefinition {
         return indexType == IndexType.INVERTED && InvertedIndexUtil.isVariantRootIndex(properties);
     }
 
+    /**
+     * Validates the user's spelling of a VARIANT root index as given. Both spellings of the
+     * scope must individually be the values scope (an invalid one is never hidden by a valid
+     * sibling), and only the format version this FE stamps is accepted back, so that a SHOW
+     * CREATE TABLE output replays. Canonicalization happens in translateToCatalogStyle().
+     */
     private void validateVariantRootIndex(boolean isVariant, KeysType keysType,
             boolean enableUniqueKeyMergeOnWrite,
             TInvertedIndexFileStorageFormat invertedIndexFileStorageFormat) {
@@ -579,20 +577,15 @@ public class IndexDefinition {
             }
             return;
         }
-        if (scope != null && mode != null
-                && !scope.equals(InvertedIndexProperties.normalizeVariantIndexScope(mode))) {
-            throw new AnalysisException(
-                    "variant_index_mode=" + mode + " conflicts with variant_index_scope=" + scope);
+        if (scope != null && InvertedIndexProperties.normalizeVariantIndexScope(scope) == null) {
+            throw new AnalysisException("variant_index_scope must be values, found: " + scope);
         }
-        String normalizedScope = InvertedIndexProperties.normalizeVariantIndexScope(
-                scope != null ? scope : mode);
-        if (normalizedScope == null) {
-            throw new AnalysisException(
-                    "variant_index_scope must be values (variant_index_mode accepts all_values)");
+        if (mode != null && InvertedIndexProperties.normalizeVariantIndexScope(mode) == null) {
+            throw new AnalysisException("variant_index_mode must be all_values, found: " + mode);
         }
         if (!isVariant) {
             throw new AnalysisException(
-                    "variant_index_scope=" + normalizedScope + " can only be used on VARIANT columns");
+                    "variant_index_scope=values can only be used on VARIANT columns");
         }
         if (!Config.enable_variant_v2) {
             throw new AnalysisException("VARIANT values index requires enable_variant_v2=true");
@@ -604,7 +597,7 @@ public class IndexDefinition {
         // The version is stamped by translateToCatalogStyle(); the stamped value is accepted here
         // so that SHOW CREATE TABLE output can be replayed, any other value is refused.
         if (formatVersion != null
-                && !InvertedIndexUtil.VARIANT_ROOT_FORMAT_VERSION_V3.equals(formatVersion)) {
+                && !InvertedIndexUtil.VARIANT_ROOT_FORMAT_VERSION_CURRENT.equals(formatVersion)) {
             throw new AnalysisException("unsupported variant_root_format_version: " + formatVersion);
         }
         if ("true".equals(properties.get(InvertedIndexUtil.INVERTED_INDEX_SUPPORT_PHRASE_KEY))) {

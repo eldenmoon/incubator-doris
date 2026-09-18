@@ -95,6 +95,12 @@ public class CheckScoreUsage implements RewriteRuleFactory {
                 SlotReference slot = (SlotReference) match.left();
                 Index selectedIndex = resolveSelectedInvertedIndex(
                         slot, match.getAnalyzer().orElse(null), true);
+                if (selectedIndex != null && selectedIndex.isVariantRootIndex()) {
+                    // The root index stores neither positions nor norms, so the BE cannot
+                    // compute a similarity for its matches.
+                    throw new AnalysisException(
+                            "score() is not supported with a MATCH served by a VARIANT root index");
+                }
                 checkSelectedIndexPolicyAdmission(selectedIndex, scan, indexPolicyMgr);
             }
 

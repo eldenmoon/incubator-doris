@@ -62,18 +62,19 @@ public class InvertedIndexProperties {
 
     public static String INVERTED_INDEX_PARSER_FIELD_PATTERN_KEY = "field_pattern";
 
-    // VARIANT values index: one logical index per analyzer on a VARIANT column that stores every
+    // VARIANT root index: one logical index per analyzer on a VARIANT column that stores every
     // scalar leaf as a path-less typed term. `variant_index_scope = values` declares it; the legacy
     // spelling `variant_index_mode = all_values` is normalized to the scope key. The format version
-    // is stamped by the FE, never chosen by users; a BE that does not know the version treats the
-    // index as unusable instead of misreading it.
+    // names the BE term layout (be/src/storage/index/inverted/variant_term_codec.h); it is stamped
+    // by the FE, never chosen by users, and a BE that does not know the version treats the index
+    // as unusable instead of misreading it.
     public static final String VARIANT_INDEX_SCOPE_KEY = "variant_index_scope";
     public static final String VARIANT_INDEX_SCOPE_VALUES = "values";
     public static final String VARIANT_INDEX_MODE_KEY = "variant_index_mode";
     public static final String VARIANT_INDEX_MODE_ALL_VALUES = "all_values";
     public static final String VARIANT_ROOT_FORMAT_VERSION_KEY = "variant_root_format_version";
-    // Value-first layout [tag][value] with typed, order-preserving values.
-    public static final String VARIANT_ROOT_FORMAT_VERSION_V3 = "3";
+    // Path-less typed terms [tag][value], strings raw.
+    public static final String VARIANT_ROOT_FORMAT_VERSION_CURRENT = "4";
 
     /** Canonical scope spelling for a scope or legacy mode value, or null when it is neither. */
     public static String normalizeVariantIndexScope(String scopeOrMode) {

@@ -165,7 +165,7 @@ public class PhysicalStorageLayerAggregateTest implements MemoPatternMatchSuppor
                         InvertedIndexProperties.VARIANT_INDEX_MODE_KEY,
                         InvertedIndexProperties.VARIANT_INDEX_MODE_ALL_VALUES,
                         InvertedIndexProperties.VARIANT_ROOT_FORMAT_VERSION_KEY,
-                        InvertedIndexProperties.VARIANT_ROOT_FORMAT_VERSION_V3),
+                        InvertedIndexProperties.VARIANT_ROOT_FORMAT_VERSION_CURRENT),
                 "");
         OlapTable table = new OlapTable(10L, "variant_table", columns, KeysType.DUP_KEYS,
                 new PartitionInfo(), new HashDistributionInfo(1, ImmutableList.of(id)));

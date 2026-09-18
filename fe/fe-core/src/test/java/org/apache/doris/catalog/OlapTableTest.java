@@ -85,7 +85,7 @@ public class OlapTableTest {
         valuesProperties.put(InvertedIndexProperties.VARIANT_INDEX_SCOPE_KEY,
                 InvertedIndexProperties.VARIANT_INDEX_SCOPE_VALUES);
         valuesProperties.put(InvertedIndexProperties.VARIANT_ROOT_FORMAT_VERSION_KEY,
-                InvertedIndexProperties.VARIANT_ROOT_FORMAT_VERSION_V3);
+                InvertedIndexProperties.VARIANT_ROOT_FORMAT_VERSION_CURRENT);
 
         Index children = new Index(1L, "v_children", Lists.newArrayList("v"),
                 IndexType.INVERTED, childProperties, "");

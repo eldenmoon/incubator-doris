@@ -17,6 +17,7 @@
 
 package org.apache.doris.nereids.trees.plans.commands;
 
+import org.apache.doris.analysis.InvertedIndexProperties;
 import org.apache.doris.analysis.InvertedIndexUtil;
 import org.apache.doris.catalog.AggregateType;
 import org.apache.doris.catalog.Column;
@@ -168,15 +169,18 @@ public class IndexDefinitionTest {
                     "comment");
             values.checkColumn(variantColumn, KeysType.DUP_KEYS, false,
                     TInvertedIndexFileStorageFormat.SNII);
-            // The legacy mode spelling is normalized to the scope key and the FE stamps the
-            // format version when the catalog index is created.
-            Assertions.assertEquals("values", values.getProperties().get("variant_index_scope"));
-            Assertions.assertNull(values.getProperties().get("variant_index_mode"));
+            // Validation leaves the user's spelling alone; the catalog index carries the
+            // canonical spelling: the scope key, no positions, and the stamped format version.
+            Assertions.assertEquals("all_values", values.getProperties().get("variant_index_mode"));
+            Assertions.assertNull(values.getProperties().get("variant_index_scope"));
             Assertions.assertNull(values.getProperties().get("variant_root_format_version"));
-            Assertions.assertEquals("3", values.translateToCatalogStyle().getProperties()
-                    .get("variant_root_format_version"));
-            Assertions.assertEquals("false", values.getProperties().get("support_phrase"));
             Assertions.assertTrue(values.isVariantRootIndex());
+            Map<String, String> catalogProperties = values.translateToCatalogStyle().getProperties();
+            Assertions.assertEquals("values", catalogProperties.get("variant_index_scope"));
+            Assertions.assertNull(catalogProperties.get("variant_index_mode"));
+            Assertions.assertEquals(InvertedIndexProperties.VARIANT_ROOT_FORMAT_VERSION_CURRENT,
+                    catalogProperties.get("variant_root_format_version"));
+            Assertions.assertEquals("false", catalogProperties.get("support_phrase"));
             Index catalogValues = new Index(1, "variant_values_index", Lists.newArrayList("col1"),
                     IndexType.INVERTED,
                     new HashMap<>(Map.of("variant_index_mode", "all_values", "parser", "none")),
@@ -209,7 +213,8 @@ public class IndexDefinitionTest {
             IndexDefinition stampedVersion = new IndexDefinition("variant_stamped_version", false,
                     Lists.newArrayList("col1"), "INVERTED",
                     new HashMap<>(Map.of("variant_index_scope", "values",
-                            "variant_root_format_version", "3")),
+                            "variant_root_format_version",
+                            InvertedIndexProperties.VARIANT_ROOT_FORMAT_VERSION_CURRENT)),
                     "comment");
             stampedVersion.checkColumn(variantColumn, KeysType.DUP_KEYS, false,
                     TInvertedIndexFileStorageFormat.SNII);
@@ -222,17 +227,21 @@ public class IndexDefinitionTest {
                     variantColumn, KeysType.DUP_KEYS, false, TInvertedIndexFileStorageFormat.SNII));
             IndexDefinition versionWithoutScope = new IndexDefinition("variant_version_only", false,
                     Lists.newArrayList("col1"), "INVERTED",
-                    new HashMap<>(Map.of("variant_root_format_version", "3")), "comment");
+                    new HashMap<>(Map.of("variant_root_format_version",
+                            InvertedIndexProperties.VARIANT_ROOT_FORMAT_VERSION_CURRENT)),
+                    "comment");
             Assertions.assertThrows(AnalysisException.class, () -> versionWithoutScope.checkColumn(
                     variantColumn, KeysType.DUP_KEYS, false, TInvertedIndexFileStorageFormat.SNII));
 
-            // Only the values scope exists: the path-first spellings are refused.
+            // Only the values scope exists: the path-first spellings are refused, and an invalid
+            // spelling is never hidden by a valid sibling spelling.
             for (Map<String, String> rejected : List.of(
                     Map.of("variant_index_mode", "root"),
                     Map.of("variant_index_scope", "paths"),
                     Map.of("variant_index_scope", "paths,values"),
                     Map.of("variant_index_mode", "unknown"),
-                    Map.of("variant_index_scope", "values", "variant_index_mode", "root"))) {
+                    Map.of("variant_index_scope", "values", "variant_index_mode", "root"),
+                    Map.of("variant_index_scope", "paths", "variant_index_mode", "all_values"))) {
                 IndexDefinition def = new IndexDefinition("variant_rejected", false,
                         Lists.newArrayList("col1"), "INVERTED", new HashMap<>(rejected), "comment");
                 Assertions.assertThrows(AnalysisException.class, () -> def.checkColumn(
