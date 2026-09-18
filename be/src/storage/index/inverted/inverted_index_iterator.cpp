@@ -18,7 +18,6 @@
 #include "storage/index/inverted/inverted_index_iterator.h"
 
 #include <memory>
-#include <ranges>
 
 #include "common/cast_set.h"
 #include "common/logging.h"
@@ -53,6 +52,10 @@ void InvertedIndexIterator::add_reader(InvertedIndexReaderType type,
             &_selection_candidates, &_key_to_entries);
     DORIS_CHECK(status.ok()) << status;
     _readers.push_back(reader);
+    const auto& properties = reader->get_index_properties();
+    _has_root_reader = _has_root_reader || variant_root_index::is_root_index(properties);
+    _has_candidate_reader =
+            _has_candidate_reader || variant_root_index::yields_candidates(properties);
 }
 
 Status InvertedIndexIterator::read_from_index(const IndexParam& param) {
@@ -78,15 +81,11 @@ Status InvertedIndexIterator::read_from_index(const IndexParam& param) {
         return Status::Error<ErrorCode::INVERTED_INDEX_CLUCENE_ERROR>(
                 "inverted index reader is null");
     }
-    const auto& selected_properties = reader->get_index_properties();
-    // A VARIANT values index answers whole-document queries exactly. Bound to one sub-column path
+    // A VARIANT root index answers whole-document queries exactly. Bound to one sub-column path
     // it only proves that the value exists somewhere in the row, so its rows remain candidates
     // for the residual expression.
-    const auto bound_path =
-            selected_properties.find(std::string(variant_root_index::VARIANT_ROOT_QUERY_PATH_KEY));
-    i_param->requires_recheck = variant_root_index::is_root_mode_properties(selected_properties) &&
-                                bound_path != selected_properties.end() &&
-                                !bound_path->second.empty();
+    i_param->requires_recheck =
+            variant_root_index::yields_candidates(reader->get_index_properties());
     if (i_param->requires_recheck && _context->collection_similarity != nullptr) {
         return Status::Error<ErrorCode::INVERTED_INDEX_EVALUATE_SKIPPED>(
                 "candidate-only inverted index reader cannot provide exact scores");
@@ -158,25 +157,6 @@ Result<bool> InvertedIndexIterator::has_null() {
     return reader->has_null();
 }
 
-bool InvertedIndexIterator::is_variant_root_index() const {
-    return std::ranges::any_of(_readers, [](const InvertedIndexReaderPtr& reader) {
-        return variant_root_index::is_root_mode_properties(reader->get_index_properties());
-    });
-}
-
-bool InvertedIndexIterator::has_variant_all_values_reader(InvertedIndexReaderType type) const {
-    for (size_t i = 0; i < _selection_candidates.size(); ++i) {
-        if (_selection_candidates[i].reader_type == type) {
-            DORIS_CHECK(i < _readers.size());
-            if (variant_root_index::is_root_mode_properties(
-                        _readers[i]->get_index_properties())) {
-                return true;
-            }
-        }
-    }
-    return false;
-}
-
 Status InvertedIndexIterator::try_read_from_inverted_index(const InvertedIndexReaderPtr& reader,
                                                            const std::string& column_name,
                                                            const Field& query_value,
@@ -207,8 +187,10 @@ Result<InvertedIndexReaderPtr> InvertedIndexIterator::select_best_reader(
                     "column_type is required to select among {} inverted indexes",
                     _selection_candidates.size()));
         }
-        field_type = is_variant_root_index() ? FieldType::OLAP_FIELD_TYPE_STRING
-                                             : get_inverted_index_leaf_field_type(column_type);
+        // A root index stores typed terms of every leaf under a string reader type whatever
+        // the bound column's type; select it as a string index.
+        field_type = _has_root_reader ? FieldType::OLAP_FIELD_TYPE_STRING
+                                      : get_inverted_index_leaf_field_type(column_type);
     }
     auto selection = select_best_inverted_index_candidate(_selection_candidates, _key_to_entries,
                                                           field_type, query_type, normalized_key);

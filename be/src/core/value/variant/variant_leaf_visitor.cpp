@@ -42,13 +42,16 @@ std::optional<VariantCanonicalNumber> canonical_numeric_from_uint64(uint64_t val
 }
 
 std::optional<VariantCanonicalNumber> canonical_numeric_from_double(double value) {
-    if (std::isnan(value)) {
+    // NaN has no equality and no spelling a query could name; an infinity has a spelling
+    // ("Infinity") that JSON cannot produce and CAST prints differently from every JSON
+    // formatter. Both stay OTHER so index and scan agree on "no term, no text".
+    if (!std::isfinite(value)) {
         return std::nullopt;
     }
     // Mixed numeric VARIANT paths are promoted to FLOAT/DOUBLE only when the floating mantissa can
     // represent the integer width losslessly, so folding integral floating values into the same
     // signed/unsigned domain keeps cross-type equality one term.
-    if (std::isfinite(value) && std::trunc(value) == value) {
+    if (std::trunc(value) == value) {
         if (value >= -0x1p63 && value < 0x1p63) {
             return canonical_numeric_from_int64(static_cast<int64_t>(value));
         }

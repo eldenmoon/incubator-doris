@@ -64,9 +64,9 @@ public:
 
     Status evaluate(const IndexFieldNameAndTypePair& name_with_type, IndexIterator* iterator,
                     uint32_t num_rows, roaring::Roaring* bitmap) const override {
-        if (iterator != nullptr && iterator->is_variant_root_index()) {
+        if (iterator != nullptr && iterator->has_candidate_reader()) {
             return Status::Error<ErrorCode::INVERTED_INDEX_EVALUATE_SKIPPED>(
-                    "VARIANT root index does not index path NULL semantics");
+                    "the index null bitmap describes the VARIANT column, not the bound path");
         }
         roaring::Roaring null_rows_in_bitmap;
         if (iterator != nullptr) {

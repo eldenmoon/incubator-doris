@@ -55,6 +55,7 @@
 #include "storage/index/inverted/inverted_index_cache.h"
 #include "storage/index/inverted/inverted_index_reader.h"
 #include "storage/index/inverted/variant_root_index.h"
+#include "storage/index/inverted/variant_term_codec.h"
 #include "storage/index/snii/encoding/byte_sink.h"
 #include "storage/index/snii/encoding/crc32c.h"
 #include "storage/index/snii/format/core_metadata.h"
@@ -211,9 +212,10 @@ void init_index_meta(TabletIndex* meta, int64_t index_id = kIndexId,
     meta->init_from_pb(pb);
 }
 
-// A values index bound the way variant_root_index::make_query_index() binds it: no query path
-// for the whole document, a path without a family for a path read from the binary storage.
-void init_values_index_meta(TabletIndex* meta, std::string_view query_path,
+// A root index bound the way variant_root_index::bind_to_path() binds it: no query path for
+// the whole document (nullopt), a path (possibly the empty key) without a family for a path
+// read from the binary storage.
+void init_values_index_meta(TabletIndex* meta, std::optional<std::string_view> query_path,
                             std::string_view query_value_family) {
     TabletIndexPB pb;
     pb.set_index_type(IndexType::INVERTED);
@@ -224,9 +226,9 @@ void init_values_index_meta(TabletIndex* meta, std::string_view query_path,
             std::string(variant_root_index::VARIANT_INDEX_MODE_ALL_VALUES);
     (*pb.mutable_properties())[std::string(variant_root_index::VARIANT_ROOT_FORMAT_VERSION_KEY)] =
             std::string(variant_root_index::VARIANT_ROOT_FORMAT_VERSION_CURRENT);
-    if (!query_path.empty()) {
+    if (query_path.has_value()) {
         (*pb.mutable_properties())[std::string(variant_root_index::VARIANT_ROOT_QUERY_PATH_KEY)] =
-                std::string(query_path);
+                std::string(*query_path);
     }
     if (!query_value_family.empty()) {
         (*pb.mutable_properties())[std::string(
@@ -290,7 +292,7 @@ Status write_root_keyword_segment(std::string_view index_path_prefix) {
     input.index_suffix = "";
     input.config = doris::snii::format::IndexConfig::kDocsOnly;
     input.doc_count = 3;
-    input.terms = {make_term(variant_root_index::encode_string_term("apache/doris"),
+    input.terms = {make_term(variant_term_codec::term_string("apache/doris"),
                              {{.docid = 1, .positions = {}}})};
     input.null_docids = {2};
 
@@ -315,9 +317,9 @@ Status write_root_marker_segment(std::string_view index_path_prefix) {
     input.index_suffix = "";
     input.config = doris::snii::format::IndexConfig::kDocsOnly;
     input.doc_count = 3;
-    input.terms = {make_term(variant_root_index::encode_string_term("apache/doris"),
+    input.terms = {make_term(variant_term_codec::term_string("apache/doris"),
                              {{.docid = 1, .positions = {}}}),
-                   make_term(variant_root_index::encode_other_term(),
+                   make_term(variant_root_index::unspellable_marker_term(),
                              {{.docid = 0, .positions = {}}})};
     input.null_docids = {2};
 
@@ -1056,7 +1058,7 @@ TEST_F(SniiIndexReaderCountFallback, RootPreparedTermsReuseCommonCacheAndNullDom
 TEST_F(SniiIndexReaderCountFallback, ValuesIndexLeavesWholeDocumentEqualityToTheScan) {
     const std::string path = std::string(kTestDir) + "/values_root_equality";
     TabletIndex meta;
-    init_values_index_meta(&meta, /*query_path=*/"", /*query_value_family=*/"");
+    init_values_index_meta(&meta, /*query_path=*/std::nullopt, /*query_value_family=*/"");
     assert_ok(write_root_keyword_segment(path));
 
     OpenedSniiIndex opened;
@@ -1105,6 +1107,25 @@ TEST_F(SniiIndexReaderCountFallback, ValuesIndexKeepsUnspellableLeavesAsBinaryPa
                                                InvertedIndexQueryType::EQUAL_QUERY, typed_bitmap));
     ASSERT_NE(typed_bitmap, nullptr);
     EXPECT_EQ(bitmap_docids(*typed_bitmap), (std::vector<uint32_t> {1}));
+}
+
+TEST_F(SniiIndexReaderCountFallback, ValuesIndexBindsTheEmptyKeyAsAPathNotTheWholeDocument) {
+    const std::string path = std::string(kTestDir) + "/values_empty_key";
+    assert_ok(write_root_marker_segment(path));
+    const Field query_value = Field::create_field<TYPE_STRING>(std::string("apache/doris"));
+
+    // `CAST(v[''] AS STRING) = 'apache/doris'` is a path predicate: it is served as candidates
+    // (marker included), where whole-document equality is not served at all.
+    TabletIndex empty_key_meta;
+    init_values_index_meta(&empty_key_meta, std::string_view(""), /*query_value_family=*/"");
+    OpenedSniiIndex opened;
+    assert_ok(open_snii_index(&empty_key_meta, path, &opened));
+    QueryExecutionContext execution(/*enable_query_cache=*/false);
+    std::shared_ptr<roaring::Roaring> bitmap;
+    assert_ok(opened.index_reader->query(execution.context, "payload.", query_value,
+                                         InvertedIndexQueryType::EQUAL_QUERY, bitmap));
+    ASSERT_NE(bitmap, nullptr);
+    EXPECT_EQ(bitmap_docids(*bitmap), (std::vector<uint32_t> {0, 1}));
 }
 
 TEST_F(SniiIndexReaderCountFallback, PublicPhraseQueryLeaderRecordsPrxWork) {

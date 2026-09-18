@@ -35,8 +35,9 @@ struct InvertedIndexParam {
     uint32_t num_rows;
     std::shared_ptr<roaring::Roaring> roaring;
     bool skip_try = false;
-    // Set by read_from_index() from the selected reader. Path-qualified root indexes and
-    // path-bound all-values indexes are candidates; an unbound all-values root MATCH is exact.
+    // Set by read_from_index() from the selected reader: the rows in `roaring` are candidates
+    // for the residual expression (a VARIANT root index bound to a sub-column path) rather than
+    // the exact answer. Callers carry it into InvertedIndexResultBitmap.
     bool requires_recheck = false;
     // Non-null only when the caller consumes both the query result and this reader's null bitmap.
     InvertedIndexQueryCacheHandle* null_bitmap_cache_handle = nullptr;
@@ -58,8 +59,7 @@ public:
     Status read_null_bitmap(InvertedIndexQueryCacheHandle* cache_handle) override;
 
     [[nodiscard]] Result<bool> has_null() override;
-    bool is_variant_root_index() const override;
-    bool has_variant_all_values_reader(InvertedIndexReaderType type) const override;
+    bool has_candidate_reader() const override { return _has_candidate_reader; }
 
     IndexReaderPtr get_reader(IndexReaderType reader_type) const override;
 
@@ -94,6 +94,10 @@ private:
     // Index for O(1) lookup by analyzer_key. Maps normalized key to candidate indices.
     // Built incrementally in add_reader().
     InvertedIndexSelectionKeyIndex _key_to_entries;
+    // Some reader is a VARIANT root index (its terms are strings whatever the column type).
+    bool _has_root_reader = false;
+    // Some reader is a VARIANT root index bound to a sub-column path (see IndexIterator).
+    bool _has_candidate_reader = false;
 };
 
 } // namespace doris::segment_v2

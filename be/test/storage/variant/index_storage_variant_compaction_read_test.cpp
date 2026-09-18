@@ -22,6 +22,7 @@
 #include "storage/index/index_file_reader.h"
 #include "storage/index/inverted/inverted_index_desc.h"
 #include "storage/index/inverted/variant_root_index.h"
+#include "storage/index/inverted/variant_term_codec.h"
 #include "storage/index/snii/query/term_query.h"
 #include "storage/segment/variant/nested_group_provider.h"
 #include "storage/variant/index_storage_variant_test_base.h"
@@ -39,6 +40,10 @@ class IndexStorageVariantCompactionReadTest : public IndexStorageTestFixture {
 protected:
     void run_deep_sparse_variant_lifecycle(bool external_segment_meta, int64_t tablet_id);
     void run_nested_group_variant_lifecycle(bool external_segment_meta, int64_t tablet_id);
+    // Two root indexes (exact + english) on one VARIANT column merge natively and
+    // independently under the given compaction kind.
+    void run_direct_merge_of_root_indexes(IndexCompactionKind kind, int64_t tablet_id,
+                                          int64_t first_index_id);
 };
 
 void IndexStorageVariantCompactionReadTest::run_deep_sparse_variant_lifecycle(
@@ -364,19 +369,19 @@ TEST_F(IndexStorageVariantCompactionReadTest,
     EXPECT_EQ((*token)->stats().doc_count, 4U);
 
     std::vector<uint32_t> docids;
-    ASSERT_TRUE(
-            snii::query::term_query(
-                    **exact, segment_v2::variant_root_index::encode_string_term("opened"), &docids)
-                    .ok());
+    ASSERT_TRUE(snii::query::term_query(
+                        **exact, segment_v2::variant_term_codec::term_string("opened"), &docids)
+                        .ok());
     EXPECT_EQ(docids, (std::vector<uint32_t> {0, 2}));
     docids.clear();
-    ASSERT_TRUE(snii::query::term_query(
-                        **token, segment_v2::variant_root_index::encode_token_term("root"), &docids)
+    ASSERT_TRUE(snii::query::term_query(**token, segment_v2::variant_term_codec::term_token("root"),
+                                        &docids)
                         .ok());
     EXPECT_EQ(docids, (std::vector<uint32_t> {0, 2}));
 }
 
-TEST_F(IndexStorageVariantCompactionReadTest, FullCompactionRebuildKeepsLeavesWithControlCharacters) {
+TEST_F(IndexStorageVariantCompactionReadTest,
+       FullCompactionRebuildKeepsLeavesWithControlCharacters) {
     // A GitHub IssuesEvent row whose body holds U+0001 / U+0003. Rebuilt through the legacy
     // ColumnVariant JSON text round trip the row degraded to one string and lost every value
     // term; the compaction must assemble and re-shred it as Variant V2.
@@ -394,7 +399,9 @@ TEST_F(IndexStorageVariantCompactionReadTest, FullCompactionRebuildKeepsLeavesWi
 
     IndexRowsetSpec rowset0;
     rowset0.version = 0;
-    rowset0.batches.push_back(IndexBatch::single_variant({R"json({"action":"opened","issue":{"body":"Ошибка появляется начиная с версии 4.2.50 в любом окне с контролом Chart.  \\r\\n\\r\\nException: Your trial of SciChart has expired.  \\r\\nSciChart must be activated on this machine using a purchased serial key to allow development.\\r\\nPlease contact support@scichart.com or visit www.scichart.com/buy-now\\r\\nStackTrace:\\r\\n at Abt.Licensing.Core.Credentials.\u0001_","comments":0,"comments_url":"https://api.github.com/repos/stocksharp/stocksharp/issues/1/comments","created_at":"2015-01-03T11:22:17Z","events_url":"https://api.github.com/repos/stocksharp/stocksharp/issues/1/events","html_url":"https://github.com/stocksharp/stocksharp/issues/1","id":53301496,"labels_url":"https://api.github.com/repos/stocksharp/stocksharp/issues/1/labels{/name}","locked":false,"number":1,"state":"open","title":"Your trial of SciChart has expired","updated_at":"2015-01-03T11:22:17Z","url":"https://api.github.com/repos/stocksharp/stocksharp/issues/1","user":{"avatar_url":"https://avatars.githubusercontent.com/u/10364235?v=3","events_url":"https://api.github.com/users/Sergey-Dvortsov/events{/privacy}","followers_url":"https://api.github.com/users/Sergey-Dvortsov/followers","following_url":"https://api.github.com/users/Sergey-Dvortsov/following{/other_user}","gists_url":"https://api.github.com/users/Sergey-Dvortsov/gists{/gist_id}","gravatar_id":"","html_url":"https://github.com/Sergey-Dvortsov","id":10364235,"login":"Sergey-Dvortsov","organizations_url":"https://api.github.com/users/Sergey-Dvortsov/orgs","received_events_url":"https://api.github.com/users/Sergey-Dvortsov/received_events","repos_url":"https://api.github.com/users/Sergey-Dvortsov/repos","site_admin":false,"starred_url":"https://api.github.com/users/Sergey-Dvortsov/starred{/owner}{/repo}","subscriptions_url":"https://api.github.com/users/Sergey-Dvortsov/subscriptions","type":"User","url":"https://api.github.com/users/Sergey-Dvortsov"}}})json"}, 0));
+    rowset0.batches.push_back(IndexBatch::single_variant(
+            {R"json({"action":"opened","issue":{"body":"Ошибка появляется начиная с версии 4.2.50 в любом окне с контролом Chart.  \\r\\n\\r\\nException: Your trial of SciChart has expired.  \\r\\nSciChart must be activated on this machine using a purchased serial key to allow development.\\r\\nPlease contact support@scichart.com or visit www.scichart.com/buy-now\\r\\nStackTrace:\\r\\n at Abt.Licensing.Core.Credentials.\u0001_","comments":0,"comments_url":"https://api.github.com/repos/stocksharp/stocksharp/issues/1/comments","created_at":"2015-01-03T11:22:17Z","events_url":"https://api.github.com/repos/stocksharp/stocksharp/issues/1/events","html_url":"https://github.com/stocksharp/stocksharp/issues/1","id":53301496,"labels_url":"https://api.github.com/repos/stocksharp/stocksharp/issues/1/labels{/name}","locked":false,"number":1,"state":"open","title":"Your trial of SciChart has expired","updated_at":"2015-01-03T11:22:17Z","url":"https://api.github.com/repos/stocksharp/stocksharp/issues/1","user":{"avatar_url":"https://avatars.githubusercontent.com/u/10364235?v=3","events_url":"https://api.github.com/users/Sergey-Dvortsov/events{/privacy}","followers_url":"https://api.github.com/users/Sergey-Dvortsov/followers","following_url":"https://api.github.com/users/Sergey-Dvortsov/following{/other_user}","gists_url":"https://api.github.com/users/Sergey-Dvortsov/gists{/gist_id}","gravatar_id":"","html_url":"https://github.com/Sergey-Dvortsov","id":10364235,"login":"Sergey-Dvortsov","organizations_url":"https://api.github.com/users/Sergey-Dvortsov/orgs","received_events_url":"https://api.github.com/users/Sergey-Dvortsov/received_events","repos_url":"https://api.github.com/users/Sergey-Dvortsov/repos","site_admin":false,"starred_url":"https://api.github.com/users/Sergey-Dvortsov/starred{/owner}{/repo}","subscriptions_url":"https://api.github.com/users/Sergey-Dvortsov/subscriptions","type":"User","url":"https://api.github.com/users/Sergey-Dvortsov"}}})json"},
+            0));
     IndexRowsetSpec rowset1;
     rowset1.version = 1;
     rowset1.batches.push_back(IndexBatch::single_variant(
@@ -457,34 +464,31 @@ TEST_F(IndexStorageVariantCompactionReadTest, FullCompactionRebuildKeepsLeavesWi
     EXPECT_EQ((*token)->stats().doc_count, 2U);
 
     std::vector<uint32_t> docids;
-    ASSERT_TRUE(
-            snii::query::term_query(
-                    **exact, segment_v2::variant_root_index::encode_string_term("opened"), &docids)
-                    .ok());
+    ASSERT_TRUE(snii::query::term_query(
+                        **exact, segment_v2::variant_term_codec::term_string("opened"), &docids)
+                        .ok());
     EXPECT_EQ(docids, (std::vector<uint32_t> {0, 1}));
     docids.clear();
-    ASSERT_TRUE(snii::query::term_query(**exact,
-                                        segment_v2::variant_root_index::encode_int64_term(53301496),
-                                        &docids)
+    ASSERT_TRUE(snii::query::term_query(
+                        **exact, segment_v2::variant_term_codec::term_int64(53301496), &docids)
                         .ok());
     EXPECT_EQ(docids, (std::vector<uint32_t> {0}));
     // Key names are not values: the token index must not carry them.
     docids.clear();
     ASSERT_TRUE(snii::query::term_query(
-                        **token, segment_v2::variant_root_index::encode_token_term("gravatar"),
-                        &docids)
+                        **token, segment_v2::variant_term_codec::term_token("gravatar"), &docids)
                         .ok());
     EXPECT_EQ(docids, (std::vector<uint32_t> {}));
     docids.clear();
     ASSERT_TRUE(snii::query::term_query(
-                        **token, segment_v2::variant_root_index::encode_token_term("stocksharp"),
-                        &docids)
+                        **token, segment_v2::variant_term_codec::term_token("stocksharp"), &docids)
                         .ok());
     EXPECT_EQ(docids, (std::vector<uint32_t> {0}));
 }
 
-TEST_F(IndexStorageVariantCompactionReadTest,
-       FullCompactionDirectMergesExactAndTokenRootIndexesIndependently) {
+// NOLINTNEXTLINE(readability-function-cognitive-complexity,readability-function-size): one fixture pins the whole native merge, from tablet setup to term lookup.
+void IndexStorageVariantCompactionReadTest::run_direct_merge_of_root_indexes(
+        IndexCompactionKind kind, int64_t tablet_id, int64_t first_index_id) {
     const auto root_properties = [](std::string parser) {
         return std::map<std::string, std::string> {
                 {"parser", std::move(parser)},
@@ -500,12 +504,13 @@ TEST_F(IndexStorageVariantCompactionReadTest,
     variant.max_subcolumns_count = 1;
 
     IndexTabletOptions options;
-    options.tablet_id = 110057;
+    options.tablet_id = tablet_id;
     options.index_storage_format = InvertedIndexStorageFormatPB::SNII;
     options.variant_columns = {std::move(variant)};
     options.inverted_indexes = {
-            IndexSpec::column_index(10058, "idx_v_root_exact", 2, root_properties("none")),
-            IndexSpec::column_index(10059, "idx_v_root_english", 2, root_properties("english")),
+            IndexSpec::column_index(first_index_id, "idx_v_root_exact", 2, root_properties("none")),
+            IndexSpec::column_index(first_index_id + 1, "idx_v_root_english", 2,
+                                    root_properties("english")),
     };
     ASSERT_TRUE(create_tablet(options).ok());
 
@@ -565,7 +570,7 @@ TEST_F(IndexStorageVariantCompactionReadTest,
     DebugPoints::instance()->add_with_callback(std::string(kSessionPoint), count_session);
     DebugPoints::instance()->add_with_callback(std::string(kValidationPoint), count_validation);
 
-    auto compacted = compact_rowsets(IndexCompactionKind::FULL, rowsets.value());
+    auto compacted = compact_rowsets(kind, rowsets.value());
     ASSERT_TRUE(compacted.has_value()) << compacted.error();
     ASSERT_NE(compacted.value(), nullptr);
     EXPECT_EQ(compacted.value()->num_rows(), 4);
@@ -598,16 +603,27 @@ TEST_F(IndexStorageVariantCompactionReadTest,
     EXPECT_EQ((*token)->stats().doc_count, 4U);
 
     std::vector<uint32_t> docids;
-    ASSERT_TRUE(
-            snii::query::term_query(
-                    **exact, segment_v2::variant_root_index::encode_string_term("opened"), &docids)
-                    .ok());
-    EXPECT_EQ(docids, (std::vector<uint32_t> {0, 2}));
-    docids.clear();
     ASSERT_TRUE(snii::query::term_query(
-                        **token, segment_v2::variant_root_index::encode_token_term("root"), &docids)
+                        **exact, segment_v2::variant_term_codec::term_string("opened"), &docids)
                         .ok());
     EXPECT_EQ(docids, (std::vector<uint32_t> {0, 2}));
+    docids.clear();
+    ASSERT_TRUE(snii::query::term_query(**token, segment_v2::variant_term_codec::term_token("root"),
+                                        &docids)
+                        .ok());
+    EXPECT_EQ(docids, (std::vector<uint32_t> {0, 2}));
+}
+
+TEST_F(IndexStorageVariantCompactionReadTest,
+       FullCompactionDirectMergesExactAndTokenRootIndexesIndependently) {
+    run_direct_merge_of_root_indexes(IndexCompactionKind::FULL, 110057, 10058);
+}
+
+// Cumulative compaction shares merge_input_rowsets() with full compaction: the same native
+// merge, planned per (column, index), applies to it.
+TEST_F(IndexStorageVariantCompactionReadTest,
+       CumulativeCompactionDirectMergesExactAndTokenRootIndexesIndependently) {
+    run_direct_merge_of_root_indexes(IndexCompactionKind::CUMULATIVE, 110079, 10079);
 }
 
 TEST_F(IndexStorageVariantCompactionReadTest,
@@ -725,14 +741,13 @@ TEST_F(IndexStorageVariantCompactionReadTest,
     EXPECT_EQ((*token)->stats().doc_count, 4U);
 
     std::vector<uint32_t> docids;
-    ASSERT_TRUE(
-            snii::query::term_query(
-                    **exact, segment_v2::variant_root_index::encode_string_term("opened"), &docids)
-                    .ok());
+    ASSERT_TRUE(snii::query::term_query(
+                        **exact, segment_v2::variant_term_codec::term_string("opened"), &docids)
+                        .ok());
     EXPECT_EQ(docids, (std::vector<uint32_t> {0, 2}));
     docids.clear();
-    ASSERT_TRUE(snii::query::term_query(
-                        **token, segment_v2::variant_root_index::encode_token_term("root"), &docids)
+    ASSERT_TRUE(snii::query::term_query(**token, segment_v2::variant_term_codec::term_token("root"),
+                                        &docids)
                         .ok());
     EXPECT_EQ(docids, (std::vector<uint32_t> {0, 2}));
 }

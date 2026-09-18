@@ -147,17 +147,14 @@ public:
                     "in_list");
         }
         if constexpr (PT == PredicateType::NOT_IN_LIST) {
-            if (iterator->is_variant_root_index()) {
+            if (iterator->has_candidate_reader()) {
                 return Status::Error<ErrorCode::INVERTED_INDEX_EVALUATE_SKIPPED>(
-                        "VARIANT root index leaves path NULL and missing rows to scalar "
-                        "evaluation");
+                        "a candidate index result cannot be negated");
             }
         }
         // only string type and bkd inverted index reader can be used for in
         if (iterator->get_reader(segment_v2::InvertedIndexReaderType::STRING_TYPE) == nullptr &&
-            iterator->get_reader(segment_v2::InvertedIndexReaderType::BKD) == nullptr &&
-            !iterator->has_variant_all_values_reader(
-                    segment_v2::InvertedIndexReaderType::FULLTEXT)) {
+            iterator->get_reader(segment_v2::InvertedIndexReaderType::BKD) == nullptr) {
             //NOT support in list when parser is FULLTEXT for expr inverted index evaluate.
             return Status::Error<ErrorCode::INVERTED_INDEX_EVALUATE_SKIPPED>(
                     "Inverted index evaluate skipped, no inverted index reader can not support "
@@ -184,6 +181,9 @@ public:
             param.num_rows = num_rows;
             param.roaring = std::make_shared<roaring::Roaring>();
             RETURN_IF_ERROR(iterator->read_from_index(&param));
+            if constexpr (PT == PredicateType::NOT_IN_LIST) {
+                DORIS_CHECK(!param.requires_recheck);
+            }
             indices |= *param.roaring;
             iter->next();
         }

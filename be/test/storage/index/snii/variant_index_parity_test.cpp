@@ -44,6 +44,7 @@
 #include "storage/index/index_file_writer.h"
 #include "storage/index/inverted/inverted_index_desc.h"
 #include "storage/index/inverted/variant_root_index.h"
+#include "storage/index/inverted/variant_term_codec.h"
 #include "storage/index/snii/query/boolean_query.h"
 #include "storage/index/snii/query/term_query.h"
 #include "storage/segment/variant/v2/variant_root_index_writer.h"
@@ -51,6 +52,13 @@
 
 namespace doris::segment_v2::variant_root_index {
 namespace {
+
+using variant_term_codec::term_bool;
+using variant_term_codec::term_double;
+using variant_term_codec::term_int64;
+using variant_term_codec::term_string;
+using variant_term_codec::term_token;
+using variant_term_codec::term_uint64;
 
 // ------------------------------------------------------------------------------------------
 // Independent oracle
@@ -70,11 +78,11 @@ struct OracleLeaf {
 
 OracleLeaf oracle_number(double value) {
     OracleLeaf leaf;
-    if (std::isnan(value)) {
+    if (!std::isfinite(value)) {
         leaf.kind = OracleKind::OTHER;
         return leaf;
     }
-    if (std::isfinite(value) && std::floor(value) == value) {
+    if (std::floor(value) == value) {
         if (value >= -9223372036854775808.0 && value < 9223372036854775808.0) {
             leaf.kind = OracleKind::INT64;
             leaf.i64 = static_cast<int64_t>(value);
@@ -473,8 +481,8 @@ TEST_F(VariantIndexParityTest, IndexAndScanAgreeOnRandomDocuments) {
     IndexFileWriter index_file_writer(io::global_local_filesystem(), prefix, "parity_rowset",
                                       /*seg_id=*/0, InvertedIndexStorageFormatPB::SNII,
                                       std::move(file_writer));
-    VariantRootIndexWriter w_all_exact(&index_file_writer, &all_exact, false, false);
-    VariantRootIndexWriter w_all_token(&index_file_writer, &all_token, false, false);
+    VariantRootIndexWriter w_all_exact(&index_file_writer, &all_exact, false);
+    VariantRootIndexWriter w_all_token(&index_file_writer, &all_token, false);
     std::array<VariantRootIndexWriter*, 2> writers = {&w_all_exact, &w_all_token};
     for (VariantRootIndexWriter* writer : writers) {
         ASSERT_TRUE(writer->init().ok());
@@ -544,7 +552,7 @@ TEST_F(VariantIndexParityTest, IndexAndScanAgreeOnRandomDocuments) {
         // 1. typed any-path equality: the literal's own term
         {
             std::vector<std::string> terms;
-            ASSERT_TRUE(encode_query_value_terms(field, &terms).ok());
+            typed_literal_terms(field, &terms);
             ASSERT_EQ(terms.size(), 1U);
             const auto actual = term_docs(**r_all_exact, terms[0]);
             const auto expected = expected_rows([&](const std::vector<OracleLeaf>& leaves) {
@@ -555,12 +563,12 @@ TEST_F(VariantIndexParityTest, IndexAndScanAgreeOnRandomDocuments) {
             ++checks;
             non_empty += !expected.empty();
         }
-        // 2. a string literal spelled like a number or a boolean also probes those leaves, the
-        //    superset a residual CAST(path AS STRING) = text needs
+        // 2. whole-document exact MATCH: every leaf whose canonical text is the literal, the
+        //    string, the number and the boolean it spells alike
         {
             const std::string text = literal.cast_text();
             std::vector<std::string> terms;
-            append_string_literal_terms(text, /*sql_cast_text=*/false, &terms);
+            exact_text_terms(text, &terms);
             const auto actual = union_docs(**r_all_exact, terms);
             const auto expected = expected_rows([&](const std::vector<OracleLeaf>& leaves) {
                 return std::ranges::any_of(leaves, [&](const OracleLeaf& leaf) {
@@ -572,20 +580,19 @@ TEST_F(VariantIndexParityTest, IndexAndScanAgreeOnRandomDocuments) {
             ++checks;
         }
         // 5. the same literal bound to a path read from the binary storage: the CAST(path AS
-        //    STRING) spellings of booleans join the probe and every document holding a leaf the
-        //    codec cannot spell is a candidate through the marker term
+        //    STRING) spellings of booleans (1 / 0) join the probe and every document holding a
+        //    leaf the codec cannot spell is a candidate through the marker term
         {
             const std::string text = literal.cast_text();
             std::vector<std::string> terms;
-            append_string_literal_terms(text, /*sql_cast_text=*/true, &terms);
-            terms.push_back(encode_other_term());
+            cast_text_candidate_terms(text, &terms);
+            terms.push_back(unspellable_marker_term());
             const auto actual = union_docs(**r_all_exact, terms);
             const auto expected = expected_rows([&](const std::vector<OracleLeaf>& leaves) {
                 return std::ranges::any_of(leaves, [&](const OracleLeaf& leaf) {
                     return text_matches(leaf, text) || leaf.kind == OracleKind::OTHER ||
                            (leaf.kind == OracleKind::BOOL &&
-                            ((text == "true" && leaf.b) || (text == "1" && leaf.b) ||
-                             (text == "0" && !leaf.b)));
+                            ((text == "1" && leaf.b) || (text == "0" && !leaf.b)));
                 });
             });
             EXPECT_EQ(actual, expected) << "cast text=" << text << " round=" << round;
@@ -597,7 +604,7 @@ TEST_F(VariantIndexParityTest, IndexAndScanAgreeOnRandomDocuments) {
             const std::vector<std::string> words = split_words(query);
             std::vector<std::string> terms;
             for (const std::string& word : words) {
-                terms.push_back(encode_token_term(word));
+                terms.push_back(term_token(word));
             }
             const auto covers = [&](const std::set<std::string>& tokens) {
                 return std::ranges::all_of(
@@ -634,36 +641,36 @@ TEST_F(VariantIndexParityTest, IndexAndScanAgreeOnRandomDocuments) {
     const auto& exact = **r_all_exact;
     const auto& token = **r_all_token;
     // "3", 3 and 3.0 are two values, not three; -0.0 is 0.
-    EXPECT_TRUE(hits(exact, encode_string_term("3"), 0));
-    EXPECT_TRUE(hits(exact, encode_int64_term(3), 0));
-    EXPECT_FALSE(hits(exact, encode_double_term(3.0), 0));
-    EXPECT_TRUE(hits(exact, encode_int64_term(0), 0));
-    EXPECT_TRUE(hits(exact, encode_string_term("gamma"), 0));
+    EXPECT_TRUE(hits(exact, term_string("3"), 0));
+    EXPECT_TRUE(hits(exact, term_int64(3), 0));
+    EXPECT_FALSE(hits(exact, term_double(3.0), 0));
+    EXPECT_TRUE(hits(exact, term_int64(0), 0));
+    EXPECT_TRUE(hits(exact, term_string("gamma"), 0));
     // The token index spells numbers and booleans as text.
-    EXPECT_TRUE(hits(token, encode_token_term("3"), 0));
-    EXPECT_TRUE(hits(token, encode_token_term("true"), 7));
-    EXPECT_TRUE(hits(token, encode_token_term("false"), 7));
+    EXPECT_TRUE(hits(token, term_token("3"), 0));
+    EXPECT_TRUE(hits(token, term_token("true"), 7));
+    EXPECT_TRUE(hits(token, term_token("false"), 7));
     // 2^63 lands in UINT64, 2^64 stays DOUBLE, INT64 max stays INT64.
-    EXPECT_TRUE(hits(exact, encode_uint64_term(uint64_t {1} << 63), 1));
-    EXPECT_TRUE(hits(exact, encode_double_term(18446744073709551616.0), 1));
-    EXPECT_TRUE(hits(exact, encode_double_term(1e300), 1));
-    EXPECT_TRUE(hits(exact, encode_int64_term(9223372036854775807), 1));
+    EXPECT_TRUE(hits(exact, term_uint64(uint64_t {1} << 63), 1));
+    EXPECT_TRUE(hits(exact, term_double(18446744073709551616.0), 1));
+    EXPECT_TRUE(hits(exact, term_double(1e300), 1));
+    EXPECT_TRUE(hits(exact, term_int64(9223372036854775807), 1));
     // Root scalars and root array elements are leaves like any other.
-    EXPECT_TRUE(hits(exact, encode_string_term("root scalar"), 2));
-    EXPECT_TRUE(hits(exact, encode_int64_term(1), 3));
-    EXPECT_TRUE(hits(exact, encode_string_term("alpha"), 3));
-    EXPECT_TRUE(hits(exact, encode_string_term("beta"), 3));
+    EXPECT_TRUE(hits(exact, term_string("root scalar"), 2));
+    EXPECT_TRUE(hits(exact, term_int64(1), 3));
+    EXPECT_TRUE(hits(exact, term_string("alpha"), 3));
+    EXPECT_TRUE(hits(exact, term_string("beta"), 3));
     // Deeply nested arrays are recursed; JSON null inside arrays is skipped.
-    EXPECT_TRUE(hits(token, encode_token_term("gamma"), 7));
-    EXPECT_TRUE(hits(exact, encode_bool_term(true), 7));
-    EXPECT_TRUE(hits(exact, encode_bool_term(false), 7));
-    EXPECT_TRUE(hits(exact, encode_string_term("delta"), 6));
-    EXPECT_TRUE(hits(exact, encode_string_term("beta"), 6));
+    EXPECT_TRUE(hits(token, term_token("gamma"), 7));
+    EXPECT_TRUE(hits(exact, term_bool(true), 7));
+    EXPECT_TRUE(hits(exact, term_bool(false), 7));
+    EXPECT_TRUE(hits(exact, term_string("delta"), 6));
+    EXPECT_TRUE(hits(exact, term_string("beta"), 6));
     // A leaf the codec cannot spell leaves the marker in the exact index only; documents made
     // of spellable leaves carry none.
-    EXPECT_TRUE(hits(exact, encode_other_term(), 8));
-    EXPECT_FALSE(hits(token, encode_other_term(), 8));
-    EXPECT_FALSE(hits(exact, encode_other_term(), 0));
+    EXPECT_TRUE(hits(exact, unspellable_marker_term(), 8));
+    EXPECT_FALSE(hits(token, unspellable_marker_term(), 8));
+    EXPECT_FALSE(hits(exact, unspellable_marker_term(), 0));
     // Empty objects and JSON null documents are indexed documents without terms; NULL rows are
     // SQL NULLs.
     EXPECT_EQ(exact.stats().null_count,

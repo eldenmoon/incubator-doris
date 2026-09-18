@@ -79,6 +79,9 @@ class InvertedIndexResultBitmap {
 private:
     std::shared_ptr<roaring::Roaring> _data_bitmap = nullptr;
     std::shared_ptr<roaring::Roaring> _null_bitmap = nullptr;
+    // The rows are candidates (a superset) for the expression that produced them, not its
+    // answer: the expression must still be evaluated on them, the result must not be negated,
+    // and it never stands in for a count. Sticky across &=, |= and -=.
     bool _requires_recheck = false;
 
 public:
@@ -176,6 +179,9 @@ public:
 
     // NOT operation
     const InvertedIndexResultBitmap& op_not(const roaring::Roaring* universe) const {
+        // The complement of a candidate superset is not a candidate set of anything: callers
+        // must leave a requires_recheck result to scalar evaluation instead of negating it.
+        DORIS_CHECK(!_requires_recheck);
         if (_data_bitmap) {
             if (_null_bitmap) {
                 *_data_bitmap = *universe - *_data_bitmap - *_null_bitmap;

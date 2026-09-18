@@ -1508,7 +1508,7 @@ Status SegmentIterator::_apply_inverted_index_on_column_predicate(
         bool need_remaining_after_evaluate =
                 (_column_has_fulltext_index(pred->column_id()) &&
                  PredicateTypeTraits::is_equal_or_list(pred->type())) ||
-                _index_iterators[pred->column_id()]->is_variant_root_index();
+                _index_iterators[pred->column_id()]->has_candidate_reader();
         Status res =
                 pred->evaluate(_storage_name_and_type[pred->column_id()],
                                _index_iterators[pred->column_id()].get(), num_rows(), &_row_bitmap);

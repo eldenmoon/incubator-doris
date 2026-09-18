@@ -83,7 +83,7 @@ public:
     }
 
     Result<bool> has_null() override { return false; }
-    bool is_variant_root_index() const override { return true; }
+    bool has_candidate_reader() const override { return true; }
 };
 
 TEST(FunctionMatchTest, analyse_query_str) {

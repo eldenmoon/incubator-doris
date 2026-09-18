@@ -41,7 +41,6 @@
 #include "exec/common/variant_util.h"
 #include "io/fs/file_reader.h"
 #include "runtime/descriptors.h"
-#include "storage/index/inverted/analyzer/analyzer.h"
 #include "storage/index/inverted/variant_root_index.h"
 #include "storage/key_coder.h"
 #include "storage/olap_common.h"
@@ -1522,15 +1521,14 @@ TabletIndexes VariantColumnReader::find_subcolumn_tablet_indexes(
     if (!parent_index.empty() &&
         index_data_type->get_primitive_type() != PrimitiveType::TYPE_MAP /*SPARSE COLUMN*/) {
         const PrimitiveType path_type = remove_nullable(index_data_type)->get_primitive_type();
-        const bool root_exact_supported =
-                !variant_root_index::query_value_family(path_type).empty();
+        // A root index binds to a scalar path with a value family (typed or dynamically
+        // materialized) and to a path read from the binary storage; JSONB / ARRAY sub-columns
+        // and object prefixes have no family and no scalar residual the candidates could serve.
+        const bool has_value_family = !variant_root_index::value_family(path_type).empty();
         const bool reads_untyped_binary_value =
                 path_type == PrimitiveType::TYPE_VARIANT &&
                 dynamic_cast<const BinaryColumnExtractIterator*>(selected_path_reader) != nullptr;
         for (const TabletIndex* index : parent_index) {
-            // The values index contains scalar leaves only. Array equality and membership
-            // predicates need the ordinary child index (when present) or a scalar residual;
-            // binding them to value terms would turn a safe fallback into a false empty result.
             if (!variant_root_index::is_root_index(*index)) {
                 continue;
             }
@@ -1544,9 +1542,9 @@ TabletIndexes VariantColumnReader::find_subcolumn_tablet_indexes(
             // gate the literal types; a path read from the binary storage is typed only by the
             // cast, which the reader admits for string literals and MATCH. Either way the
             // result is a candidate set that the residual expression settles.
-            if (root_exact_supported || reads_untyped_binary_value) {
+            if (has_value_family || reads_untyped_binary_value) {
                 sub_column_info.indexes.push_back(
-                        variant_root_index::make_query_index(*index, relative_path_str, path_type));
+                        variant_root_index::bind_to_path(*index, relative_path_str, path_type));
             }
         }
         // type in column maynot be real type, so use data_type to get the real type

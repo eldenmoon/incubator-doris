@@ -80,9 +80,8 @@ Status init_variant_root_index_writers(
             return Status::Error<ErrorCode::INVERTED_INDEX_NOT_SUPPORTED>(
                     "VARIANT root index requires SNII storage format");
         }
-        auto writer = std::make_unique<VariantRootIndexWriter>(
-                opts.index_file_writer, index, opts.is_direct_load,
-                config::variant_enable_duplicate_json_path_check);
+        auto writer = std::make_unique<VariantRootIndexWriter>(opts.index_file_writer, index,
+                                                               opts.is_direct_load);
         RETURN_IF_ERROR(writer->init());
         root_index_writer_ptrs->push_back(writer.get());
         root_index_writers->push_back(std::move(writer));

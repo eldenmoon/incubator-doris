@@ -18,10 +18,9 @@
 // https://github.com/ClickHouse/ClickHouse/blob/master/src/Functions/IsNotNull.cpp
 // and modified by Doris
 
-#include <cstddef>
-
 #include <algorithm>
 #include <boost/iterator/iterator_facade.hpp>
+#include <cstddef>
 #include <memory>
 #include <string>
 #include <utility>
@@ -105,9 +104,9 @@ public:
             return Status::OK();
         }
         auto* index_iter = iterators[0];
-        if (index_iter->is_variant_root_index()) {
-            // The root null bitmap describes SQL NULL values of the whole VARIANT column, not
-            // the nullability of the nested path bound to this scan slot.
+        if (index_iter->has_candidate_reader()) {
+            // The null bitmap describes SQL NULL values of the whole VARIANT column, not the
+            // nullability of the bound path.
             return Status::OK();
         }
         if (index_iter->has_null()) {

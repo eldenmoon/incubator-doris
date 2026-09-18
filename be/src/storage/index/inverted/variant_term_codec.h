@@ -17,36 +17,40 @@
 
 #pragma once
 
-// Term codec for the value-first VARIANT inverted index.
+// Term codec of the VARIANT root index (variant_root_index.h).
 //
-// This header is intentionally self-contained (standard library only) so the term layout can be
+// This header is intentionally self-contained (standard library only) so the byte layout can be
 // unit-tested and reasoned about in isolation from the rest of the storage engine. Every byte
-// that reaches the SNII dictionary for a VARIANT index is produced here.
+// that reaches the SNII dictionary of a VARIANT root index is produced here.
 //
-// Layout
+// Layout (format version 4, see VARIANT_ROOT_FORMAT_VERSION_CURRENT)
 //
-//   term        := tag(1 byte) value (sep)? path
-//   root_prefix := tag(1 byte) value (sep)?
+//   term := tag(1 byte) value
 //
 //   tag:   0x02 INT64 | 0x03 UINT64 | 0x04 DOUBLE | 0x05 BOOL | 0x06 STRING | 0x07 TOKEN
-//          0x08 OTHER: a scalar the codec cannot spell (decimal, temporal, binary, ...); it has
-//          no value bytes and marks the document rather than the value
+//          0x08 OTHER
 //   value: INT64  -> BE64(u64(v) ^ (1 << 63))                      order preserving
 //          UINT64 -> BE64(v)                                        order preserving
 //          DOUBLE -> BE64(bits < 0 ? ~bits : bits | (1 << 63))      order preserving; -0.0 folds to 0.0
 //          BOOL   -> 0x00 / 0x01
-//          STRING / TOKEN -> escape(v) 0x00 0x00                    escape: 0x00 -> 0x00 0x01
-//   sep:   only variable-width values (STRING / TOKEN) carry the 0x00 0x00 terminator; fixed-width
-//          values derive their width from the tag.
-//   path:  raw UTF-8, never escaped (it is a suffix and never participates in prefix matching).
+//          STRING / TOKEN -> the raw bytes; a dictionary entry is self-delimiting, so the
+//                            value needs neither a terminator nor escaping
+//          OTHER  -> nothing: the marker of a document that holds a scalar the codec cannot
+//                    spell (decimal, temporal, binary, UUID, NaN, infinities, integers beyond
+//                    UINT64), written once per document by the exact index
 //
-// Value-first ordering means that all terms sharing one value form a contiguous run in the
-// dictionary: an exact path lookup is a single term, a root ("any path") lookup is a seek to
-// root_prefix followed by a sequential read while the prefix still matches. Order preserving
-// numeric encodings additionally make `[tag][lo] .. [tag][hi]` a dictionary interval.
+// A term names a value only, never the path it was found under: the index is path-less. Values
+// of different types never collide because of the tag, and a STRING term never collides with the
+// TOKEN term of the same bytes. Numeric encodings preserve order so that a range would be a
+// dictionary interval; nothing scans intervals today.
 //
-// The codec is total over its inputs but the canonical value rules (integral doubles fold into
-// INT64 / UINT64, NaN produces no term, values above 2^64 produce no term) belong to the caller.
+// Versioning: the layout is identified by the `variant_root_format_version` index property that
+// the FE stamps at CREATE TABLE. Any change to these bytes bumps that version; a BE that does not
+// know a version treats the index as absent instead of misreading it.
+//
+// The codec is total over its inputs. The canonical value rules (integral doubles fold into
+// INT64 / UINT64, NaN and infinities have no term, ...) belong to the caller, see
+// variant_leaf_visitor.h.
 
 #include <bit>
 #include <cmath>
@@ -72,14 +76,9 @@ enum class Tag : uint8_t {
 inline constexpr size_t TAG_WIDTH = 1;
 inline constexpr size_t FIXED64_WIDTH = sizeof(uint64_t);
 inline constexpr size_t BOOL_WIDTH = 1;
-inline constexpr size_t STRING_TERMINATOR_WIDTH = 2;
-
-inline constexpr char ESCAPE_BYTE = '\0';
-inline constexpr char ESCAPED_NUL_SUFFIX = '\1';
-inline constexpr char TERMINATOR_SUFFIX = '\0';
 
 // ---------------------------------------------------------------------------------------------
-// Order preserving bit mappings. Exposed so other term layouts can share one numeric encoding.
+// Order preserving bit mappings.
 // ---------------------------------------------------------------------------------------------
 
 constexpr uint64_t ordered_int64_bits(int64_t value) {
@@ -88,14 +87,6 @@ constexpr uint64_t ordered_int64_bits(int64_t value) {
 
 constexpr int64_t int64_from_ordered_bits(uint64_t bits) {
     return static_cast<int64_t>(bits ^ (uint64_t {1} << 63));
-}
-
-constexpr uint64_t ordered_uint64_bits(uint64_t value) {
-    return value;
-}
-
-constexpr uint64_t uint64_from_ordered_bits(uint64_t bits) {
-    return bits;
 }
 
 // Folds -0.0 into 0.0 and every NaN payload into one canonical NaN so equal values always
@@ -134,40 +125,11 @@ inline uint64_t read_be64(const char* data) {
     return bits;
 }
 
-// Appends escape(value) followed by the 0x00 0x00 terminator.
-inline void append_escaped_value(std::string* out, std::string_view value) {
-    out->reserve(out->size() + value.size() + STRING_TERMINATOR_WIDTH);
-    for (const char c : value) {
-        out->push_back(c);
-        if (c == ESCAPE_BYTE) {
-            out->push_back(ESCAPED_NUL_SUFFIX);
-        }
-    }
-    out->push_back(ESCAPE_BYTE);
-    out->push_back(TERMINATOR_SUFFIX);
-}
-
-// Pieces for callers that let an analyzer produce the token bytes: a TOKEN term is
-// token_prefix() + escape(token) + token_suffix(path).
-inline std::string_view token_prefix() {
-    static constexpr char prefix[] = {static_cast<char>(Tag::TOKEN)};
-    return {prefix, 1};
-}
-
-inline std::string token_suffix(std::string_view path) {
-    std::string out;
-    out.reserve(STRING_TERMINATOR_WIDTH + path.size());
-    out.push_back(ESCAPE_BYTE);
-    out.push_back(TERMINATOR_SUFFIX);
-    out.append(path);
-    return out;
-}
-
 // ---------------------------------------------------------------------------------------------
-// Root prefixes: tag + encoded value. Also the exact term for the "values" scope (no path).
+// Terms.
 // ---------------------------------------------------------------------------------------------
 
-inline std::string root_prefix_int64(int64_t value) {
+inline std::string term_int64(int64_t value) {
     std::string out;
     out.reserve(TAG_WIDTH + FIXED64_WIDTH);
     out.push_back(static_cast<char>(Tag::INT64));
@@ -175,15 +137,15 @@ inline std::string root_prefix_int64(int64_t value) {
     return out;
 }
 
-inline std::string root_prefix_uint64(uint64_t value) {
+inline std::string term_uint64(uint64_t value) {
     std::string out;
     out.reserve(TAG_WIDTH + FIXED64_WIDTH);
     out.push_back(static_cast<char>(Tag::UINT64));
-    append_be64(&out, ordered_uint64_bits(value));
+    append_be64(&out, value);
     return out;
 }
 
-inline std::string root_prefix_double(double value) {
+inline std::string term_double(double value) {
     std::string out;
     out.reserve(TAG_WIDTH + FIXED64_WIDTH);
     out.push_back(static_cast<char>(Tag::DOUBLE));
@@ -191,7 +153,7 @@ inline std::string root_prefix_double(double value) {
     return out;
 }
 
-inline std::string root_prefix_bool(bool value) {
+inline std::string term_bool(bool value) {
     std::string out;
     out.reserve(TAG_WIDTH + BOOL_WIDTH);
     out.push_back(static_cast<char>(Tag::BOOL));
@@ -199,108 +161,46 @@ inline std::string root_prefix_bool(bool value) {
     return out;
 }
 
-inline std::string root_prefix_string(std::string_view value) {
+inline std::string term_string(std::string_view value) {
     std::string out;
-    out.reserve(TAG_WIDTH + value.size() + STRING_TERMINATOR_WIDTH);
+    out.reserve(TAG_WIDTH + value.size());
     out.push_back(static_cast<char>(Tag::STRING));
-    append_escaped_value(&out, value);
+    out.append(value);
     return out;
 }
 
-inline std::string root_prefix_token(std::string_view value) {
+inline std::string term_token(std::string_view value) {
     std::string out;
-    out.reserve(TAG_WIDTH + value.size() + STRING_TERMINATOR_WIDTH);
+    out.reserve(TAG_WIDTH + value.size());
     out.push_back(static_cast<char>(Tag::TOKEN));
-    append_escaped_value(&out, value);
+    out.append(value);
     return out;
 }
 
-// The marker of a non-null scalar leaf without a value encoding (decimal, temporal, binary, UUID,
-// NaN). It carries no value: an exact index writes it once per document holding such a leaf so a
-// predicate over the binary storage can keep the document as a candidate.
-inline std::string root_prefix_other() {
+inline std::string term_other() {
     return std::string(1, static_cast<char>(Tag::OTHER));
 }
 
-// ---------------------------------------------------------------------------------------------
-// Full terms: root prefix + path.
-// ---------------------------------------------------------------------------------------------
-
-inline std::string term_int64(int64_t value, std::string_view path) {
-    std::string out = root_prefix_int64(value);
-    out.append(path);
-    return out;
-}
-
-inline std::string term_uint64(uint64_t value, std::string_view path) {
-    std::string out = root_prefix_uint64(value);
-    out.append(path);
-    return out;
-}
-
-inline std::string term_double(double value, std::string_view path) {
-    std::string out = root_prefix_double(value);
-    out.append(path);
-    return out;
-}
-
-inline std::string term_bool(bool value, std::string_view path) {
-    std::string out = root_prefix_bool(value);
-    out.append(path);
-    return out;
-}
-
-inline std::string term_string(std::string_view value, std::string_view path) {
-    std::string out;
-    out.reserve(TAG_WIDTH + value.size() + STRING_TERMINATOR_WIDTH + path.size());
-    out.push_back(static_cast<char>(Tag::STRING));
-    append_escaped_value(&out, value);
-    out.append(path);
-    return out;
-}
-
-inline std::string term_token(std::string_view value, std::string_view path) {
-    std::string out;
-    out.reserve(TAG_WIDTH + value.size() + STRING_TERMINATOR_WIDTH + path.size());
-    out.push_back(static_cast<char>(Tag::TOKEN));
-    append_escaped_value(&out, value);
-    out.append(path);
-    return out;
-}
-
-// Smallest term that sorts after every term carrying `prefix`. Empty when no such term exists
-// (the prefix is all 0xff bytes), in which case the scan runs to the end of the dictionary.
-inline std::string prefix_upper_bound(std::string_view prefix) {
-    std::string out(prefix);
-    while (!out.empty()) {
-        const auto last = static_cast<uint8_t>(out.back());
-        if (last != 0xff) {
-            out.back() = static_cast<char>(last + 1);
-            return out;
-        }
-        out.pop_back();
-    }
-    return out;
-}
-
-inline bool has_root_prefix(std::string_view term, std::string_view root_prefix) {
-    return term.size() >= root_prefix.size() &&
-           std::memcmp(term.data(), root_prefix.data(), root_prefix.size()) == 0;
+// The bytes an analyzer-produced token receives in front of it: a TOKEN term is
+// token_term_prefix() + token, so the SNII writer can shape tokens without materializing them
+// through this header.
+inline std::string_view token_term_prefix() {
+    static constexpr char prefix[] = {static_cast<char>(Tag::TOKEN)};
+    return {prefix, 1};
 }
 
 // ---------------------------------------------------------------------------------------------
-// Decoding. `path` is a view into the input term and is only valid while the input is alive;
-// `string_value` is the unescaped value for STRING / TOKEN terms.
+// Decoding. `value` views the input term for STRING / TOKEN and is only valid while the input
+// is alive.
 // ---------------------------------------------------------------------------------------------
 
 struct DecodedTerm {
-    Tag tag = Tag::STRING;
+    Tag tag = Tag::OTHER;
     int64_t int64_value = 0;
     uint64_t uint64_value = 0;
     double double_value = 0.0;
     bool bool_value = false;
-    std::string string_value;
-    std::string_view path;
+    std::string_view value;
 };
 
 inline std::optional<DecodedTerm> decode(std::string_view term) {
@@ -309,12 +209,12 @@ inline std::optional<DecodedTerm> decode(std::string_view term) {
     }
     DecodedTerm decoded;
     const auto tag_byte = static_cast<uint8_t>(term[0]);
-    std::string_view rest = term.substr(TAG_WIDTH);
+    const std::string_view rest = term.substr(TAG_WIDTH);
     switch (tag_byte) {
     case static_cast<uint8_t>(Tag::INT64):
     case static_cast<uint8_t>(Tag::UINT64):
     case static_cast<uint8_t>(Tag::DOUBLE): {
-        if (rest.size() < FIXED64_WIDTH) {
+        if (rest.size() != FIXED64_WIDTH) {
             return std::nullopt;
         }
         decoded.tag = static_cast<Tag>(tag_byte);
@@ -322,61 +222,30 @@ inline std::optional<DecodedTerm> decode(std::string_view term) {
         if (decoded.tag == Tag::INT64) {
             decoded.int64_value = int64_from_ordered_bits(bits);
         } else if (decoded.tag == Tag::UINT64) {
-            decoded.uint64_value = uint64_from_ordered_bits(bits);
+            decoded.uint64_value = bits;
         } else {
             decoded.double_value = double_from_ordered_bits(bits);
         }
-        decoded.path = rest.substr(FIXED64_WIDTH);
         return decoded;
     }
     case static_cast<uint8_t>(Tag::BOOL): {
-        if (rest.size() < BOOL_WIDTH) {
-            return std::nullopt;
-        }
-        const auto flag = static_cast<uint8_t>(rest[0]);
-        if (flag > 1) {
+        if (rest.size() != BOOL_WIDTH || static_cast<uint8_t>(rest[0]) > 1) {
             return std::nullopt;
         }
         decoded.tag = Tag::BOOL;
-        decoded.bool_value = flag == 1;
-        decoded.path = rest.substr(BOOL_WIDTH);
+        decoded.bool_value = rest[0] == '\1';
         return decoded;
     }
     case static_cast<uint8_t>(Tag::STRING):
-    case static_cast<uint8_t>(Tag::TOKEN): {
+    case static_cast<uint8_t>(Tag::TOKEN):
         decoded.tag = static_cast<Tag>(tag_byte);
-        size_t i = 0;
-        while (true) {
-            if (i >= rest.size()) {
-                return std::nullopt; // missing terminator
-            }
-            const char c = rest[i];
-            if (c != ESCAPE_BYTE) {
-                decoded.string_value.push_back(c);
-                ++i;
-                continue;
-            }
-            if (i + 1 >= rest.size()) {
-                return std::nullopt; // dangling escape byte
-            }
-            const char next = rest[i + 1];
-            if (next == ESCAPED_NUL_SUFFIX) {
-                decoded.string_value.push_back(ESCAPE_BYTE);
-                i += 2;
-                continue;
-            }
-            if (next == TERMINATOR_SUFFIX) {
-                i += 2;
-                break;
-            }
-            return std::nullopt; // invalid escape sequence
-        }
-        decoded.path = rest.substr(i);
+        decoded.value = rest;
         return decoded;
-    }
     case static_cast<uint8_t>(Tag::OTHER):
+        if (!rest.empty()) {
+            return std::nullopt;
+        }
         decoded.tag = Tag::OTHER;
-        decoded.path = rest;
         return decoded;
     default:
         return std::nullopt;

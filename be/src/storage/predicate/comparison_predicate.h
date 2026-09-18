@@ -64,17 +64,14 @@ public:
                     "comparison predicate");
         }
         if constexpr (PT == PredicateType::NE) {
-            if (iterator->is_variant_root_index()) {
+            if (iterator->has_candidate_reader()) {
                 return Status::Error<ErrorCode::INVERTED_INDEX_EVALUATE_SKIPPED>(
-                        "VARIANT root index leaves path NULL and missing rows to scalar "
-                        "evaluation");
+                        "a candidate index result cannot be negated");
             }
         }
 
         if (iterator->get_reader(segment_v2::InvertedIndexReaderType::STRING_TYPE) == nullptr &&
-            iterator->get_reader(segment_v2::InvertedIndexReaderType::BKD) == nullptr &&
-            !iterator->has_variant_all_values_reader(
-                    segment_v2::InvertedIndexReaderType::FULLTEXT)) {
+            iterator->get_reader(segment_v2::InvertedIndexReaderType::BKD) == nullptr) {
             return Status::Error<ErrorCode::INVERTED_INDEX_EVALUATE_SKIPPED>(
                     "Inverted index evaluate skipped, no inverted index reader can not support "
                     "comparison predicate");
@@ -126,6 +123,7 @@ public:
         }
 
         if constexpr (PT == PredicateType::NE) {
+            DORIS_CHECK(!param.requires_recheck);
             *bitmap -= *param.roaring;
         } else {
             *bitmap &= *param.roaring;

@@ -132,17 +132,18 @@ protected:
         return reader;
     }
 
-    // A values-only index bound to one scalar path: it only proves the value exists somewhere in
-    // the row, so its rows are candidates for the residual expression.
+    // A root index bound to one scalar path: it only proves the value exists somewhere in the
+    // row, so its rows are candidates for the residual expression.
     std::shared_ptr<MockInvertedIndexReader> create_mock_values_path_reader(
-            const std::string& parser, InvertedIndexReaderType type, int64_t index_id) {
+            const std::string& parser, InvertedIndexReaderType type, int64_t index_id,
+            const std::string& path = "repo") {
         std::map<std::string, std::string> properties = {
                 {INVERTED_INDEX_PARSER_KEY, parser},
                 {std::string(variant_root_index::VARIANT_INDEX_MODE_KEY),
                  std::string(variant_root_index::VARIANT_INDEX_MODE_ALL_VALUES)},
                 {std::string(variant_root_index::VARIANT_ROOT_FORMAT_VERSION_KEY),
                  std::string(variant_root_index::VARIANT_ROOT_FORMAT_VERSION_CURRENT)},
-                {std::string(variant_root_index::VARIANT_ROOT_QUERY_PATH_KEY), "repo"},
+                {std::string(variant_root_index::VARIANT_ROOT_QUERY_PATH_KEY), path},
                 {std::string(variant_root_index::VARIANT_ROOT_QUERY_VALUE_FAMILY_KEY), "string"}};
         auto reader = MockInvertedIndexReader::create(properties, index_id);
         reader->set_type(type);
@@ -268,12 +269,38 @@ TEST_F(InvertedIndexIteratorTest, CandidateReaderDisablesCountOnlyFabrication) {
     param.roaring = std::make_shared<roaring::Roaring>();
 
     ASSERT_TRUE(iterator.read_from_index(IndexParam {&param}).ok());
+    EXPECT_TRUE(iterator.has_candidate_reader());
     EXPECT_TRUE(param.requires_recheck);
     EXPECT_FALSE(root_reader->count_fastpath_requested());
     EXPECT_FALSE(context->count_on_index_fastpath_hit);
     EXPECT_TRUE(context->count_on_index_fastpath);
     EXPECT_EQ(std::vector<uint32_t>(param.roaring->begin(), param.roaring->end()),
               std::vector<uint32_t>({7}));
+}
+
+// `v['']` binds the empty key: a path like any other, never the whole document.
+TEST_F(InvertedIndexIteratorTest, EmptyKeyBindingIsACandidateReader) {
+    InvertedIndexIterator iterator;
+    auto root_reader = create_mock_values_path_reader("none", InvertedIndexReaderType::STRING_TYPE,
+                                                      9, /*path=*/"");
+    iterator.add_reader(InvertedIndexReaderType::STRING_TYPE, root_reader);
+    auto context = std::make_shared<IndexQueryContext>();
+    context->count_on_index_fastpath = true;
+    iterator.set_context(context);
+    EXPECT_TRUE(iterator.has_candidate_reader());
+
+    InvertedIndexParam param;
+    param.column_name = "payload.";
+    param.column_type = std::make_shared<DataTypeString>();
+    param.query_value = Field::create_field<TYPE_STRING>(std::string("apache/doris"));
+    param.query_type = InvertedIndexQueryType::EQUAL_QUERY;
+    param.num_rows = 10;
+    param.roaring = std::make_shared<roaring::Roaring>();
+
+    ASSERT_TRUE(iterator.read_from_index(IndexParam {&param}).ok());
+    EXPECT_TRUE(param.requires_recheck);
+    EXPECT_FALSE(root_reader->count_fastpath_requested());
+    EXPECT_FALSE(context->count_on_index_fastpath_hit);
 }
 
 TEST_F(InvertedIndexIteratorTest, ExactChildReaderKeepsCountOnlyFabrication) {
@@ -293,6 +320,7 @@ TEST_F(InvertedIndexIteratorTest, ExactChildReaderKeepsCountOnlyFabrication) {
     param.roaring = std::make_shared<roaring::Roaring>();
 
     ASSERT_TRUE(iterator.read_from_index(IndexParam {&param}).ok());
+    EXPECT_FALSE(iterator.has_candidate_reader());
     EXPECT_FALSE(param.requires_recheck);
     EXPECT_TRUE(child_reader->count_fastpath_requested());
     EXPECT_TRUE(context->count_on_index_fastpath_hit);
@@ -334,6 +362,8 @@ TEST_F(InvertedIndexIteratorTest, VariantValuesSelectsExactForEqualityAndTokenFo
                                                   InvertedIndexReaderType::FULLTEXT, 50);
     iterator.add_reader(InvertedIndexReaderType::FULLTEXT, token_reader);
     iterator.add_reader(InvertedIndexReaderType::STRING_TYPE, exact_reader);
+    // Whole-document readers answer exactly: nothing here is a candidate binding.
+    EXPECT_FALSE(iterator.has_candidate_reader());
 
     auto variant_type = std::make_shared<DataTypeVariantV2>(2, false);
     auto equality =

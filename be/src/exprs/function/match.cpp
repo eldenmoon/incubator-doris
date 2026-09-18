@@ -52,12 +52,12 @@ const InvertedIndexAnalyzerCtx* get_match_analyzer_ctx(FunctionContext* context)
 }
 
 // Collects the tokens of every scalar leaf of one Variant document, the scalar mirror of what a
-// VARIANT values index stores: objects / arrays are traversed with the same VariantLeafVisitor as
-// the index writer and every leaf contributes its canonical text (strings as they are, numbers
-// and booleans as the writer spells them), tokenized by the same analyzer.
-Status append_variant_all_values_tokens(const InvertedIndexAnalyzerCtx* analyzer_ctx,
-                                        const VariantRef& value,
-                                        std::vector<segment_v2::TermInfo>* tokens) {
+// VARIANT root index stores (variant_root_index.h, contracts 1 and 2): objects / arrays are
+// traversed with the same VariantLeafVisitor as the index writer and every leaf contributes its
+// canonical text, tokenized by the same analyzer. Object keys never contribute.
+Status append_variant_leaf_tokens(const InvertedIndexAnalyzerCtx* analyzer_ctx,
+                                  const VariantRef& value,
+                                  std::vector<segment_v2::TermInfo>* tokens) {
     DORIS_CHECK(tokens != nullptr);
     if (analyzer_ctx == nullptr) {
         return Status::OK();
@@ -208,7 +208,7 @@ Status FunctionMatchBase::execute_impl(FunctionContext* context, Block& block,
                         }
                         std::vector<segment_v2::TermInfo> data_tokens;
                         evaluation_status =
-                                append_variant_all_values_tokens(analyzer_ctx, value, &data_tokens);
+                                append_variant_leaf_tokens(analyzer_ctx, value, &data_tokens);
                         if (!evaluation_status.ok()) {
                             return;
                         }

@@ -34,6 +34,7 @@
 #include "storage/index/inverted/analyzer/analyzer_provider.h"
 #include "storage/index/inverted/common_grams/common_grams_segment_metadata.h"
 #include "storage/index/inverted/inverted_index_parser.h"
+#include "storage/index/inverted/variant_root_index.h"
 #include "storage/index/snii/common/slice.h"
 #include "storage/index/snii/compaction/eligibility.h"
 #include "storage/index/snii/encoding/byte_sink.h"
@@ -178,8 +179,11 @@ std::map<std::string, std::string> plain_properties() {
 std::map<std::string, std::string> docs_only_properties() {
     return {{"parser", "none"},
             {"support_phrase", "false"},
-            {"variant_index_scope", "values"},
-            {"variant_root_format_version", "3"}};
+            {std::string(doris::segment_v2::variant_root_index::VARIANT_INDEX_SCOPE_KEY),
+             std::string(doris::segment_v2::variant_root_index::VARIANT_INDEX_SCOPE_VALUES)},
+            {std::string(doris::segment_v2::variant_root_index::VARIANT_ROOT_FORMAT_VERSION_KEY),
+             std::string(
+                     doris::segment_v2::variant_root_index::VARIANT_ROOT_FORMAT_VERSION_CURRENT)}};
 }
 
 std::map<std::string, std::string> common_grams_properties() {

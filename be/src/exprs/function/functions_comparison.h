@@ -697,8 +697,7 @@ public:
         if (iter == nullptr) {
             return Status::OK();
         }
-        if (!segment_v2::IndexReaderHelper::has_string_or_bkd_index(iter) &&
-            !iter->has_variant_all_values_reader(segment_v2::InvertedIndexReaderType::FULLTEXT)) {
+        if (!segment_v2::IndexReaderHelper::has_string_or_bkd_index(iter)) {
             return Status::OK();
         }
         segment_v2::InvertedIndexQueryType query_type;
@@ -716,7 +715,8 @@ public:
         } else {
             return Status::InvalidArgument("invalid comparison op type {}", Name::name);
         }
-        if (name_view == NameNotEquals::name && iter->is_variant_root_index()) {
+        if (name_view == NameNotEquals::name && iter->has_candidate_reader()) {
+            // A candidate set cannot be negated (see IndexIterator::has_candidate_reader).
             return Status::OK();
         }
 

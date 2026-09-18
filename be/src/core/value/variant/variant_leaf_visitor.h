@@ -37,7 +37,8 @@ namespace doris {
 // Canonical value rules (shared with query literals through canonical_numeric_*):
 //   - every signed integer width is INT64;
 //   - a finite integral float/double folds into INT64 when it fits, into UINT64 when it lies in
-//     [2^63, 2^64), and stays DOUBLE otherwise; NaN is OTHER (no indexable value);
+//     [2^63, 2^64), and stays DOUBLE otherwise; a FLOAT widens to the DOUBLE it denotes;
+//     NaN and infinities are OTHER (no indexable value, no canonical text);
 //   - strings keep their bytes; "3" and 3 are different leaves (typed semantics);
 //   - decimal, temporal, binary, UUID and any other primitive are OTHER: the path exists but has
 //     no indexable value.
@@ -50,7 +51,8 @@ struct VariantCanonicalNumber {
     double double_value = 0.0;
 };
 
-// Canonical numeric classification for a literal. Returns nullopt for NaN, which has no term.
+// Canonical numeric classification for a literal. Returns nullopt for NaN and infinities, which
+// have no term.
 std::optional<VariantCanonicalNumber> canonical_numeric_from_int64(int64_t value);
 std::optional<VariantCanonicalNumber> canonical_numeric_from_uint64(uint64_t value);
 std::optional<VariantCanonicalNumber> canonical_numeric_from_double(double value);

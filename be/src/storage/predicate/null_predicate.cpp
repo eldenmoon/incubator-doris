@@ -18,7 +18,6 @@
 #include "storage/predicate/null_predicate.h"
 
 #include <cstring>
-
 #include <roaring/roaring.hh>
 
 #include "core/column/column.h"
@@ -42,9 +41,9 @@ PredicateType NullPredicate::type() const {
 Status NullPredicate::evaluate(const IndexFieldNameAndTypePair& name_with_type,
                                IndexIterator* iterator, uint32_t num_rows,
                                roaring::Roaring* bitmap) const {
-    if (iterator->is_variant_root_index()) {
+    if (iterator->has_candidate_reader()) {
         return Status::Error<ErrorCode::INVERTED_INDEX_EVALUATE_SKIPPED>(
-                "VARIANT root index does not index path NULL semantics");
+                "the index null bitmap describes the VARIANT column, not the bound path");
     }
     if (iterator->has_null()) {
         InvertedIndexQueryCacheHandle null_bitmap_cache_handle;

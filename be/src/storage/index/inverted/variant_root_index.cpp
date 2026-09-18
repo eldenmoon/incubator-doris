@@ -17,6 +17,9 @@
 
 #include "storage/index/inverted/variant_root_index.h"
 
+#include <fmt/compile.h>
+#include <fmt/format.h>
+
 #include <charconv>
 #include <cmath>
 #include <cstdlib>
@@ -29,13 +32,16 @@
 #include "core/field.h"
 #include "core/value/variant/variant_leaf_visitor.h"
 #include "core/value/variant/variant_value.h"
-#include "exprs/function/parse/variant_string_parse.h"
 #include "gen_cpp/olap_file.pb.h"
+#include "storage/index/inverted/analyzer/analyzer.h"
 #include "storage/index/inverted/variant_term_codec.h"
 #include "storage/tablet/tablet_schema.h"
 
 namespace doris::segment_v2::variant_root_index {
 namespace {
+
+// Query literals longer than this never spell a number.
+constexpr size_t MAX_NUMBER_TEXT = 64;
 
 std::string_view trim(std::string_view text) {
     while (!text.empty() && (text.front() == ' ' || text.front() == '\t')) {
@@ -45,83 +51,6 @@ std::string_view trim(std::string_view text) {
         text.remove_suffix(1);
     }
     return text;
-}
-
-std::string formatted_scalar_to_string(const variant_json::FormattedScalar& value) {
-    return {value.bytes.data(), value.size};
-}
-
-std::string canonical_number_text(const VariantCanonicalNumber& number) {
-    switch (number.kind) {
-    case VariantLeafKind::INT64:
-        return formatted_scalar_to_string(variant_json::format_json_int(number.int64_value));
-    case VariantLeafKind::UINT64:
-        return std::to_string(number.uint64_value);
-    case VariantLeafKind::DOUBLE:
-        return formatted_scalar_to_string(variant_json::format_json_double(number.double_value));
-    default:
-        return {};
-    }
-}
-
-void append_canonical_number(const std::optional<VariantCanonicalNumber>& number,
-                             std::vector<std::string>* terms) {
-    if (!number.has_value()) {
-        return; // NaN: no term
-    }
-    switch (number->kind) {
-    case VariantLeafKind::INT64:
-        terms->push_back(encode_int64_term(number->int64_value));
-        break;
-    case VariantLeafKind::UINT64:
-        terms->push_back(encode_uint64_term(number->uint64_value));
-        break;
-    case VariantLeafKind::DOUBLE:
-        terms->push_back(encode_double_term(number->double_value));
-        break;
-    default:
-        break;
-    }
-}
-
-// The canonical number spelled by `text`, if any: the text is parsed leniently and accepted only
-// when the canonical text of the folded number reproduces it byte for byte, so "42", "-5",
-// "42.7" and "1e+300" are numbers while "042", "+42", "42.0" and " 42" are only strings.
-std::optional<VariantCanonicalNumber> canonical_number_of_text(std::string_view text) {
-    if (text.empty() || text.size() > 64) {
-        return std::nullopt;
-    }
-    int64_t signed_value = 0;
-    auto [signed_end, signed_error] =
-            std::from_chars(text.data(), text.data() + text.size(), signed_value);
-    if (signed_error == std::errc() && signed_end == text.data() + text.size()) {
-        const auto number = canonical_numeric_from_int64(signed_value);
-        if (canonical_number_text(*number) == text) {
-            return number;
-        }
-        return std::nullopt;
-    }
-    uint64_t unsigned_value = 0;
-    auto [unsigned_end, unsigned_error] =
-            std::from_chars(text.data(), text.data() + text.size(), unsigned_value);
-    if (unsigned_error == std::errc() && unsigned_end == text.data() + text.size()) {
-        const auto number = canonical_numeric_from_uint64(unsigned_value);
-        if (canonical_number_text(*number) == text) {
-            return number;
-        }
-        return std::nullopt;
-    }
-    const std::string owned(text);
-    char* end = nullptr;
-    const double value = std::strtod(owned.c_str(), &end);
-    if (end != owned.c_str() + owned.size() || !std::isfinite(value)) {
-        return std::nullopt;
-    }
-    const auto number = canonical_numeric_from_double(value);
-    if (number.has_value() && canonical_number_text(*number) == text) {
-        return number;
-    }
-    return std::nullopt;
 }
 
 bool has_current_format_version(const std::map<std::string, std::string>& properties) {
@@ -138,16 +67,90 @@ bool has_values_scope(const std::map<std::string, std::string>& properties) {
     return mode != properties.end() && trim(mode->second) == VARIANT_INDEX_MODE_ALL_VALUES;
 }
 
+// The canonical text of a number (contract 2): integers in decimal, doubles in the shortest
+// form that reads back to the same value.
+std::string canonical_number_text(const VariantCanonicalNumber& number) {
+    switch (number.kind) {
+    case VariantLeafKind::INT64:
+        return fmt::format(FMT_COMPILE("{}"), number.int64_value);
+    case VariantLeafKind::UINT64:
+        return fmt::format(FMT_COMPILE("{}"), number.uint64_value);
+    case VariantLeafKind::DOUBLE:
+        return fmt::format(FMT_COMPILE("{}"), number.double_value);
+    default:
+        return {};
+    }
+}
+
+std::string number_term(const VariantCanonicalNumber& number) {
+    switch (number.kind) {
+    case VariantLeafKind::INT64:
+        return variant_term_codec::term_int64(number.int64_value);
+    case VariantLeafKind::UINT64:
+        return variant_term_codec::term_uint64(number.uint64_value);
+    case VariantLeafKind::DOUBLE:
+        return variant_term_codec::term_double(number.double_value);
+    default:
+        return {};
+    }
+}
+
+void append_number_term(const std::optional<VariantCanonicalNumber>& number,
+                        std::vector<std::string>* terms) {
+    if (number.has_value()) {
+        terms->push_back(number_term(*number));
+    }
+}
+
+// `text` as an integer, when every byte of it is one: "42", "-5", "18446744073709551615".
+std::optional<VariantCanonicalNumber> integer_of_text(std::string_view text) {
+    int64_t signed_value = 0;
+    if (auto [end, error] = std::from_chars(text.data(), text.data() + text.size(), signed_value);
+        error == std::errc() && end == text.data() + text.size()) {
+        return canonical_numeric_from_int64(signed_value);
+    }
+    uint64_t unsigned_value = 0;
+    if (auto [end, error] = std::from_chars(text.data(), text.data() + text.size(), unsigned_value);
+        error == std::errc() && end == text.data() + text.size()) {
+        return canonical_numeric_from_uint64(unsigned_value);
+    }
+    return std::nullopt;
+}
+
+// `text` as a finite double, when every byte of it is one.
+std::optional<double> double_of_text(std::string_view text) {
+    const std::string owned(text);
+    char* end = nullptr;
+    const double value = std::strtod(owned.c_str(), &end);
+    if (end != owned.c_str() + owned.size() || !std::isfinite(value)) {
+        return std::nullopt;
+    }
+    return value;
+}
+
 } // namespace
 
-std::string_view query_value_family(PrimitiveType type) {
+bool is_root_index(const std::map<std::string, std::string>& properties) {
+    return has_values_scope(properties) && has_current_format_version(properties);
+}
+
+bool is_root_index(const TabletIndex& index) {
+    return index.is_inverted_index() && is_root_index(index.properties());
+}
+
+InvertedIndexReaderType reader_type(const TabletIndex& index) {
+    return inverted_index::InvertedIndexAnalyzer::should_analyzer(index.properties())
+                   ? InvertedIndexReaderType::FULLTEXT
+                   : InvertedIndexReaderType::STRING_TYPE;
+}
+
+std::string_view value_family(PrimitiveType type) {
     if (is_string_type(type)) {
         return "string";
     }
-    if (type == PrimitiveType::TYPE_BOOLEAN) {
-        return "boolean";
-    }
     switch (type) {
+    case PrimitiveType::TYPE_BOOLEAN:
+        return "boolean";
     case PrimitiveType::TYPE_TINYINT:
     case PrimitiveType::TYPE_SMALLINT:
     case PrimitiveType::TYPE_INT:
@@ -164,63 +167,61 @@ std::string_view query_value_family(PrimitiveType type) {
     }
 }
 
-bool is_root_mode_properties(const std::map<std::string, std::string>& properties) {
-    return has_values_scope(properties) && has_current_format_version(properties);
+QueryBinding query_binding(const std::map<std::string, std::string>& properties) {
+    QueryBinding binding;
+    const auto path = properties.find(std::string(VARIANT_ROOT_QUERY_PATH_KEY));
+    if (path == properties.end()) {
+        return binding;
+    }
+    binding.path_bound = true;
+    binding.path = path->second;
+    if (const auto family = properties.find(std::string(VARIANT_ROOT_QUERY_VALUE_FAMILY_KEY));
+        family != properties.end()) {
+        binding.family = family->second;
+    }
+    return binding;
 }
 
-bool is_root_index(const TabletIndex& index) {
-    return index.is_inverted_index() && is_root_mode_properties(index.properties());
+bool yields_candidates(const std::map<std::string, std::string>& properties) {
+    return is_root_index(properties) && query_binding(properties).path_bound;
 }
 
-std::string encode_int64_term(int64_t value) {
-    return variant_term_codec::root_prefix_int64(value);
+std::shared_ptr<TabletIndex> bind_to_path(const TabletIndex& root_index,
+                                          std::string_view relative_path, PrimitiveType path_type) {
+    DORIS_CHECK(is_root_index(root_index));
+    const std::string_view family = value_family(path_type);
+    DORIS_CHECK(!family.empty() || path_type == PrimitiveType::TYPE_VARIANT);
+    TabletIndexPB index_pb;
+    root_index.to_schema_pb(&index_pb);
+    (*index_pb.mutable_properties())[std::string(VARIANT_ROOT_QUERY_PATH_KEY)] = relative_path;
+    if (!family.empty()) {
+        (*index_pb.mutable_properties())[std::string(VARIANT_ROOT_QUERY_VALUE_FAMILY_KEY)] = family;
+    }
+    auto bound = std::make_shared<TabletIndex>();
+    bound->init_from_pb(index_pb);
+    return bound;
 }
 
-std::string encode_uint64_term(uint64_t value) {
-    return variant_term_codec::root_prefix_uint64(value);
-}
-
-std::string encode_double_term(double value) {
-    return variant_term_codec::root_prefix_double(value);
-}
-
-std::string encode_bool_term(bool value) {
-    return variant_term_codec::root_prefix_bool(value);
-}
-
-std::string encode_string_term(std::string_view value) {
-    return variant_term_codec::root_prefix_string(value);
-}
-
-std::string encode_token_term(std::string_view value) {
-    return variant_term_codec::root_prefix_token(value);
-}
-
-std::string encode_other_term() {
-    return variant_term_codec::root_prefix_other();
-}
-
-void append_variant_leaf_terms(const VariantLeaf& leaf, std::vector<std::string>* terms) {
-    DORIS_CHECK(terms != nullptr);
+std::string leaf_term(const VariantLeaf& leaf) {
     switch (leaf.kind) {
     case VariantLeafKind::STRING:
-        terms->push_back(encode_string_term({leaf.string_value.data, leaf.string_value.size}));
-        break;
+        return variant_term_codec::term_string({leaf.string_value.data, leaf.string_value.size});
     case VariantLeafKind::INT64:
-        terms->push_back(encode_int64_term(leaf.int64_value));
-        break;
+        return variant_term_codec::term_int64(leaf.int64_value);
     case VariantLeafKind::UINT64:
-        terms->push_back(encode_uint64_term(leaf.uint64_value));
-        break;
+        return variant_term_codec::term_uint64(leaf.uint64_value);
     case VariantLeafKind::DOUBLE:
-        terms->push_back(encode_double_term(leaf.double_value));
-        break;
+        return variant_term_codec::term_double(leaf.double_value);
     case VariantLeafKind::BOOL:
-        terms->push_back(encode_bool_term(leaf.bool_value));
-        break;
+        return variant_term_codec::term_bool(leaf.bool_value);
     case VariantLeafKind::OTHER:
-        break;
+        return {};
     }
+    return {};
+}
+
+std::string unspellable_marker_term() {
+    return variant_term_codec::term_other();
 }
 
 bool canonical_leaf_text(const VariantLeaf& leaf, std::string* text) {
@@ -230,13 +231,13 @@ bool canonical_leaf_text(const VariantLeaf& leaf, std::string* text) {
         text->assign(leaf.string_value.data, leaf.string_value.size);
         return true;
     case VariantLeafKind::INT64:
-        *text = formatted_scalar_to_string(variant_json::format_json_int(leaf.int64_value));
+        *text = fmt::format(FMT_COMPILE("{}"), leaf.int64_value);
         return true;
     case VariantLeafKind::UINT64:
-        *text = std::to_string(leaf.uint64_value);
+        *text = fmt::format(FMT_COMPILE("{}"), leaf.uint64_value);
         return true;
     case VariantLeafKind::DOUBLE:
-        *text = formatted_scalar_to_string(variant_json::format_json_double(leaf.double_value));
+        *text = fmt::format(FMT_COMPILE("{}"), leaf.double_value);
         return true;
     case VariantLeafKind::BOOL:
         *text = leaf.bool_value ? "true" : "false";
@@ -247,94 +248,111 @@ bool canonical_leaf_text(const VariantLeaf& leaf, std::string* text) {
     return false;
 }
 
-void append_string_literal_terms(std::string_view text, bool sql_cast_text,
-                                 std::vector<std::string>* terms) {
+void exact_text_terms(std::string_view text, std::vector<std::string>* terms) {
     DORIS_CHECK(terms != nullptr);
-    terms->push_back(encode_string_term(text));
-    append_canonical_number(canonical_number_of_text(text), terms);
+    terms->push_back(variant_term_codec::term_string(text));
     if (text == "true") {
-        terms->push_back(encode_bool_term(true));
-    } else if (text == "false") {
-        terms->push_back(encode_bool_term(false));
-    }
-    if (!sql_cast_text) {
+        terms->push_back(variant_term_codec::term_bool(true));
         return;
     }
-    // CAST(leaf AS STRING) spells booleans as 1 / 0 and negative zero as -0; the index folds
-    // -0.0 into the integer 0.
-    if (text == "1") {
-        terms->push_back(encode_bool_term(true));
-    } else if (text == "0") {
-        terms->push_back(encode_bool_term(false));
-    } else if (text == "-0") {
-        terms->push_back(encode_int64_term(0));
+    if (text == "false") {
+        terms->push_back(variant_term_codec::term_bool(false));
+        return;
+    }
+    if (text.empty() || text.size() > MAX_NUMBER_TEXT) {
+        return;
+    }
+    // A number is named only by its canonical text: "42", "-5", "42.7" and "1e+300" are
+    // numbers, "042", "+42", "42.0" and " 42" are only strings.
+    std::optional<VariantCanonicalNumber> number = integer_of_text(text);
+    if (!number.has_value()) {
+        if (const auto value = double_of_text(text); value.has_value()) {
+            number = canonical_numeric_from_double(*value);
+        }
+    }
+    if (number.has_value() && canonical_number_text(*number) == text) {
+        terms->push_back(number_term(*number));
     }
 }
 
-Status encode_query_value_terms(const Field& value, std::vector<std::string>* terms) {
+void cast_text_candidate_terms(std::string_view text, std::vector<std::string>* terms) {
+    DORIS_CHECK(terms != nullptr);
+    terms->push_back(variant_term_codec::term_string(text));
+    // CAST(boolean AS STRING) prints 1 / 0.
+    if (text == "1") {
+        terms->push_back(variant_term_codec::term_bool(true));
+    } else if (text == "0") {
+        terms->push_back(variant_term_codec::term_bool(false));
+    }
+    if (text.empty() || text.size() > MAX_NUMBER_TEXT) {
+        return;
+    }
+    if (const auto integer = integer_of_text(text); integer.has_value()) {
+        append_number_term(integer, terms);
+        return;
+    }
+    const auto value = double_of_text(text);
+    if (!value.has_value()) {
+        return;
+    }
+    // Every double leaf prints its shortest round-trip text, so the text names one double,
+    // which folds like the leaf did ("-0" and "3" fold into integers). A FLOAT leaf prints
+    // through float formatting instead but is indexed as the double it denotes: the float the
+    // text reads back to names that term.
+    append_number_term(canonical_numeric_from_double(*value), terms);
+    const auto narrowed = static_cast<float>(*value);
+    if (std::isfinite(narrowed) && static_cast<double>(narrowed) != *value) {
+        append_number_term(canonical_numeric_from_double(static_cast<double>(narrowed)), terms);
+    }
+}
+
+void typed_literal_terms(const Field& value, std::vector<std::string>* terms) {
     DORIS_CHECK(terms != nullptr);
     switch (value.get_type()) {
     case PrimitiveType::TYPE_BOOLEAN:
-        terms->push_back(encode_bool_term(value.get<PrimitiveType::TYPE_BOOLEAN>()));
+        terms->push_back(variant_term_codec::term_bool(value.get<PrimitiveType::TYPE_BOOLEAN>()));
         break;
     case PrimitiveType::TYPE_TINYINT:
-        append_canonical_number(
-                canonical_numeric_from_int64(value.get<PrimitiveType::TYPE_TINYINT>()), terms);
+        append_number_term(canonical_numeric_from_int64(value.get<PrimitiveType::TYPE_TINYINT>()),
+                           terms);
         break;
     case PrimitiveType::TYPE_SMALLINT:
-        append_canonical_number(
-                canonical_numeric_from_int64(value.get<PrimitiveType::TYPE_SMALLINT>()), terms);
+        append_number_term(canonical_numeric_from_int64(value.get<PrimitiveType::TYPE_SMALLINT>()),
+                           terms);
         break;
     case PrimitiveType::TYPE_INT:
-        append_canonical_number(canonical_numeric_from_int64(value.get<PrimitiveType::TYPE_INT>()),
-                                terms);
+        append_number_term(canonical_numeric_from_int64(value.get<PrimitiveType::TYPE_INT>()),
+                           terms);
         break;
     case PrimitiveType::TYPE_BIGINT:
-        append_canonical_number(
-                canonical_numeric_from_int64(value.get<PrimitiveType::TYPE_BIGINT>()), terms);
+        append_number_term(canonical_numeric_from_int64(value.get<PrimitiveType::TYPE_BIGINT>()),
+                           terms);
         break;
     case PrimitiveType::TYPE_UINT32:
-        append_canonical_number(
-                canonical_numeric_from_uint64(value.get<PrimitiveType::TYPE_UINT32>()), terms);
+        append_number_term(canonical_numeric_from_uint64(value.get<PrimitiveType::TYPE_UINT32>()),
+                           terms);
         break;
     case PrimitiveType::TYPE_UINT64:
-        append_canonical_number(
-                canonical_numeric_from_uint64(value.get<PrimitiveType::TYPE_UINT64>()), terms);
+        append_number_term(canonical_numeric_from_uint64(value.get<PrimitiveType::TYPE_UINT64>()),
+                           terms);
         break;
     case PrimitiveType::TYPE_FLOAT:
-        append_canonical_number(canonical_numeric_from_double(static_cast<double>(
-                                        value.get<PrimitiveType::TYPE_FLOAT>())),
-                                terms);
+        append_number_term(canonical_numeric_from_double(
+                                   static_cast<double>(value.get<PrimitiveType::TYPE_FLOAT>())),
+                           terms);
         break;
     case PrimitiveType::TYPE_DOUBLE:
-        append_canonical_number(
-                canonical_numeric_from_double(value.get<PrimitiveType::TYPE_DOUBLE>()), terms);
+        append_number_term(canonical_numeric_from_double(value.get<PrimitiveType::TYPE_DOUBLE>()),
+                           terms);
         break;
     case PrimitiveType::TYPE_CHAR:
     case PrimitiveType::TYPE_VARCHAR:
     case PrimitiveType::TYPE_STRING:
-        terms->push_back(encode_string_term(value.as_string_view()));
+        terms->push_back(variant_term_codec::term_string(value.as_string_view()));
         break;
     default:
         break;
     }
-    return Status::OK();
-}
-
-std::shared_ptr<TabletIndex> make_query_index(const TabletIndex& root_index,
-                                              std::string_view relative_path,
-                                              PrimitiveType path_type) {
-    const std::string_view family = query_value_family(path_type);
-    DORIS_CHECK(!family.empty() || path_type == PrimitiveType::TYPE_VARIANT);
-    TabletIndexPB index_pb;
-    root_index.to_schema_pb(&index_pb);
-    (*index_pb.mutable_properties())[std::string(VARIANT_ROOT_QUERY_PATH_KEY)] = relative_path;
-    if (!family.empty()) {
-        (*index_pb.mutable_properties())[std::string(VARIANT_ROOT_QUERY_VALUE_FAMILY_KEY)] = family;
-    }
-    auto result = std::make_shared<TabletIndex>();
-    result->init_from_pb(index_pb);
-    return result;
 }
 
 } // namespace doris::segment_v2::variant_root_index

@@ -175,8 +175,7 @@ struct VariantShredder::Impl {
         }
         path_state.last_row_marker = row_marker;
         if (!defer_root_indexes && !options.root_index_writers.empty()) {
-            RETURN_IF_ERROR(append_variant_root_index_leaf(options.root_index_writers,
-                                                           path_state.path.get_path(), value));
+            RETURN_IF_ERROR(append_variant_root_index_leaves(options.root_index_writers, value));
         }
         if (value.is_null()) {
             return Status::OK();
@@ -644,7 +643,7 @@ struct VariantShredder::Impl {
 
     // Typed paths are indexed only after the same conversion used by storage. Merge compact
     // rowids instead of scanning every path for every row or reconstructing complete objects.
-    // NOLINTNEXTLINE(readability-function-cognitive-complexity): keep encoded leaf ownership and synchronous writer consumption in one row scope.
+    // NOLINTNEXTLINE(readability-function-cognitive-complexity,readability-make-member-function-const): keep encoded leaf ownership and synchronous writer consumption in one row scope; the root index writers are mutated.
     Status write_converted_root_indexes(const VariantShreddedColumns& result,
                                         const DorisVector<VariantPathBuilder*>& builders) {
         using namespace variant_v2::variant_assembler_detail;
@@ -695,12 +694,8 @@ struct VariantShredder::Impl {
                 RETURN_IF_ERROR(writer->begin_document(index_nulls[row] != 0));
             }
             for (size_t leaf = 0; leaf < row_paths.size(); ++leaf) {
-                const size_t index = row_paths[leaf];
-                const bool is_root = index == builders.size();
-                const std::string_view path =
-                        is_root ? std::string_view {} : builders[index]->path().get_path();
-                RETURN_IF_ERROR(append_variant_root_index_leaf(options.root_index_writers, path,
-                                                               batch.value_at(leaf)));
+                RETURN_IF_ERROR(append_variant_root_index_leaves(options.root_index_writers,
+                                                                 batch.value_at(leaf)));
             }
             for (auto* writer : options.root_index_writers) {
                 RETURN_IF_ERROR(writer->end_document());
@@ -818,7 +813,7 @@ Status VariantShredder::append(const ColumnVariantV2::ReadView& view, size_t beg
                     return _impl->fail(std::move(status));
                 }
             } else if (!index_writers.empty()) {
-                status = append_variant_root_index_leaf(index_writers, {}, value);
+                status = append_variant_root_index_leaves(index_writers, value);
                 if (!status.ok()) {
                     return _impl->fail(std::move(status));
                 }

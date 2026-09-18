@@ -163,18 +163,24 @@ TEST(VariantLeafVisitorTest, NumbersFollowTheCanonicalRules) {
               (std::vector<SeenLeaf> {{"", K::DOUBLE, "d" + std::to_string(0x1p64)}}));
     EXPECT_EQ(visit_scalar(VariantScalarRef::float32(7.0F)),
               (std::vector<SeenLeaf> {{"", K::INT64, "i7"}}));
-    EXPECT_EQ(visit_scalar(VariantScalarRef::float64(-std::numeric_limits<double>::infinity())),
+    // A FLOAT leaf is the double it denotes.
+    EXPECT_EQ(visit_scalar(VariantScalarRef::float32(0.1F)),
               (std::vector<SeenLeaf> {
-                      {"", K::DOUBLE,
-                       "d" + std::to_string(-std::numeric_limits<double>::infinity())}}));
+                      {"", K::DOUBLE, "d" + std::to_string(static_cast<double>(0.1F))}}));
 }
 
 TEST(VariantLeafVisitorTest, ValuesWithoutAnIndexableTermAreStillReportedAsOther) {
-    // NaN has a path but no term; the visitor must still call back so path existence is recorded.
+    // NaN and infinities have a path but no term; the visitor must still call back so path
+    // existence is recorded.
     EXPECT_EQ(visit_scalar(VariantScalarRef::float64(std::numeric_limits<double>::quiet_NaN())),
+              (std::vector<SeenLeaf> {{"", K::OTHER, "<other>"}}));
+    EXPECT_EQ(visit_scalar(VariantScalarRef::float64(-std::numeric_limits<double>::infinity())),
+              (std::vector<SeenLeaf> {{"", K::OTHER, "<other>"}}));
+    EXPECT_EQ(visit_scalar(VariantScalarRef::float32(std::numeric_limits<float>::infinity())),
               (std::vector<SeenLeaf> {{"", K::OTHER, "<other>"}}));
 }
 
+// NOLINTNEXTLINE(readability-function-cognitive-complexity): one table of literal classifications.
 TEST(VariantLeafVisitorTest, CanonicalNumericLiterals) {
     const auto kind_of = [](const std::optional<VariantCanonicalNumber>& number) {
         return number.has_value() ? number->kind : VariantLeafKind::OTHER;
@@ -194,8 +200,8 @@ TEST(VariantLeafVisitorTest, CanonicalNumericLiterals) {
     EXPECT_EQ(canonical_numeric_from_double(0x1p63)->uint64_value, uint64_t {1} << 63);
     EXPECT_EQ(kind_of(canonical_numeric_from_double(0x1p64)), K::DOUBLE);
     EXPECT_EQ(kind_of(canonical_numeric_from_double(1.5)), K::DOUBLE);
-    EXPECT_EQ(kind_of(canonical_numeric_from_double(std::numeric_limits<double>::infinity())),
-              K::DOUBLE);
+    EXPECT_FALSE(
+            canonical_numeric_from_double(std::numeric_limits<double>::infinity()).has_value());
     EXPECT_FALSE(
             canonical_numeric_from_double(std::numeric_limits<double>::quiet_NaN()).has_value());
 }

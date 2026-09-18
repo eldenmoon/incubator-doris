@@ -17,9 +17,6 @@
 
 #include "storage/segment/variant/v2/variant_root_index_writer.h"
 
-#include <limits>
-#include <unordered_set>
-
 #include "common/cast_set.h"
 #include "common/exception.h"
 #include "core/column/column_variant.h"
@@ -30,17 +27,14 @@
 #include "storage/index/inverted/variant_root_index.h"
 #include "storage/index/inverted/variant_term_codec.h"
 #include "storage/tablet/tablet_schema.h"
-#include "util/json/path_in_data.h"
 
 namespace doris::segment_v2 {
 
 VariantRootIndexWriter::VariantRootIndexWriter(IndexFileWriter* index_file_writer,
-                                               const TabletIndex* index_meta, bool is_direct_load,
-                                               bool check_duplicate_json_path)
+                                               const TabletIndex* index_meta, bool is_direct_load)
         : _index_file_writer(index_file_writer),
           _index_meta(index_meta),
-          _is_direct_load(is_direct_load),
-          _check_duplicate_json_path(check_duplicate_json_path) {}
+          _is_direct_load(is_direct_load) {}
 
 VariantRootIndexWriter::~VariantRootIndexWriter() {
     close_on_error();
@@ -53,13 +47,12 @@ Status VariantRootIndexWriter::init() {
     if (get_parser_phrase_support_string_from_properties(_index_meta->properties()) ==
         INVERTED_INDEX_PARSER_PHRASE_SUPPORT_YES) {
         return Status::Error<ErrorCode::INVERTED_INDEX_NOT_SUPPORTED>(
-                "VARIANT values index does not support phrase positions");
+                "VARIANT root index does not support phrase positions");
     }
     _ignore_above = cast_set<uint32_t>(
             std::stoul(get_parser_ignore_above_value_from_properties(_index_meta->properties())));
     _should_analyze =
             inverted_index::InvertedIndexAnalyzer::should_analyzer(_index_meta->properties());
-    _token_suffix = variant_term_codec::token_suffix({});
     _writer = std::make_unique<SniiIndexColumnWriter>(_index_file_writer, _index_meta,
                                                       FieldType::OLAP_FIELD_TYPE_VARCHAR);
     RETURN_IF_ERROR(_writer->init());
@@ -83,19 +76,19 @@ Status VariantRootIndexWriter::add_leaf(const VariantLeaf& leaf) {
     DORIS_CHECK(_document_open);
     DORIS_CHECK(!_sql_null);
     if (leaf.kind == VariantLeafKind::OTHER) {
-        // A non-null scalar the codec cannot spell (decimal, temporal, binary, ...) has no value
-        // term. The exact index records one marker per document instead, so an equality over
-        // the binary storage still lists the document as a candidate for its residual.
+        // A non-null scalar the codec cannot spell has no value term. The exact index records
+        // one marker per document instead, so an equality over the binary storage still lists
+        // the document as a candidate for its residual.
         if (!_should_analyze && !_has_unspellable_leaf &&
             leaf.value.basic_type() == VariantBasicType::PRIMITIVE && !leaf.value.is_null()) {
             _has_unspellable_leaf = true;
-            _exact_terms.push_back(variant_root_index::encode_other_term());
+            _exact_terms.push_back(variant_root_index::unspellable_marker_term());
         }
         return Status::OK();
     }
     if (!_should_analyze) {
         if (leaf.kind != VariantLeafKind::STRING || leaf.string_value.size <= _ignore_above) {
-            variant_root_index::append_variant_leaf_terms(leaf, &_exact_terms);
+            _exact_terms.push_back(variant_root_index::leaf_term(leaf));
         }
         return Status::OK();
     }
@@ -113,89 +106,52 @@ Status VariantRootIndexWriter::add_leaf(const VariantLeaf& leaf) {
     return Status::OK();
 }
 
-Status VariantRootIndexWriter::add_path_value(std::string_view relative_path,
-                                              const VariantRef& value) {
-    VariantVisitOptions options;
-    options.path_prefix = relative_path;
-    return visit_variant_leaves(value, options,
-                                [this](const VariantLeaf& leaf) { return add_leaf(leaf); });
-}
-
 Status VariantRootIndexWriter::end_document() {
     DORIS_CHECK(_document_open);
     Status status;
     if (_sql_null) {
         status = _writer->add_nulls(1);
     } else {
-        std::vector<SniiIndexColumnWriter::PrefixedAnalyzedValue> analyzed_values;
-        analyzed_values.reserve(_analyzed_values.size() + _owned_texts.size());
-        const auto push = [&](const Slice& value) {
-            analyzed_values.push_back({.term_prefix = variant_term_codec::token_prefix(),
-                                       .value = value,
-                                       .term_suffix = _token_suffix,
-                                       .escape_nul = true});
-        };
-        for (const Slice& value : _analyzed_values) {
-            push(value);
-        }
         for (const std::string& text : _owned_texts) {
-            push(Slice(text));
+            _analyzed_values.emplace_back(text);
         }
-        status = _writer->add_document(_exact_terms, analyzed_values);
+        status = _writer->add_document(_exact_terms, variant_term_codec::token_term_prefix(),
+                                       _analyzed_values);
     }
     _document_open = false;
     return status;
 }
 
-namespace {
-
-Status visit_root_index_writers(std::span<VariantRootIndexWriter*> writers, const VariantRef& value,
-                                const PathInData& relative_path,
-                                std::unordered_set<std::string>* seen_paths,
-                                bool check_duplicate_json_path) {
-    DORIS_CHECK(seen_paths != nullptr);
-    if (value.basic_type() != VariantBasicType::OBJECT) {
-        const auto [unused, inserted] = seen_paths->emplace(relative_path.get_path());
-        static_cast<void>(unused);
-        if (!inserted) {
-            if (check_duplicate_json_path) {
-                return Status::OK();
-            }
-            return Status::InvalidArgument("may contains duplicated entry : {}",
-                                           relative_path.get_path());
-        }
-        return append_variant_root_index_leaf(writers, relative_path.get_path(), value);
-    }
-    const VariantRef::ObjectView object = value.object_view();
-    for (uint32_t index = 0; index < object.size(); ++index) {
-        uint32_t field = 0;
-        const VariantRef child = object.value_at(index, &field);
-        PathInDataBuilder builder;
-        if (!relative_path.empty()) {
-            builder.append(relative_path.get_parts(), false);
-        }
-        PathInData child_path =
-                builder.append(value.metadata.key_at(field).to_string_view(), false).build();
-        child_path = PathInData(child_path.get_path());
-        RETURN_IF_ERROR(visit_root_index_writers(writers, child, child_path, seen_paths,
-                                                 check_duplicate_json_path));
-    }
-    return Status::OK();
+// NOLINTNEXTLINE(readability-make-member-function-const): finishing the owned SNII writer is a mutation.
+Status VariantRootIndexWriter::finish() {
+    DORIS_CHECK(_writer != nullptr);
+    DORIS_CHECK(!_document_open);
+    return _writer->finish();
 }
 
-} // namespace
+void VariantRootIndexWriter::close_on_error() {
+    if (_writer != nullptr) {
+        _writer->close_on_error();
+    }
+}
 
-Status append_variant_root_index_leaf(std::span<VariantRootIndexWriter*> writers,
-                                      std::string_view relative_path, const VariantRef& value) {
+size_t VariantRootIndexWriter::size() const {
+    size_t result = _analyzed_values.capacity() * sizeof(Slice);
+    for (const std::string& term : _exact_terms) {
+        result += term.capacity();
+    }
+    for (const std::string& text : _owned_texts) {
+        result += text.capacity();
+    }
+    return result;
+}
+
+Status append_variant_root_index_leaves(std::span<VariantRootIndexWriter*> writers,
+                                        const VariantRef& value) {
     for (VariantRootIndexWriter* writer : writers) {
         DORIS_CHECK(writer != nullptr);
     }
-    if (writers.size() == 1) {
-        return writers.front()->add_path_value(relative_path, value);
-    }
-    VariantVisitOptions options;
-    options.path_prefix = relative_path;
-    return visit_variant_leaves(value, options, [&](const VariantLeaf& leaf) {
+    return visit_variant_leaves(value, {}, [&](const VariantLeaf& leaf) {
         for (VariantRootIndexWriter* writer : writers) {
             RETURN_IF_ERROR(writer->add_leaf(leaf));
         }
@@ -207,36 +163,29 @@ Status append_variant_root_indexes(std::span<VariantRootIndexWriter*> writers,
                                    const ColumnVariantV2::ReadView& view, size_t begin,
                                    size_t length, std::span<const uint8_t> outer_nulls) {
     DORIS_CHECK(!writers.empty());
-    DORIS_CHECK(writers.front() != nullptr);
-    const bool check_duplicate_json_path = writers.front()->check_duplicate_json_path();
     if (view.is_typed()) {
         return Status::InvalidArgument(
-                "VARIANT values index requires encoded E-state input; caller must ensure_encoded");
+                "VARIANT root index requires encoded E-state input; caller must ensure_encoded");
     }
     if (begin > view.size() || length > view.size() - begin) {
-        return Status::InvalidArgument("VARIANT values index range [{}, {}) exceeds input size {}",
+        return Status::InvalidArgument("VARIANT root index range [{}, {}) exceeds input size {}",
                                        begin, begin + length, view.size());
     }
     if (!outer_nulls.empty() && outer_nulls.size() != length) {
         return Status::InvalidArgument(
-                "VARIANT values index outer-null span has {} rows, expected {}", outer_nulls.size(),
+                "VARIANT root index outer-null span has {} rows, expected {}", outer_nulls.size(),
                 length);
     }
-    for (VariantRootIndexWriter* writer : writers) {
-        DORIS_CHECK(writer != nullptr);
-        DORIS_CHECK_EQ(writer->check_duplicate_json_path(), check_duplicate_json_path);
-    }
     try {
-        std::unordered_set<std::string> seen_paths;
         for (size_t offset = 0; offset < length; ++offset) {
             const bool outer_null = !outer_nulls.empty() && outer_nulls[offset] != 0;
             for (VariantRootIndexWriter* writer : writers) {
+                DORIS_CHECK(writer != nullptr);
                 RETURN_IF_ERROR(writer->begin_document(outer_null));
             }
             if (!outer_null) {
-                seen_paths.clear();
-                RETURN_IF_ERROR(visit_root_index_writers(writers, view.value_at(begin + offset), {},
-                                                         &seen_paths, check_duplicate_json_path));
+                RETURN_IF_ERROR(
+                        append_variant_root_index_leaves(writers, view.value_at(begin + offset)));
             }
             for (VariantRootIndexWriter* writer : writers) {
                 RETURN_IF_ERROR(writer->end_document());
@@ -253,19 +202,18 @@ Status append_variant_root_indexes(std::span<VariantRootIndexWriter*> writers,
                                    std::span<const uint8_t> outer_nulls) {
     DORIS_CHECK(!writers.empty());
     if (begin > column.size() || length > column.size() - begin) {
-        return Status::InvalidArgument("VARIANT values index range [{}, {}) exceeds input size {}",
+        return Status::InvalidArgument("VARIANT root index range [{}, {}) exceeds input size {}",
                                        begin, begin + length, column.size());
     }
     if (!outer_nulls.empty() && outer_nulls.size() != length) {
         return Status::InvalidArgument(
-                "VARIANT values index outer-null span has {} rows, expected {}", outer_nulls.size(),
+                "VARIANT root index outer-null span has {} rows, expected {}", outer_nulls.size(),
                 length);
     }
     try {
-        // The legacy row model reaches the index through its JSON text. Every string is escaped
-        // (control characters included) so the text parses back to the same leaves, and text
-        // that still fails to parse is an error rather than a document silently indexed as one
-        // string.
+        // Every string is escaped (control characters included) so the text parses back to the
+        // same leaves, and text that still fails to parse is an error rather than a document
+        // silently indexed as one string.
         JsonToVariantOptions encoder_options = JsonToVariantOptions::current_config();
         encoder_options.throw_on_invalid_json = true;
         JsonStringToVariantEncoder encoder(encoder_options);
@@ -306,29 +254,6 @@ Status finish_variant_root_indexes(std::span<VariantRootIndexWriter*> writers) {
         }
     }
     return Status::OK();
-}
-
-Status VariantRootIndexWriter::finish() {
-    DORIS_CHECK(_writer != nullptr);
-    DORIS_CHECK(!_document_open);
-    return _writer->finish();
-}
-
-void VariantRootIndexWriter::close_on_error() {
-    if (_writer != nullptr) {
-        _writer->close_on_error();
-    }
-}
-
-size_t VariantRootIndexWriter::size() const {
-    size_t result = _analyzed_values.capacity() * sizeof(Slice);
-    for (const std::string& term : _exact_terms) {
-        result += term.capacity();
-    }
-    for (const std::string& text : _owned_texts) {
-        result += text.capacity();
-    }
-    return result;
 }
 
 } // namespace doris::segment_v2

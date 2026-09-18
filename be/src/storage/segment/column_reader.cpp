@@ -727,10 +727,9 @@ Status ColumnReader::_load_index(const std::shared_ptr<IndexFileReader>& index_f
     IndexReaderPtr index_reader;
     if (index_file_reader->get_storage_format() == InvertedIndexStorageFormatPB::SNII) {
         if (variant_root_index::is_root_index(*index_meta)) {
-            const auto reader_type = should_analyzer ? InvertedIndexReaderType::FULLTEXT
-                                                     : InvertedIndexReaderType::STRING_TYPE;
-            index_reader = SniiIndexReader::create_shared(index_meta, index_file_reader,
-                                                          reader_type, rows_of_segment, false);
+            index_reader = SniiIndexReader::create_shared(
+                    index_meta, index_file_reader, variant_root_index::reader_type(*index_meta),
+                    rows_of_segment, false);
             _index_readers[index_meta->index_id()] = index_reader;
             return Status::OK();
         }
