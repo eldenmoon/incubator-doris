@@ -95,23 +95,22 @@ suite("test_variant_all_values_index_correctness", "p0,nonConcurrent") {
         // The pathless all-values postings admit ids 1, 2, 6, 8, and 12 for the repo query,
         // while the path-bound children postings admit only id 1. Both must keep the same scalar
         // result, but their filtered-row counts prove the intended physical indexes participated.
-        def assertIndexFilteredRows = { String tableName, int expectedFilteredRows ->
+        def assertIndexFilteredRows = { String tableName, String stage, int expectedFilteredRows ->
             def checkpoint = "segment_iterator.inverted_index.filtered_rows"
             try {
                 GetDebugPoint().enableDebugPointForAllBEs(
                         checkpoint, [filtered_rows: "${expectedFilteredRows}"])
-                def result = sql """
+                quickTest("${tableName}_${stage}_repo_doris", """
                     SELECT id FROM ${tableName}
                     WHERE payload['repo'] MATCH_ANY 'doris'
                     ORDER BY id
-                """
-                assertEquals([1L], result.collect { it[0] })
+                """, true)
             } finally {
                 GetDebugPoint().disableDebugPointForAllBEs(checkpoint)
             }
         }
-        assertIndexFilteredRows(tokenTable, 8)
-        assertIndexFilteredRows(tokenChildren, 12)
+        assertIndexFilteredRows(tokenTable, "first_rowset", 8)
+        assertIndexFilteredRows(tokenChildren, "first_rowset", 12)
 
         sql "SET enable_profile = true"
         sql "SET profile_level = 2"
@@ -257,21 +256,13 @@ suite("test_variant_all_values_index_correctness", "p0,nonConcurrent") {
             tokenPathBefore[it] = assertLayoutParity(tokenTable, tokenChildren, it)
         }
 
-        assertEquals([1L, 2L, 6L, 8L, 12L, 16L, 18L],
-                rootTokenBefore["payload MATCH_ANY 'doris'"].collect { it[0] })
-        assertEquals([3L, 4L, 5L],
-                rootTokenBefore["payload MATCH_ALL 'security fix'"].collect { it[0] })
-        assertEquals([13L], rootTokenBefore["payload MATCH_ANY 'needle'"].collect { it[0] })
-        assertEquals([1L], tokenPathBefore[
-                "CAST(payload['repo'] AS STRING) MATCH_ANY 'doris'"].collect { it[0] })
-        assertEquals([18L], tokenPathBefore[
-                "CAST(payload['nested']['repo'] AS STRING) MATCH_ANY 'doris'"].collect { it[0] })
-        assertEquals([3L], tokenPathBefore[
-                "CAST(payload['message'] AS STRING) MATCH_ALL 'security fix'"].collect { it[0] })
-        assertEquals([1L, 9L], tokenPathBefore[
-                "CAST(payload['repo'] AS STRING) MATCH_ANY 'doris' OR id = 9"].collect { it[0] })
-        assertEquals([8L], tokenPathBefore[
-                "CAST(payload['tags'] AS ARRAY<TEXT>) MATCH_ANY 'doris'"].collect { it[0] })
+        // Golden rows of the whole-root and path predicates on the all-values table.
+        rootTokenPredicates.eachWithIndex { predicate, index ->
+            quickTest("root_token_${index}", "SELECT id FROM ${tokenTable} WHERE ${predicate} ORDER BY id", true)
+        }
+        tokenPathPredicates.eachWithIndex { predicate, index ->
+            quickTest("token_path_${index}", "SELECT id FROM ${tokenTable} WHERE ${predicate} ORDER BY id", true)
+        }
 
         // The all-values posting admits seven candidates, but the path residual keeps only id 1.
         // COUNT_ON_INDEX must consume the selected reader's requires_recheck contract rather than
@@ -287,6 +278,12 @@ suite("test_variant_all_values_index_correctness", "p0,nonConcurrent") {
         test {
             sql "SELECT id FROM ${tokenTable} WHERE payload MATCH_PHRASE 'security fix'"
             exception "VARIANT root column supports only MATCH"
+        }
+        // The root index stores neither positions nor norms: no similarity, so no score().
+        test {
+            sql """SELECT id, score() FROM ${tokenTable}
+                   WHERE payload MATCH_ANY 'doris' ORDER BY score() DESC LIMIT 5"""
+            exception "VARIANT root index"
         }
 
         def exactRootPredicates = [
@@ -312,22 +309,18 @@ suite("test_variant_all_values_index_correctness", "p0,nonConcurrent") {
         exactPathPredicates.each {
             exactPathBefore[it] = assertLayoutParity(exactTable, exactChildren, it)
         }
-        assertEquals([1L, 2L, 6L, 16L, 18L], exactRootBefore[
-                "payload MATCH_ANY 'apache/doris'"].collect { it[0] })
-        assertEquals([1L, 7L, 12L, 17L], exactRootBefore[
-                "payload MATCH_ANY '123'"].collect { it[0] })
-        assertEquals([1L], exactPathBefore[
-                "CAST(payload['repo'] AS STRING) MATCH_ANY 'apache/doris'"].collect { it[0] })
-        assertEquals([1L, 12L], exactPathBefore[
-                "CAST(payload['n'] AS BIGINT) IN (123, NULL)"].collect { it[0] })
+        exactRootPredicates.eachWithIndex { predicate, index ->
+            quickTest("exact_root_${index}", "SELECT id FROM ${exactTable} WHERE ${predicate} ORDER BY id", true)
+        }
+        exactPathPredicates.eachWithIndex { predicate, index ->
+            quickTest("exact_path_${index}", "SELECT id FROM ${exactTable} WHERE ${predicate} ORDER BY id", true)
+        }
 
         // With row execution disabled, only an exact whole-root all-values index may admit root
         // MATCH. Children and an unindexed table retain their boundary.
         sql "SET enable_match_without_inverted_index = false"
-        assertEquals([1L, 2L, 6L, 8L, 12L, 16L, 18L],
-                ids(tokenTable, "payload MATCH_ANY 'doris'", true).collect { it[0] })
-        assertEquals([1L, 2L, 6L, 16L, 18L],
-                ids(exactTable, "payload MATCH_ANY 'apache/doris'", true).collect { it[0] })
+        order_qt_root_token_index_only "SELECT id FROM ${tokenTable} WHERE payload MATCH_ANY 'doris' ORDER BY id"
+        order_qt_root_exact_index_only "SELECT id FROM ${exactTable} WHERE payload MATCH_ANY 'apache/doris' ORDER BY id"
         [tokenChildren, tokenOracle].each { tableName ->
             test {
                 sql "SELECT id FROM ${tableName} WHERE payload MATCH_ANY 'doris'"
@@ -355,8 +348,8 @@ suite("test_variant_all_values_index_correctness", "p0,nonConcurrent") {
         // Result parity can still pass if compaction drops an index and falls back to row
         // execution. Re-prove both physical layouts on the compacted 20-row segment: the
         // pathless all-values candidates contain seven rows, while the repo child contains one.
-        assertIndexFilteredRows(tokenTable, 13)
-        assertIndexFilteredRows(tokenChildren, 19)
+        assertIndexFilteredRows(tokenTable, "compacted", 13)
+        assertIndexFilteredRows(tokenChildren, "compacted", 19)
         sql "SET enable_match_without_inverted_index = false"
         try {
             assertEquals(rootTokenBefore["payload MATCH_ANY 'doris'"],

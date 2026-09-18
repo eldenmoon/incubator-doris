@@ -48,11 +48,8 @@ suite("test_variant_all_values_legacy_format", "p0,nonConcurrent") {
         ) DUPLICATE KEY(id) DISTRIBUTED BY HASH(id) BUCKETS 1
         PROPERTIES("replication_num"="1", "disable_auto_compaction"="true",
                    "inverted_index_storage_format"="SNII")"""
-        def createTable = sql "SHOW CREATE TABLE variant_all_values_legacy_format"
-        def ddl = createTable[0][1].toString()
-        assertTrue(ddl.contains('"variant_index_scope" = "values"'), ddl)
-        assertTrue(ddl.contains('"variant_root_format_version" = "3"'), ddl)
-        assertFalse(ddl.contains("variant_index_mode"), ddl)
+        // The catalog spelling: the scope key, no positions, the stamped format version.
+        qt_legacy_show_create "SHOW CREATE TABLE variant_all_values_legacy_format"
 
         sql """INSERT INTO variant_all_values_legacy_format VALUES
             (1, parse_to_variant('{"a":[{"keyonly":"leaf"}]}')),
