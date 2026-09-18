@@ -21,6 +21,7 @@
 #include <memory>
 #include <span>
 #include <string_view>
+#include <vector>
 
 #include "common/status.h"
 #include "core/column/column.h"
@@ -37,10 +38,17 @@ struct VariantColumnData;
 namespace segment_v2 {
 
 class VariantShredder;
+class VariantRootIndexWriter;
 enum class VariantShredderPhysicalLayout : uint8_t;
 struct VariantShredderOptions;
 
 namespace variant_writer_helpers {
+
+Status init_variant_root_index_writers(
+        const ColumnWriterOptions& opts, const TabletColumn& parent_column,
+        std::span<const TabletIndex* const> parent_indexes,
+        std::vector<std::unique_ptr<VariantRootIndexWriter>>* root_index_writers,
+        std::vector<VariantRootIndexWriter*>* root_index_writer_ptrs);
 
 bool has_extracted_variant_columns(const TabletSchema& tablet_schema, int parent_column_unique_id);
 

@@ -23,9 +23,11 @@
 #include <cstddef>
 #include <cstdint>
 #include <map>
+#include <set>
 #include <string>
 #include <string_view>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 #include "common/status.h"
@@ -201,9 +203,11 @@ public:
             const RowsetSharedPtr& rs,
             std::unordered_map<int32_t, PathToNoneNullValues>* uid_to_path_stats);
 
-    // Build the temporary schema for compaction, this will reduce the memory usage of compacting variant columns
-    static Status get_extended_compaction_schema(const std::vector<RowsetSharedPtr>& rowsets,
-                                                 TabletSchemaSPtr& target);
+    // Build the temporary schema for compaction. A Variant root stays logical while any of its
+    // Root SNII siblings is absent from merged_snii_indexes so that sibling can rebuild safely.
+    static Status get_extended_compaction_schema(
+            const std::vector<RowsetSharedPtr>& rowsets, TabletSchemaSPtr& target,
+            const std::set<std::pair<int32_t, int64_t>>& merged_snii_indexes = {});
 
     // Used to collect all the subcolumns types of variant column from rowsets
     static TabletSchemaSPtr calculate_variant_extended_schema(

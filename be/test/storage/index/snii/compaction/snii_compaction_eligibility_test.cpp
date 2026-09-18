@@ -34,6 +34,7 @@
 #include "storage/index/inverted/analyzer/analyzer_provider.h"
 #include "storage/index/inverted/common_grams/common_grams_segment_metadata.h"
 #include "storage/index/inverted/inverted_index_parser.h"
+#include "storage/index/inverted/variant_root_index.h"
 #include "storage/index/snii/common/slice.h"
 #include "storage/index/snii/compaction/eligibility.h"
 #include "storage/index/snii/encoding/byte_sink.h"
@@ -123,10 +124,13 @@ std::unique_ptr<OpenedIndex> open_index(const IndexShape& shape) {
     directory.finish(&directory_frame);
 
     format::CoreMetadata core;
-    core.index_config = shape.tier == format::IndexTier::kT1 ? format::IndexConfig::kDocsOnly
-                        : shape.tier == format::IndexTier::kT2
-                                ? format::IndexConfig::kDocsPositions
-                                : format::IndexConfig::kDocsPositionsScoring;
+    if (shape.tier == format::IndexTier::kT1) {
+        core.index_config = format::IndexConfig::kDocsOnly;
+    } else if (shape.tier == format::IndexTier::kT2) {
+        core.index_config = format::IndexConfig::kDocsPositions;
+    } else {
+        core.index_config = format::IndexConfig::kDocsPositionsScoring;
+    }
     core.stats = shape.stats;
     core.section_refs = refs;
     if (shape.common_grams_metadata.has_value()) {
@@ -170,6 +174,16 @@ std::unique_ptr<TabletIndex> make_index(std::map<std::string, std::string> prope
 
 std::map<std::string, std::string> plain_properties() {
     return {{"lower_case", "true"}, {"parser", "standard"}, {"support_phrase", "true"}};
+}
+
+std::map<std::string, std::string> docs_only_properties() {
+    return {{"parser", "none"},
+            {"support_phrase", "false"},
+            {std::string(doris::segment_v2::variant_root_index::VARIANT_INDEX_SCOPE_KEY),
+             std::string(doris::segment_v2::variant_root_index::VARIANT_INDEX_SCOPE_VALUES)},
+            {std::string(doris::segment_v2::variant_root_index::VARIANT_ROOT_FORMAT_VERSION_KEY),
+             std::string(
+                     doris::segment_v2::variant_root_index::VARIANT_ROOT_FORMAT_VERSION_CURRENT)}};
 }
 
 std::map<std::string, std::string> common_grams_properties() {
@@ -246,6 +260,70 @@ TEST(SniiCompactionEligibilityTest, AcceptsIdenticalPlainT2SourcesAndDestination
     std::vector sources {source(*first, *first_meta), source(*second, *second_meta)};
 
     EXPECT_TRUE(compaction::validate_plain_t2_compaction_eligibility(sources, *destination).ok());
+}
+
+TEST(SniiCompactionEligibilityTest, AcceptsHomogeneousDocsOnlyT1Sources) {
+    auto first = open_index(IndexShape {.tier = format::IndexTier::kT1});
+    auto second = open_index(IndexShape {.tier = format::IndexTier::kT1});
+    auto first_meta = make_index(docs_only_properties());
+    auto second_meta = make_index(docs_only_properties());
+    auto destination = make_index(docs_only_properties());
+    std::vector sources {source(*first, *first_meta), source(*second, *second_meta)};
+
+    compaction::SniiCompactionEligibility eligibility;
+    ASSERT_TRUE(
+            compaction::validate_snii_compaction_eligibility(sources, *destination, &eligibility)
+                    .ok());
+    EXPECT_EQ(eligibility.kind, compaction::SniiStreamedMergeKind::kDocsOnlyT1);
+    EXPECT_TRUE(compaction::validate_snii_source_eligibility(first->reader, /*source_ordinal=*/0,
+                                                             eligibility)
+                        .ok());
+}
+
+TEST(SniiCompactionEligibilityTest, ValuesIndexMergesOnlyIntoTheSameAnalyzerIdentity) {
+    auto source_index = open_index(IndexShape {.tier = format::IndexTier::kT1});
+    auto source_meta = make_index(docs_only_properties());
+    auto same_destination = make_index(docs_only_properties());
+    std::vector sources {source(*source_index, *source_meta)};
+
+    compaction::SniiCompactionEligibility eligibility;
+    ASSERT_TRUE(compaction::validate_snii_compaction_eligibility(sources, *same_destination,
+                                                                 &eligibility)
+                        .ok());
+    EXPECT_EQ(eligibility.kind, compaction::SniiStreamedMergeKind::kDocsOnlyT1);
+
+    auto other_properties = docs_only_properties();
+    other_properties["lower_case"] = "true";
+    auto other_destination = make_index(other_properties);
+    expect_rejected(compaction::validate_snii_compaction_eligibility(sources, *other_destination,
+                                                                     &eligibility),
+                    "destination properties differ");
+}
+
+TEST(SniiCompactionEligibilityTest, RejectsOrdinaryDocsOnlyIndex) {
+    auto source_index = open_index(IndexShape {.tier = format::IndexTier::kT1});
+    auto source_meta = make_index({{"parser", "none"}, {"support_phrase", "false"}});
+    auto destination = make_index({{"parser", "none"}, {"support_phrase", "false"}});
+    std::vector sources {source(*source_index, *source_meta)};
+
+    compaction::SniiCompactionEligibility eligibility;
+    expect_rejected(
+            compaction::validate_snii_compaction_eligibility(sources, *destination, &eligibility),
+            "reserved for VARIANT root indexes");
+}
+
+TEST(SniiCompactionEligibilityTest, RejectsMixedDocsOnlyAndPositionsSources) {
+    auto docs_only = open_index(IndexShape {.tier = format::IndexTier::kT1});
+    auto positions = open_index({});
+    auto first_meta = make_index(docs_only_properties());
+    auto second_meta = make_index(docs_only_properties());
+    auto destination = make_index(docs_only_properties());
+    std::vector sources {source(*docs_only, *first_meta), source(*positions, *second_meta)};
+
+    compaction::SniiCompactionEligibility eligibility;
+    expect_rejected(
+            compaction::validate_snii_compaction_eligibility(sources, *destination, &eligibility),
+            "docs-only T1");
 }
 
 TEST(SniiCompactionEligibilityTest, AcceptsHomogeneousCompleteCommonGramsT3Sources) {
@@ -488,6 +566,10 @@ TEST(SniiCompactionEligibilityTest, RequiresInvertedPhraseDestination) {
     expect_rejected(
             compaction::validate_plain_t2_compaction_eligibility(no_phrase_sources, *no_phrase),
             "phrase positions");
+    compaction::SniiCompactionEligibility eligibility;
+    expect_rejected(compaction::validate_snii_compaction_eligibility(no_phrase_sources, *no_phrase,
+                                                                     &eligibility),
+                    "phrase positions");
 
     auto source_meta = make_index(plain_properties());
     std::vector sources {source(*index, *source_meta)};

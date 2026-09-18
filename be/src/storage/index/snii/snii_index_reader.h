@@ -53,8 +53,13 @@ struct SniiQueryBitmapRequest {
     bool force_plain = false;
     inverted_index::CommonGramsPlanCostModel common_grams_cost_model {};
     const InvertedIndexAnalyzerCtx* analyzer_ctx = nullptr;
-    // Identifies the physical query for the single-flight key; empty when unused.
-    std::string_view physical_raw_query_key {};
+    // Identifies the physical query for single-flight. The caller owns the key for this synchronous
+    // execution; null is valid only when the request cannot enter single-flight.
+    const std::string* single_flight_key = nullptr;
+
+    // Terms prepared by a caller before entering the common execution path. Ordinary queries
+    // leave this null and are routed from query_info by the reader.
+    const std::vector<std::string>* prepared_terms = nullptr;
 
     const ::doris::snii::reader::LogicalIndexReader* logical_reader = nullptr;
 };
@@ -127,6 +132,10 @@ private:
                   std::shared_ptr<roaring::Roaring>& bit_map,
                   InvertedIndexQueryCacheHandle* null_bitmap_cache_handle,
                   const InvertedIndexAnalyzerCtx* analyzer_ctx);
+    Status _query_variant_root(const IndexQueryContextPtr& context, const std::string& column_name,
+                               const Field& query_value, InvertedIndexQueryType query_type,
+                               std::shared_ptr<roaring::Roaring>& bit_map,
+                               const InvertedIndexAnalyzerCtx* analyzer_ctx);
     Status _parse_query_terms(
             const IndexQueryContextPtr& context, std::string search_str,
             InvertedIndexQueryType query_type, const InvertedIndexAnalyzerCtx* analyzer_ctx,
@@ -146,6 +155,14 @@ private:
                                  std::vector<std::string>* terms,
                                  std::shared_ptr<roaring::Roaring>* out,
                                  std::vector<::doris::snii::query::PhraseMatch>* phrase_matches);
+    Status _execute_prepared_query(const IndexQueryContextPtr& context,
+                                   std::string_view column_name,
+                                   const SniiQueryBitmapRequest& request,
+                                   std::vector<std::string>* terms, bool actual_similarity,
+                                   const InvertedIndexQueryCache::CacheKey& cache_key,
+                                   InvertedIndexQueryCacheHandle* cache_handler,
+                                   bool allow_result_cache,
+                                   std::shared_ptr<roaring::Roaring>* bit_map);
 #ifdef BE_TEST
     Status _compute_query_bitmap(const IndexQueryContextPtr& context,
                                  InvertedIndexQueryType query_type,
@@ -179,7 +196,8 @@ private:
             const IndexQueryContextPtr& context, InvertedIndexQueryType query_type,
             const InvertedIndexQueryInfo& query_info, const std::vector<std::string>& terms,
             bool* handled, std::shared_ptr<roaring::Roaring>* out,
-            const ::doris::snii::reader::LogicalIndexReader* preopened_reader = nullptr);
+            const ::doris::snii::reader::LogicalIndexReader* preopened_reader = nullptr,
+            const std::vector<std::string>* prepared_terms = nullptr);
 
     InvertedIndexReaderType _reader_type;
     // Row count of the segment this reader belongs to, straight from

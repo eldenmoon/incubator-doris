@@ -17,6 +17,7 @@
 
 package org.apache.doris.catalog;
 
+import org.apache.doris.analysis.InvertedIndexProperties;
 import org.apache.doris.catalog.TableIf.TableType;
 import org.apache.doris.catalog.info.IndexType;
 import org.apache.doris.cloud.common.util.CloudPropertyAnalyzer;
@@ -51,6 +52,62 @@ import java.util.concurrent.locks.ReadWriteLock;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 
 public class OlapTableTest {
+
+    @Test
+    public void testGetInvertedIndexPrefersTokenizedAnalyzer() {
+        Column variantColumn = new Column("v", Type.VARIANT);
+        Map<String, String> exactProperties = Maps.newHashMap();
+        exactProperties.put(InvertedIndexProperties.INVERTED_INDEX_PARSER_KEY,
+                InvertedIndexProperties.INVERTED_INDEX_PARSER_NONE);
+        Map<String, String> englishProperties = Maps.newHashMap();
+        englishProperties.put(InvertedIndexProperties.INVERTED_INDEX_PARSER_KEY,
+                InvertedIndexProperties.INVERTED_INDEX_PARSER_ENGLISH);
+
+        Index exact = new Index(1L, "v_exact", Lists.newArrayList("v"),
+                IndexType.INVERTED, exactProperties, "");
+        Index english = new Index(2L, "v_english", Lists.newArrayList("v"),
+                IndexType.INVERTED, englishProperties, "");
+        OlapTable table = new OlapTable();
+        table.setIndexes(Lists.newArrayList(exact, english));
+
+        Assert.assertSame(english, table.getInvertedIndex(variantColumn, Lists.newArrayList(), null));
+        Assert.assertSame(exact, table.getInvertedIndex(variantColumn, Lists.newArrayList(), "none"));
+        Assert.assertSame(english, table.getInvertedIndex(variantColumn, Lists.newArrayList(), "english"));
+    }
+
+    @Test
+    public void testVariantRootMatchSelectsTheValuesIndex() {
+        Column variantColumn = new Column("v", Type.VARIANT);
+        Map<String, String> childProperties = Maps.newHashMap();
+        childProperties.put(InvertedIndexProperties.INVERTED_INDEX_PARSER_KEY,
+                InvertedIndexProperties.INVERTED_INDEX_PARSER_ENGLISH);
+        Map<String, String> valuesProperties = Maps.newHashMap(childProperties);
+        valuesProperties.put(InvertedIndexProperties.VARIANT_INDEX_SCOPE_KEY,
+                InvertedIndexProperties.VARIANT_INDEX_SCOPE_VALUES);
+        valuesProperties.put(InvertedIndexProperties.VARIANT_ROOT_FORMAT_VERSION_KEY,
+                InvertedIndexProperties.VARIANT_ROOT_FORMAT_VERSION_CURRENT);
+
+        Index children = new Index(1L, "v_children", Lists.newArrayList("v"),
+                IndexType.INVERTED, childProperties, "");
+        Index values = new Index(2L, "v_values", Lists.newArrayList("v"),
+                IndexType.INVERTED, valuesProperties, "");
+        OlapTable table = new OlapTable();
+        table.setIndexes(Lists.newArrayList(children, values));
+
+        // Sub-column predicates keep the ordinary selection; a whole-root MATCH needs the
+        // values index.
+        Assert.assertSame(values, table.getVariantAllValuesIndex(variantColumn, "english"));
+        Map<String, String> legacyProperties = Maps.newHashMap(valuesProperties);
+        legacyProperties.remove(InvertedIndexProperties.VARIANT_INDEX_SCOPE_KEY);
+        legacyProperties.put(InvertedIndexProperties.VARIANT_INDEX_MODE_KEY,
+                InvertedIndexProperties.VARIANT_INDEX_MODE_ALL_VALUES);
+        Index legacySpelling = new Index(3L, "v_all_values", Lists.newArrayList("v"),
+                IndexType.INVERTED, legacyProperties, "");
+        table.setIndexes(Lists.newArrayList(legacySpelling));
+        Assert.assertSame(legacySpelling, table.getVariantAllValuesIndex(variantColumn, "english"));
+        table.setIndexes(Lists.newArrayList(children));
+        Assert.assertNull(table.getVariantAllValuesIndex(variantColumn, "english"));
+    }
 
     @Test
     public void testGetTableStatusStatsUsesSinglePassSemantics() {

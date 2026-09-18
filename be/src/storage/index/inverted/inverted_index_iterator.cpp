@@ -24,7 +24,9 @@
 #include "storage/index/inverted/inverted_index_cache.h"
 #include "storage/index/inverted/inverted_index_parser.h"
 #include "storage/index/inverted/inverted_index_reader.h"
+#include "storage/index/inverted/variant_root_index.h"
 #include "storage/utils.h"
+#include "util/defer_op.h"
 
 namespace doris::segment_v2 {
 
@@ -50,6 +52,10 @@ void InvertedIndexIterator::add_reader(InvertedIndexReaderType type,
             &_selection_candidates, &_key_to_entries);
     DORIS_CHECK(status.ok()) << status;
     _readers.push_back(reader);
+    const auto& properties = reader->get_index_properties();
+    _has_root_reader = _has_root_reader || variant_root_index::is_root_index(properties);
+    _has_candidate_reader =
+            _has_candidate_reader || variant_root_index::yields_candidates(properties);
 }
 
 Status InvertedIndexIterator::read_from_index(const IndexParam& param) {
@@ -75,6 +81,25 @@ Status InvertedIndexIterator::read_from_index(const IndexParam& param) {
         return Status::Error<ErrorCode::INVERTED_INDEX_CLUCENE_ERROR>(
                 "inverted index reader is null");
     }
+    // A VARIANT root index answers whole-document queries exactly. Bound to one sub-column path
+    // it only proves that the value exists somewhere in the row, so its rows remain candidates
+    // for the residual expression.
+    i_param->requires_recheck =
+            variant_root_index::yields_candidates(reader->get_index_properties());
+    if (i_param->requires_recheck && _context->collection_similarity != nullptr) {
+        return Status::Error<ErrorCode::INVERTED_INDEX_EVALUATE_SKIPPED>(
+                "candidate-only inverted index reader cannot provide exact scores");
+    }
+    // A reader that returns candidates rather than an exact result must preserve real row ids for
+    // the residual expression. The count fast path fabricates row ids from a term df, which is
+    // only sound when no recheck follows. Keep this at the selected-reader boundary: callers
+    // already use requires_recheck for residual handling, so duplicating index-mode knowledge in
+    // the planner or each reader would make the two decisions drift.
+    const bool count_on_index_fastpath = _context->count_on_index_fastpath;
+    if (i_param->requires_recheck) {
+        _context->count_on_index_fastpath = false;
+    }
+    DEFER({ _context->count_on_index_fastpath = count_on_index_fastpath; });
     auto* runtime_state = _context->runtime_state;
     if (!i_param->skip_try && reader->type() == InvertedIndexReaderType::BKD) {
         if (runtime_state != nullptr &&
@@ -150,7 +175,7 @@ Status InvertedIndexIterator::try_read_from_inverted_index(const InvertedIndexRe
 
 Result<InvertedIndexReaderPtr> InvertedIndexIterator::select_best_reader(
         const DataTypePtr& column_type, InvertedIndexQueryType query_type,
-        const std::string& analyzer_key) {
+        const std::string& analyzer_key) const {
     const std::string normalized_key = ensure_normalized_key(analyzer_key);
     // The column type only disambiguates between several indexes on the same field; with a
     // single candidate the selection is already determined. Callers that have no runtime type
@@ -162,7 +187,10 @@ Result<InvertedIndexReaderPtr> InvertedIndexIterator::select_best_reader(
                     "column_type is required to select among {} inverted indexes",
                     _selection_candidates.size()));
         }
-        field_type = get_inverted_index_leaf_field_type(column_type);
+        // A root index stores typed terms of every leaf under a string reader type whatever
+        // the bound column's type; select it as a string index.
+        field_type = _has_root_reader ? FieldType::OLAP_FIELD_TYPE_STRING
+                                      : get_inverted_index_leaf_field_type(column_type);
     }
     auto selection = select_best_inverted_index_candidate(_selection_candidates, _key_to_entries,
                                                           field_type, query_type, normalized_key);

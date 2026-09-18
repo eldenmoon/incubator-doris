@@ -18,6 +18,7 @@
 package org.apache.doris.nereids.trees.plans.commands.info;
 
 import org.apache.doris.alter.AlterOpType;
+import org.apache.doris.analysis.InvertedIndexProperties;
 import org.apache.doris.catalog.DatabaseIf;
 import org.apache.doris.catalog.Env;
 import org.apache.doris.catalog.Index;
@@ -133,7 +134,9 @@ public class BuildIndexOp extends AlterTableOp {
         if (existedIdx == null) {
             throw new AnalysisException("Index[" + indexName + "] is not exist in table[" + tableName.getTbl() + "]");
         }
-
+        if (InvertedIndexProperties.isVariantRootIndex(existedIdx.getProperties())) {
+            throw new AnalysisException("BUILD INDEX is not supported for a VARIANT values index");
+        }
         IndexType indexType = existedIdx.getIndexType();
         OlapTable olapTable = (OlapTable) table;
         // A parsed inverted index normally needs no explicit build in cloud mode, because adding it

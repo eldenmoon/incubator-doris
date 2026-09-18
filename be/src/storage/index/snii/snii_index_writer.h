@@ -19,7 +19,9 @@
 
 #include <memory>
 #include <optional>
+#include <span>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -59,6 +61,13 @@ public:
                             size_t count) override;
     Status add_nulls(uint32_t count) override;
     Status add_array_nulls(const uint8_t* null_map, size_t num_rows) override;
+    // Adds one already-separated document to a docs-only plain index. Exact terms bypass
+    // analysis; each analyzed value is tokenized with this index's analyzer and every token
+    // enters the dictionary as `analyzed_term_prefix + token`. Used by the VARIANT root index to
+    // keep the many terms of one row in one docid.
+    Status add_document(std::span<const std::string> exact_terms,
+                        std::string_view analyzed_term_prefix,
+                        std::span<const Slice> analyzed_values);
     Status finish() override;
     int64_t size() const override { return 0; }
     void close_on_error() override;
@@ -94,7 +103,8 @@ public:
 
 private:
     Status _add_value_tokens(const Slice& value, uint32_t docid, uint32_t position_base,
-                             uint32_t* max_position, uint32_t* semantic_length);
+                             uint32_t* max_position, uint32_t* semantic_length,
+                             std::string_view term_prefix = {});
     inverted_index::CommonGramsSegmentMetadata _build_common_grams_metadata() const;
     // Mirrors _null_docids' capacity into _memory_reporter (delta-charged);
     // release_all zeroes the charge (finish() handoff / close_on_error()).
@@ -125,6 +135,7 @@ private:
     inverted_index::ReaderPtr _char_string_reader;
     std::shared_ptr<lucene::analysis::Analyzer> _analyzer;
     inverted_index::CommonGramsFilter* _common_grams_filter = nullptr;
+    std::string _prefixed_term_scratch;
     std::unique_ptr<::doris::snii::writer::MemoryReporter> _memory_reporter;
     std::unique_ptr<::doris::snii::writer::SpimiTermBuffer> _term_buffer;
     std::vector<uint32_t> _null_docids;

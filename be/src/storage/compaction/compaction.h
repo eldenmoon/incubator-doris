@@ -24,6 +24,7 @@
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wpass-failed"
 #endif
+#include <map>
 #include <memory>
 #if defined(__clang__)
 #pragma clang diagnostic pop
@@ -112,6 +113,13 @@ protected:
                                     const std::function<void(int64_t, int64_t)>& error_handler);
 
     void construct_index_compaction_columns(RowsetWriterContext& ctx);
+    // SNII native-merge eligibility per (column unique id, index id). merge_input_rowsets()
+    // plans index compaction before and after the Variant schema extension; each logical index
+    // is validated (source readers opened, shapes compared, memory preflighted) exactly once and
+    // the decision is reused, so the second planning pass only adds indexes the extension exposed.
+    std::map<std::pair<int32_t, int64_t>, Status> _snii_merge_eligibility;
+    // Native merges rejected by the memory preflight above (rebuilt from the raw column instead).
+    size_t _snii_merge_preflight_rejections = 0;
 
     virtual Status construct_output_rowset_writer(RowsetWriterContext& ctx) = 0;
 
@@ -184,6 +192,9 @@ protected:
     RuntimeProfile::Counter* _output_row_num_counter = nullptr;
     RuntimeProfile::Counter* _output_segments_num_counter = nullptr;
     RuntimeProfile::Counter* _merge_rowsets_latency_timer = nullptr;
+    RuntimeProfile::Counter* _merge_row_data_latency_timer = nullptr;
+    RuntimeProfile::Counter* _inverted_index_compaction_latency_timer = nullptr;
+    RuntimeProfile::Counter* _build_output_rowset_latency_timer = nullptr;
 };
 
 // `StorageEngine` mixin for `Compaction`

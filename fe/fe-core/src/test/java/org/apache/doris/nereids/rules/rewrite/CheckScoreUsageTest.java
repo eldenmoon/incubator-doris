@@ -17,6 +17,7 @@
 
 package org.apache.doris.nereids.rules.rewrite;
 
+import org.apache.doris.analysis.InvertedIndexProperties;
 import org.apache.doris.analysis.SearchDslParser;
 import org.apache.doris.catalog.AggregateType;
 import org.apache.doris.catalog.Column;
@@ -36,6 +37,7 @@ import org.apache.doris.nereids.properties.OrderKey;
 import org.apache.doris.nereids.rules.Rule;
 import org.apache.doris.nereids.trees.expressions.Alias;
 import org.apache.doris.nereids.trees.expressions.Expression;
+import org.apache.doris.nereids.trees.expressions.MatchAny;
 import org.apache.doris.nereids.trees.expressions.MatchPhrase;
 import org.apache.doris.nereids.trees.expressions.SearchExpression;
 import org.apache.doris.nereids.trees.expressions.SlotReference;
@@ -306,6 +308,23 @@ public class CheckScoreUsageTest {
     }
 
     @Test
+    public void testRejectsScoreOnAVariantRootIndexMatch() throws Exception {
+        IndexPolicyMgr manager = Mockito.mock(IndexPolicyMgr.class);
+        LogicalOlapScan scan = newScan(table(TInvertedIndexFileStorageFormat.SNII,
+                variantRootIndex("idx_variant_root", "variant_body")));
+        MatchAny match = new MatchAny(findSlot(scan, "variant_body"),
+                new StringLiteral("alpha beta"), null);
+        LogicalFilter<LogicalOlapScan> filter = new LogicalFilter<>(ImmutableSet.of(match), scan);
+
+        // The root index stores neither positions nor norms: no similarity can be computed.
+        AnalysisException exception = Assertions.assertThrows(AnalysisException.class,
+                () -> CheckScoreUsage.checkScoringPolicyAdmission(filter, scan, manager));
+        Assertions.assertTrue(exception.getMessage().contains("VARIANT root index"),
+                exception.getMessage());
+        Mockito.verify(manager, Mockito.never()).validateAnalyzerUsesCommonGrams(Mockito.anyString());
+    }
+
+    @Test
     public void testMatchWithNonSlotLeftFallsBackToBeAtRuleLevel() throws Exception {
         IndexPolicyMgr manager = Mockito.mock(IndexPolicyMgr.class);
         Mockito.doThrow(new DdlException("Analyzer 'missing_analyzer' does not exist"))
@@ -466,6 +485,15 @@ public class CheckScoreUsageTest {
     private static Index builtInIndex(String name, String column) {
         return new Index(NEXT_INDEX_ID.getAndIncrement(), name, ImmutableList.of(column), IndexType.INVERTED,
                 Map.of("parser", "standard", "support_phrase", "true"), "");
+    }
+
+    private static Index variantRootIndex(String name, String column) {
+        return new Index(NEXT_INDEX_ID.getAndIncrement(), name, ImmutableList.of(column), IndexType.INVERTED,
+                Map.of("parser", "english",
+                        InvertedIndexProperties.VARIANT_INDEX_SCOPE_KEY,
+                        InvertedIndexProperties.VARIANT_INDEX_SCOPE_VALUES,
+                        InvertedIndexProperties.VARIANT_ROOT_FORMAT_VERSION_KEY,
+                        InvertedIndexProperties.VARIANT_ROOT_FORMAT_VERSION_CURRENT), "");
     }
 
 }

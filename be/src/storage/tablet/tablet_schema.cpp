@@ -48,6 +48,7 @@
 #include "storage/index/index_writer.h" // IndexColumnWriter::check_support_*_index
 #include "storage/index/inverted/analyzer/analyzer.h"
 #include "storage/index/inverted/inverted_index_parser.h"
+#include "storage/index/inverted/variant_root_index.h"
 #include "storage/olap_common.h"
 #include "storage/olap_define.h"
 #include "storage/tablet/tablet_column_object_pool.h"
@@ -1610,6 +1611,13 @@ std::vector<TabletIndexPtr> TabletSchema::inverted_index_by_field_pattern(
 }
 
 std::vector<const TabletIndex*> TabletSchema::inverted_indexs(const TabletColumn& col) const {
+    if (col.is_variant_type() && !col.is_extracted_column()) {
+        auto result = inverted_indexs(col.unique_id(), col.suffix_path());
+        std::erase_if(result, [](const TabletIndex* index) {
+            return !segment_v2::variant_root_index::is_root_index(*index);
+        });
+        return result;
+    }
     // Some columns(Float, Double, JSONB ...) from the variant do not support inverted index
     if (!segment_v2::IndexColumnWriter::check_support_inverted_index(col)) {
         return {};

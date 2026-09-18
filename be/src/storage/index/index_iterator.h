@@ -55,6 +55,12 @@ public:
 
     virtual Status read_null_bitmap(InvertedIndexQueryCacheHandle* cache_handle) = 0;
     virtual Result<bool> has_null() = 0;
+    // True when some reader of this iterator yields candidate results (a VARIANT root index
+    // bound to a sub-column path, variant_root_index.h): the results it produces may need the
+    // residual expression (InvertedIndexParam::requires_recheck says which), they must not be
+    // negated, and its null bitmap describes the VARIANT column rather than the bound path, so
+    // NULL predicates on that path cannot use it.
+    virtual bool has_candidate_reader() const { return false; }
 
     void set_context(const IndexQueryContextPtr& context) { _context = context; }
     IndexQueryContextPtr get_context() const { return _context; }
