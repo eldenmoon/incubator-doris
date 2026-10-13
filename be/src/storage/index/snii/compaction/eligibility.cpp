@@ -28,6 +28,7 @@
 #include "common/exception.h"
 #include "storage/index/inverted/analyzer/analyzer.h"
 #include "storage/index/inverted/common_grams/common_grams_segment_metadata.h"
+#include "storage/index/inverted/variant_root_index.h"
 #include "storage/index/snii/format/format_constants.h"
 #include "storage/index/snii/format/phrase_bigram.h"
 #include "storage/index/snii/reader/logical_index_reader.h"
@@ -73,6 +74,24 @@ Status validate_source_shape(const reader::LogicalIndexReader& source, size_t so
                 fmt::format("source {} carries CommonGrams/scoring metadata", source_ordinal));
     }
 
+    const auto& stats = source.stats();
+    if (stats.indexed_doc_count > stats.doc_count ||
+        stats.null_count != stats.doc_count - stats.indexed_doc_count) {
+        return reject(fmt::format("source {} document statistics violate indexed + null = doc",
+                                  source_ordinal));
+    }
+    return Status::OK();
+}
+
+Status validate_docs_only_source_shape(const reader::LogicalIndexReader& source,
+                                       size_t source_ordinal) {
+    if (source.tier() != format::IndexTier::kT1 || source.has_positions()) {
+        return reject(fmt::format("source {} is not docs-only T1", source_ordinal));
+    }
+    const auto& norms = source.section_refs().norms;
+    if (norms.offset != 0 || norms.length != 0 || source.common_grams_metadata() != nullptr) {
+        return reject(fmt::format("source {} carries scoring metadata", source_ordinal));
+    }
     const auto& stats = source.stats();
     if (stats.indexed_doc_count > stats.doc_count ||
         stats.null_count != stats.doc_count - stats.indexed_doc_count) {
@@ -211,9 +230,17 @@ Status validate_plain_t2_source_eligibility(const reader::LogicalIndexReader& so
     return reject_legacy_bigram(source, source_ordinal);
 }
 
+Status validate_docs_only_t1_source(const reader::LogicalIndexReader& source,
+                                    size_t source_ordinal) {
+    return validate_docs_only_source_shape(source, source_ordinal);
+}
+
 Status validate_snii_source_eligibility(const reader::LogicalIndexReader& source,
                                         size_t source_ordinal,
                                         const SniiCompactionEligibility& eligibility) {
+    if (eligibility.kind == SniiStreamedMergeKind::kDocsOnlyT1) {
+        return validate_docs_only_t1_source(source, source_ordinal);
+    }
     if (eligibility.kind == SniiStreamedMergeKind::kPlainT2) {
         return validate_plain_t2_source_eligibility(source, source_ordinal);
     }
@@ -290,11 +317,6 @@ Status validate_snii_compaction_eligibility(
     if (!destination_index.is_inverted_index()) {
         return reject("destination is not an inverted index");
     }
-    if (get_parser_phrase_support_string_from_properties(destination_index.properties()) !=
-        INVERTED_INDEX_PARSER_PHRASE_SUPPORT_YES) {
-        return reject("destination does not request phrase positions");
-    }
-
     const TabletIndex& first_index_meta = sources.front().index_meta.get();
     if (!first_index_meta.is_inverted_index()) {
         return reject("source 0 is not an inverted index");
@@ -322,6 +344,25 @@ Status validate_snii_compaction_eligibility(
     }
 
     const format::IndexTier source_tier = sources.front().reader.get().tier();
+    if (source_tier == format::IndexTier::kT1) {
+        if (!segment_v2::variant_root_index::is_root_index(destination_index)) {
+            return reject("docs-only streamed merge is reserved for VARIANT root indexes");
+        }
+        if (get_parser_phrase_support_string_from_properties(destination_index.properties()) ==
+            INVERTED_INDEX_PARSER_PHRASE_SUPPORT_YES) {
+            return reject("docs-only sources cannot produce a positions destination");
+        }
+        for (size_t source_ordinal = 0; source_ordinal < sources.size(); ++source_ordinal) {
+            RETURN_IF_ERROR(validate_docs_only_t1_source(sources[source_ordinal].reader.get(),
+                                                         source_ordinal));
+        }
+        out->kind = SniiStreamedMergeKind::kDocsOnlyT1;
+        return Status::OK();
+    }
+    if (get_parser_phrase_support_string_from_properties(destination_index.properties()) !=
+        INVERTED_INDEX_PARSER_PHRASE_SUPPORT_YES) {
+        return reject("destination does not request phrase positions");
+    }
     if (source_tier == format::IndexTier::kT2) {
         for (size_t source_ordinal = 0; source_ordinal < sources.size(); ++source_ordinal) {
             if (sources[source_ordinal].reader.get().tier() != format::IndexTier::kT2) {
@@ -335,7 +376,9 @@ Status validate_snii_compaction_eligibility(
         return Status::OK();
     }
     if (source_tier != format::IndexTier::kT3) {
-        return reject("source streamed-merge shape is neither plain T2 nor CommonGrams T3");
+        return reject(
+                "source streamed-merge shape is neither docs-only T1, plain T2, nor "
+                "CommonGrams T3");
     }
 
     std::optional<inverted_index::CommonGramsSegmentMetadata> source_seed;

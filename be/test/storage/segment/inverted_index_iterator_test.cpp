@@ -27,8 +27,10 @@
 #include "core/data_type/data_type_array.h"
 #include "core/data_type/data_type_nullable.h"
 #include "core/data_type/data_type_string.h"
+#include "core/data_type/data_type_variant_v2.h"
 #include "storage/index/inverted/inverted_index_parser.h"
 #include "storage/index/inverted/inverted_index_reader.h"
+#include "storage/index/inverted/variant_root_index.h"
 #include "storage/tablet/tablet_schema.h"
 
 namespace doris::segment_v2 {
@@ -60,6 +62,13 @@ public:
                  const Field& query_value, InvertedIndexQueryType query_type,
                  std::shared_ptr<roaring::Roaring>& roaring,
                  const InvertedIndexAnalyzerCtx* analyzer_ctx = nullptr) override {
+        _count_fastpath_requested = context->count_on_index_fastpath;
+        if (_count_fastpath_requested) {
+            context->count_on_index_fastpath_hit = true;
+            roaring->add(0);
+        } else {
+            roaring->add(7);
+        }
         return Status::OK();
     }
 
@@ -72,6 +81,8 @@ public:
 
     Status new_iterator(std::unique_ptr<IndexIterator>* iterator) override { return Status::OK(); }
 
+    bool count_fastpath_requested() const { return _count_fastpath_requested; }
+
 private:
     MockInvertedIndexReader(std::shared_ptr<TabletIndex> index,
                             const std::map<std::string, std::string>& properties)
@@ -82,6 +93,7 @@ private:
     std::shared_ptr<TabletIndex> _mock_index; // Keep index alive
     std::map<std::string, std::string> _properties;
     InvertedIndexReaderType _type = InvertedIndexReaderType::FULLTEXT;
+    bool _count_fastpath_requested = false;
 };
 
 class InvertedIndexIteratorTest : public testing::Test {
@@ -100,6 +112,21 @@ protected:
                 properties[INVERTED_INDEX_ANALYZER_NAME_KEY] = analyzer_key;
             }
         }
+        auto reader = MockInvertedIndexReader::create(properties, index_id);
+        reader->set_type(type);
+        return reader;
+    }
+
+    // A values index answering a whole-document predicate: exact rows, no residual.
+    std::shared_ptr<MockInvertedIndexReader> create_mock_values_reader(const std::string& parser,
+                                                                       InvertedIndexReaderType type,
+                                                                       int64_t index_id) {
+        std::map<std::string, std::string> properties = {
+                {INVERTED_INDEX_PARSER_KEY, parser},
+                {std::string(variant_root_index::VARIANT_INDEX_SCOPE_KEY),
+                 std::string(variant_root_index::VARIANT_INDEX_SCOPE_VALUES)},
+                {std::string(variant_root_index::VARIANT_ROOT_FORMAT_VERSION_KEY),
+                 std::string(variant_root_index::VARIANT_ROOT_FORMAT_VERSION_CURRENT)}};
         auto reader = MockInvertedIndexReader::create(properties, index_id);
         reader->set_type(type);
         return reader;
@@ -206,7 +233,32 @@ TEST_F(InvertedIndexIteratorTest, DefaultRawReaderMatchesExplicitNone) {
     EXPECT_EQ(result_none.value(), raw_reader);
 }
 
-// find_reader_candidates tests (via select_best_reader)
+TEST_F(InvertedIndexIteratorTest, ExactChildReaderKeepsCountOnlyFabrication) {
+    InvertedIndexIterator iterator;
+    auto child_reader = create_mock_reader("none", InvertedIndexReaderType::STRING_TYPE, 10);
+    iterator.add_reader(InvertedIndexReaderType::STRING_TYPE, child_reader);
+    auto context = std::make_shared<IndexQueryContext>();
+    context->count_on_index_fastpath = true;
+    iterator.set_context(context);
+
+    InvertedIndexParam param;
+    param.column_name = "payload.repo";
+    param.column_type = std::make_shared<DataTypeString>();
+    param.query_value = Field::create_field<TYPE_STRING>(std::string("apache/doris"));
+    param.query_type = InvertedIndexQueryType::EQUAL_QUERY;
+    param.num_rows = 10;
+    param.roaring = std::make_shared<roaring::Roaring>();
+
+    ASSERT_TRUE(iterator.read_from_index(IndexParam {&param}).ok());
+    EXPECT_FALSE(iterator.has_candidate_reader());
+    EXPECT_FALSE(param.requires_recheck);
+    EXPECT_TRUE(child_reader->count_fastpath_requested());
+    EXPECT_TRUE(context->count_on_index_fastpath_hit);
+    EXPECT_TRUE(context->count_on_index_fastpath);
+    EXPECT_EQ(std::vector<uint32_t>(param.roaring->begin(), param.roaring->end()),
+              std::vector<uint32_t>({0}));
+}
+
 TEST_F(InvertedIndexIteratorTest, FindReaderCandidates_ExactMatch) {
     InvertedIndexIterator iterator;
     auto reader = create_mock_reader("chinese");

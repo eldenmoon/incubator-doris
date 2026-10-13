@@ -35,6 +35,9 @@ struct InvertedIndexParam {
     uint32_t num_rows;
     std::shared_ptr<roaring::Roaring> roaring;
     bool skip_try = false;
+    // Candidate results from shared index implementations retain their scalar residual.
+    // Root MATCH returns exact rowids and never sets this flag.
+    bool requires_recheck = false;
     // Non-null only when the caller consumes both the query result and this reader's null bitmap.
     InvertedIndexQueryCacheHandle* null_bitmap_cache_handle = nullptr;
     // Pointer to analyzer context (can be nullptr if not needed)
@@ -55,12 +58,13 @@ public:
     Status read_null_bitmap(InvertedIndexQueryCacheHandle* cache_handle) override;
 
     [[nodiscard]] Result<bool> has_null() override;
+    bool has_candidate_reader() const override { return false; }
 
     IndexReaderPtr get_reader(IndexReaderType reader_type) const override;
 
     [[nodiscard]] Result<InvertedIndexReaderPtr> select_best_reader(
             const DataTypePtr& column_type, InvertedIndexQueryType query_type,
-            const std::string& analyzer_key);
+            const std::string& analyzer_key) const;
 
     [[nodiscard]] Result<InvertedIndexReaderPtr> select_any_reader();
 
@@ -89,6 +93,8 @@ private:
     // Index for O(1) lookup by analyzer_key. Maps normalized key to candidate indices.
     // Built incrementally in add_reader().
     InvertedIndexSelectionKeyIndex _key_to_entries;
+    // Some reader is a VARIANT root index (its terms are strings whatever the column type).
+    bool _has_root_reader = false;
 };
 
 } // namespace doris::segment_v2

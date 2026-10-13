@@ -45,6 +45,7 @@ namespace segment_v2 {
 class ColumnWriter;
 class ScalarColumnWriter;
 class VariantV2ColumnWriter;
+class VariantRootIndexWriter;
 class VariantShredder;
 struct VariantShreddedColumns;
 
@@ -237,6 +238,8 @@ private:
     VariantStatistics _statistics;
     NestedGroupRoutingPlan _nested_group_routing_plan;
     std::unique_ptr<VariantStreamingCompactionWriter> _streaming_compaction_writer;
+    std::vector<std::unique_ptr<VariantRootIndexWriter>> _root_index_writers;
+    std::vector<VariantRootIndexWriter*> _root_index_writer_ptrs;
 };
 
 // Selects the storage writer once from the first physical input column. The tablet schema remains

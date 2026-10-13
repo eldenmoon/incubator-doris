@@ -21,6 +21,7 @@
 #include <cstdint>
 #include <memory>
 #include <span>
+#include <vector>
 
 #include "common/consts.h"
 #include "common/status.h"
@@ -36,6 +37,8 @@ class TabletSchema;
 }
 
 namespace doris::segment_v2 {
+
+class VariantRootIndexWriter;
 
 enum class VariantShredderPhysicalLayout : uint8_t {
     ORDINARY,
@@ -55,6 +58,9 @@ struct VariantShredderOptions {
     uint32_t doc_bucket_count = 1;
     size_t doc_materialization_min_rows = 0;
     bool check_duplicate_json_path = false;
+    // Owned by VariantV2ColumnWriter and fed only after storage conversion is finalized.
+    // DOC indexes consume binary buckets, matching whole-root reads.
+    std::vector<VariantRootIndexWriter*> root_index_writers;
 };
 
 struct VariantShreddedColumns {

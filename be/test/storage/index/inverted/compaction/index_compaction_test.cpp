@@ -1793,11 +1793,14 @@ TEST_F(IndexCompactionTest, snii_native_merge_validates_rowids_once_and_matches_
                   (std::set<std::pair<int32_t, int64_t>> {{1, 11001}, {1, 11002}}));
         EXPECT_EQ(compaction._output_rowset->num_segments(), 2);
     };
+    constexpr int32_t output_segment_start_id = 10;
     RowsetSharedPtr native_merge;
-    Status status = IndexCompactionUtils::do_compaction(rowsets, _engine_ref, _tablet, true,
-                                                        native_merge, check_native_merge, 1000);
+    Status status =
+            IndexCompactionUtils::do_compaction(rowsets, _engine_ref, _tablet, true, native_merge,
+                                                check_native_merge, 1000, output_segment_start_id);
     ASSERT_TRUE(status.ok()) << status;
     ASSERT_NE(native_merge, nullptr);
+    EXPECT_EQ(native_merge->rowset_meta()->segment_id(0), output_segment_start_id);
     EXPECT_EQ(validation_count, 1);
     EXPECT_EQ(reader_init_count, rowsets.size());
     DebugPoints::instance()->remove(std::string(kValidationPoint));
@@ -1813,10 +1816,118 @@ TEST_F(IndexCompactionTest, snii_native_merge_validates_rowids_once_and_matches_
     ASSERT_TRUE(status.ok()) << status;
     ASSERT_NE(raw_rebuild, nullptr);
     ASSERT_EQ(native_merge->num_segments(), raw_rebuild->num_segments());
-    for (uint32_t segment_id = 0; segment_id < native_merge->num_segments(); ++segment_id) {
-        EXPECT_EQ(_read_index_file_bytes(native_merge, segment_id),
-                  _read_index_file_bytes(raw_rebuild, segment_id));
+    for (size_t segment_pos = 0; segment_pos < native_merge->num_segments(); ++segment_pos) {
+        EXPECT_EQ(_read_index_file_bytes(native_merge, native_merge->segment(segment_pos).id()),
+                  _read_index_file_bytes(raw_rebuild, raw_rebuild->segment(segment_pos).id()));
     }
+}
+
+// A native merge charges inverted_index_ram_buffer_size as a hard limit and would fail the
+// whole compaction half-way when the sources are too large for it. The planner now estimates the
+// guaranteed allocations up front and routes such indexes to the raw-column rebuild instead; the
+// output must be byte-identical to a rebuild, and the decision is logged and counted.
+TEST_F(IndexCompactionTest, snii_native_merge_preflight_over_cap_rebuilds_from_raw_column) {
+    const bool old_common_grams = config::enable_common_grams_index_build;
+    const bool old_debug_points = config::enable_debug_points;
+    const bool old_write_freq = config::snii_positions_index_write_freq;
+    config::enable_common_grams_index_build = false;
+    config::enable_debug_points = true;
+    config::snii_positions_index_write_freq = false;
+    constexpr std::string_view kPreflightPoint = "Compaction::snii_native_merge_preflight_over_cap";
+    constexpr std::string_view kValidationPoint =
+            "Compaction::snii_validated_rowid_conversion_created";
+    DEFER({
+        DebugPoints::instance()->remove(std::string(kPreflightPoint));
+        DebugPoints::instance()->remove(std::string(kValidationPoint));
+        config::enable_common_grams_index_build = old_common_grams;
+        config::enable_debug_points = old_debug_points;
+        config::snii_positions_index_write_freq = old_write_freq;
+    });
+
+    _build_snii_multi_index_tablet();
+    const std::vector<RowsetSharedPtr> rowsets = _build_snii_source_rowsets();
+    size_t validation_count = 0;
+    std::function<void()> count_validation = [&validation_count]() { ++validation_count; };
+    DebugPoints::instance()->add_with_callback(std::string(kValidationPoint), count_validation);
+    DebugPoints::instance()->add(std::string(kPreflightPoint));
+
+    auto check_rejected = [](const BaseCompaction& compaction, const RowsetWriterContext& ctx) {
+        // Both logical indexes of column 1 were eligible by shape and rejected by the memory
+        // preflight: nothing merges natively, both rebuild from the raw column.
+        EXPECT_TRUE(ctx.columns_to_do_index_compaction.empty());
+        EXPECT_TRUE(ctx.snii_indexes_to_do_compaction.empty());
+        EXPECT_EQ(compaction._snii_merge_preflight_rejections, 2U);
+        EXPECT_EQ(compaction._snii_merge_eligibility.size(), 2U);
+        EXPECT_EQ(compaction._output_rowset->num_segments(), 2);
+    };
+    RowsetSharedPtr rejected;
+    Status status = IndexCompactionUtils::do_compaction(rowsets, _engine_ref, _tablet, true,
+                                                        rejected, check_rejected, 1000);
+    ASSERT_TRUE(status.ok()) << status;
+    ASSERT_NE(rejected, nullptr);
+    // No native merge session was ever created.
+    EXPECT_EQ(validation_count, 0);
+    DebugPoints::instance()->remove(std::string(kPreflightPoint));
+    DebugPoints::instance()->remove(std::string(kValidationPoint));
+
+    auto check_raw_rebuild = [](const BaseCompaction& compaction, const RowsetWriterContext& ctx) {
+        EXPECT_TRUE(ctx.columns_to_do_index_compaction.empty());
+        EXPECT_EQ(compaction._snii_merge_preflight_rejections, 0U);
+        EXPECT_EQ(compaction._output_rowset->num_segments(), 2);
+    };
+    RowsetSharedPtr raw_rebuild;
+    status = IndexCompactionUtils::do_compaction(rowsets, _engine_ref, _tablet, false, raw_rebuild,
+                                                 check_raw_rebuild, 1000);
+    ASSERT_TRUE(status.ok()) << status;
+    ASSERT_NE(raw_rebuild, nullptr);
+    ASSERT_EQ(rejected->num_segments(), raw_rebuild->num_segments());
+    for (size_t segment_pos = 0; segment_pos < rejected->num_segments(); ++segment_pos) {
+        EXPECT_EQ(_read_index_file_bytes(rejected, rejected->segment(segment_pos).id()),
+                  _read_index_file_bytes(raw_rebuild, raw_rebuild->segment(segment_pos).id()));
+    }
+}
+
+// Eligibility is decided once per logical index: a second planning pass over the same context
+// reuses the memoized decision without reopening any source reader.
+TEST_F(IndexCompactionTest, snii_native_merge_eligibility_is_planned_once_per_index) {
+    const bool old_common_grams = config::enable_common_grams_index_build;
+    const bool old_debug_points = config::enable_debug_points;
+    const bool old_write_freq = config::snii_positions_index_write_freq;
+    config::enable_common_grams_index_build = false;
+    config::enable_debug_points = true;
+    config::snii_positions_index_write_freq = false;
+    constexpr std::string_view kReaderInitPoint = "Compaction::snii_eligibility_reader_initialized";
+    DEFER({
+        DebugPoints::instance()->remove(std::string(kReaderInitPoint));
+        config::enable_common_grams_index_build = old_common_grams;
+        config::enable_debug_points = old_debug_points;
+        config::snii_positions_index_write_freq = old_write_freq;
+    });
+
+    _build_snii_multi_index_tablet();
+    const std::vector<RowsetSharedPtr> rowsets = _build_snii_source_rowsets();
+    size_t reader_init_count = 0;
+    std::function<void()> count_reader_init = [&reader_init_count]() { ++reader_init_count; };
+    DebugPoints::instance()->add_with_callback(std::string(kReaderInitPoint), count_reader_init);
+
+    auto check_planned_once = [&](const BaseCompaction& compaction,
+                                  const RowsetWriterContext& ctx) {
+        EXPECT_EQ(ctx.snii_indexes_to_do_compaction,
+                  (std::set<std::pair<int32_t, int64_t>> {{1, 11001}, {1, 11002}}));
+        EXPECT_EQ(compaction._snii_merge_eligibility.size(), 2U);
+        // Plan the same context again: nothing is reopened and the selection is unchanged.
+        RowsetWriterContext replay = ctx;
+        replay.snii_indexes_to_do_compaction.clear();
+        const size_t opened_before = reader_init_count;
+        const_cast<BaseCompaction&>(compaction).construct_index_compaction_columns(replay);
+        EXPECT_EQ(reader_init_count, opened_before);
+        EXPECT_EQ(replay.snii_indexes_to_do_compaction, ctx.snii_indexes_to_do_compaction);
+    };
+    RowsetSharedPtr output;
+    const Status status = IndexCompactionUtils::do_compaction(rowsets, _engine_ref, _tablet, true,
+                                                              output, check_planned_once, 1000);
+    ASSERT_TRUE(status.ok()) << status;
+    EXPECT_EQ(reader_init_count, rowsets.size());
 }
 
 // The design's core split: two logical indexes share one column, the eligible

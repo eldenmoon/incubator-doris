@@ -63,6 +63,12 @@ public:
                     "Inverted index evaluate skipped, no inverted index reader can not support "
                     "comparison predicate");
         }
+        if constexpr (PT == PredicateType::NE) {
+            if (iterator->has_candidate_reader()) {
+                return Status::Error<ErrorCode::INVERTED_INDEX_EVALUATE_SKIPPED>(
+                        "a candidate index result cannot be negated");
+            }
+        }
 
         if (iterator->get_reader(segment_v2::InvertedIndexReaderType::STRING_TYPE) == nullptr &&
             iterator->get_reader(segment_v2::InvertedIndexReaderType::BKD) == nullptr) {
@@ -117,6 +123,7 @@ public:
         }
 
         if constexpr (PT == PredicateType::NE) {
+            DORIS_CHECK(!param.requires_recheck);
             *bitmap -= *param.roaring;
         } else {
             *bitmap &= *param.roaring;
@@ -342,7 +349,7 @@ public:
             // Only support Parquet native types where physical == logical representation
             // BOOLEAN -> hash as int32 (Parquet bool stored as int32)
             if constexpr (Type == PrimitiveType::TYPE_BOOLEAN) {
-                int32_t int32_value = static_cast<int32_t>(_value);
+                auto int32_value = static_cast<int32_t>(_value);
                 return test_bytes(int32_value);
             } else if constexpr (Type == PrimitiveType::TYPE_INT) {
                 // INT -> hash as int32

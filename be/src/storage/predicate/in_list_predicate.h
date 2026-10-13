@@ -146,6 +146,12 @@ public:
                     "Inverted index evaluate skipped, no inverted index reader can not support "
                     "in_list");
         }
+        if constexpr (PT == PredicateType::NOT_IN_LIST) {
+            if (iterator->has_candidate_reader()) {
+                return Status::Error<ErrorCode::INVERTED_INDEX_EVALUATE_SKIPPED>(
+                        "a candidate index result cannot be negated");
+            }
+        }
         // only string type and bkd inverted index reader can be used for in
         if (iterator->get_reader(segment_v2::InvertedIndexReaderType::STRING_TYPE) == nullptr &&
             iterator->get_reader(segment_v2::InvertedIndexReaderType::BKD) == nullptr) {
@@ -175,6 +181,9 @@ public:
             param.num_rows = num_rows;
             param.roaring = std::make_shared<roaring::Roaring>();
             RETURN_IF_ERROR(iterator->read_from_index(&param));
+            if constexpr (PT == PredicateType::NOT_IN_LIST) {
+                DORIS_CHECK(!param.requires_recheck);
+            }
             indices |= *param.roaring;
             iter->next();
         }
@@ -427,7 +436,7 @@ public:
                     if constexpr (Type == PrimitiveType::TYPE_TINYINT ||
                                   Type == PrimitiveType::TYPE_SMALLINT ||
                                   Type == PrimitiveType::TYPE_INT) {
-                        int32_t int32_value = static_cast<int32_t>(*value);
+                        auto int32_value = static_cast<int32_t>(*value);
                         if (test_bytes(int32_value)) {
                             return true;
                         }

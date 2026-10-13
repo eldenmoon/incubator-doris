@@ -17,12 +17,15 @@
 
 package org.apache.doris.nereids.rules.rewrite;
 
+import org.apache.doris.common.Config;
 import org.apache.doris.nereids.exceptions.AnalysisException;
 import org.apache.doris.nereids.trees.expressions.Add;
 import org.apache.doris.nereids.trees.expressions.Alias;
 import org.apache.doris.nereids.trees.expressions.Cast;
 import org.apache.doris.nereids.trees.expressions.Expression;
+import org.apache.doris.nereids.trees.expressions.MatchAll;
 import org.apache.doris.nereids.trees.expressions.MatchAny;
+import org.apache.doris.nereids.trees.expressions.MatchPhrase;
 import org.apache.doris.nereids.trees.expressions.Or;
 import org.apache.doris.nereids.trees.expressions.SlotReference;
 import org.apache.doris.nereids.trees.expressions.literal.IntegerLiteral;
@@ -34,6 +37,7 @@ import org.apache.doris.nereids.types.VariantType;
 import org.apache.doris.nereids.util.PlanConstructor;
 
 import com.google.common.collect.ImmutableSet;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -46,35 +50,40 @@ class CheckMatchExpressionTest {
 
     private CheckMatchExpression checkMatchExpression;
     private Method checkChildrenMethod;
+    private boolean originalEnableVariantV2;
 
     @BeforeEach
     void setUp() throws Exception {
+        originalEnableVariantV2 = Config.enable_variant_v2;
+        Config.enable_variant_v2 = true;
         checkMatchExpression = new CheckMatchExpression();
         checkChildrenMethod = CheckMatchExpression.class.getDeclaredMethod("checkChildren", LogicalFilter.class);
         checkChildrenMethod.setAccessible(true);
     }
 
-    @Test
-    void testRejectsRootVariantMatch() {
-        SlotReference rootVariantSlot = new SlotReference("response", VariantType.INSTANCE, true, Arrays.asList());
-        MatchAny match = new MatchAny(rootVariantSlot, new StringLiteral("doris"));
-
-        AnalysisException exception = Assertions.assertThrows(AnalysisException.class, () -> invokeCheck(match));
-        Assertions.assertTrue(exception.getMessage().contains("VARIANT root column does not support MATCH"),
-                exception.getMessage());
+    @AfterEach
+    void tearDown() {
+        Config.enable_variant_v2 = originalEnableVariantV2;
     }
 
     @Test
-    void testRejectsRootVariantMatchNestedInOr() {
+    void testAllowsRootVariantMatchAnyAndAll() {
+        SlotReference rootVariantSlot = new SlotReference("response", VariantType.INSTANCE, true, Arrays.asList());
+        Assertions.assertDoesNotThrow(
+                () -> invokeCheck(new MatchAny(rootVariantSlot, new StringLiteral("doris"))));
+        Assertions.assertDoesNotThrow(
+                () -> invokeCheck(new MatchAll(rootVariantSlot, new StringLiteral("apache doris"))));
+    }
+
+    @Test
+    void testAllowsRootVariantMatchNestedInOr() {
         SlotReference textSlot = new SlotReference("response_body", StringType.INSTANCE, true);
         SlotReference rootVariantSlot = new SlotReference("response", VariantType.INSTANCE, true, Arrays.asList());
         Or match = new Or(
                 new MatchAny(textSlot, new StringLiteral("doris")),
                 new MatchAny(rootVariantSlot, new StringLiteral("doris")));
 
-        AnalysisException exception = Assertions.assertThrows(AnalysisException.class, () -> invokeCheck(match));
-        Assertions.assertTrue(exception.getMessage().contains("VARIANT root column does not support MATCH"),
-                exception.getMessage());
+        Assertions.assertDoesNotThrow(() -> invokeCheck(match));
     }
 
     @Test
@@ -83,18 +92,25 @@ class CheckMatchExpressionTest {
         MatchAny match = new MatchAny(new Cast(rootVariantSlot, StringType.INSTANCE), new StringLiteral("doris"));
 
         AnalysisException exception = Assertions.assertThrows(AnalysisException.class, () -> invokeCheck(match));
-        Assertions.assertTrue(exception.getMessage().contains("VARIANT root column does not support MATCH"),
+        Assertions.assertTrue(exception.getMessage().contains("must use the root column directly"),
                 exception.getMessage());
     }
 
     @Test
-    void testRejectsAliasOnRootVariantMatch() {
+    void testAllowsAliasOnRootVariantMatch() {
         SlotReference rootVariantSlot = new SlotReference("response", VariantType.INSTANCE, true, Arrays.asList());
         MatchAny match = new MatchAny(new Alias(rootVariantSlot, "response.trace_id"), new StringLiteral("doris"));
 
+        Assertions.assertDoesNotThrow(() -> invokeCheck(match));
+    }
+
+    @Test
+    void testRejectsRootVariantPhraseMatch() {
+        SlotReference rootVariantSlot = new SlotReference("response", VariantType.INSTANCE, true, Arrays.asList());
+        MatchPhrase match = new MatchPhrase(rootVariantSlot, new StringLiteral("apache doris"));
+
         AnalysisException exception = Assertions.assertThrows(AnalysisException.class, () -> invokeCheck(match));
-        Assertions.assertTrue(exception.getMessage().contains("VARIANT root column does not support MATCH"),
-                exception.getMessage());
+        Assertions.assertTrue(exception.getMessage().contains("supports only MATCH"), exception.getMessage());
     }
 
     @Test

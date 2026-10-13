@@ -35,6 +35,7 @@ struct VariantColumnData;
 namespace segment_v2 {
 
 class VariantBinaryWriter;
+class VariantRootIndexWriter;
 class VariantShredder;
 struct VariantShreddedColumns;
 
@@ -82,6 +83,8 @@ private:
     std::vector<ColumnWriterOptions> _subcolumn_opts;
     std::vector<TabletIndexes> _subcolumn_indexes;
     std::unique_ptr<VariantBinaryWriter> _binary_writer;
+    std::vector<std::unique_ptr<VariantRootIndexWriter>> _root_index_writers;
+    std::vector<VariantRootIndexWriter*> _root_index_writer_ptrs;
 };
 
 } // namespace segment_v2

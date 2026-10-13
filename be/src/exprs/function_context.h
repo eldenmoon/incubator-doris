@@ -84,6 +84,11 @@ public:
 
     bool enable_strict_mode() const { return _enable_strict_mode; }
 
+    // Set for each MATCH execution from the current segment's index result. This transient
+    // permission is not cloned: another segment may have no usable index.
+    bool is_index_recheck() const { return _is_index_recheck; }
+    void set_is_index_recheck(bool value) { _is_index_recheck = value; }
+
     bool set_check_overflow_for_decimal(bool check_overflow_for_decimal) {
         return _check_overflow_for_decimal = check_overflow_for_decimal;
     }
@@ -198,6 +203,7 @@ private:
     RuntimeProfile::Counter* _udf_execute_timer = nullptr;
     bool _check_overflow_for_decimal = false;
     bool _enable_strict_mode = false;
+    bool _is_index_recheck = false;
 
     bool _string_as_jsonb_string = false;
     bool _jsonb_string_as_string = false;

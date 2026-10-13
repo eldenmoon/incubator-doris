@@ -146,7 +146,6 @@ std::optional<ColumnPtr> extract_shredded_typed_variant_element(
         }
         shredded_path.push_back(segment);
     }
-
     auto match = source.find_shredded_typed_value(shredded_path);
     if (!match.has_value()) {
         return std::nullopt;

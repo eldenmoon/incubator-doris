@@ -18,10 +18,9 @@
 // https://github.com/ClickHouse/ClickHouse/blob/master/src/Functions/IsNotNull.cpp
 // and modified by Doris
 
-#include <stddef.h>
-
 #include <algorithm>
 #include <boost/iterator/iterator_facade.hpp>
+#include <cstddef>
 #include <memory>
 #include <string>
 #include <utility>
@@ -105,6 +104,11 @@ public:
             return Status::OK();
         }
         auto* index_iter = iterators[0];
+        if (index_iter->has_candidate_reader()) {
+            // The null bitmap describes SQL NULL values of the whole VARIANT column, not the
+            // nullability of the bound path.
+            return Status::OK();
+        }
         if (index_iter->has_null()) {
             segment_v2::InvertedIndexQueryCacheHandle null_bitmap_cache_handle;
             RETURN_IF_ERROR(index_iter->read_null_bitmap(&null_bitmap_cache_handle));

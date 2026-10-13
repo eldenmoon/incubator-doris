@@ -87,6 +87,7 @@
 #include "re2/re2.h"
 #include "runtime/exec_env.h"
 #include "runtime/runtime_state.h"
+#include "storage/index/inverted/variant_root_index.h"
 #include "storage/olap_common.h"
 #include "storage/rowset/beta_rowset.h"
 #include "storage/rowset/rowset.h"
@@ -1042,6 +1043,82 @@ Status VariantCompactionUtil::aggregate_variant_extended_info(
     return Status::OK();
 }
 
+Status VariantCompactionUtil::root_index_plan_preserves_tokens(
+        const std::vector<RowsetSharedPtr>& rowsets, const TabletSchema& plan, int32_t column_uid) {
+    std::unordered_map<int32_t, VariantExtendedInfo> sources;
+    for (const auto& rowset : rowsets) {
+        RETURN_IF_ERROR(aggregate_variant_extended_info(rowset, &sources));
+    }
+    const auto& parent = plan.column_by_uid(column_uid);
+    if (parent.variant_enable_nested_group()) {
+        return Status::NotSupported(
+                "root index native merge does not support nested-group conversion");
+    }
+    const auto& info = sources[column_uid];
+    // Sparse paths have no complete type metadata. A newly materialized sparse path can
+    // change boolean/numeric or floating text; keep the whole value for the rebuild writer.
+    if (!info.sparse_paths.empty() || !parent.get_sub_columns().empty()) {
+        return Status::NotSupported("root index conversion includes sparse or declared paths");
+    }
+    // The VARIANT root may itself hold promoted scalar/array values, even when there is
+    // no extracted column. Include that runtime merge in the proof as well.
+    if (!parent.variant_enable_doc_mode()) {
+        const auto root = info.path_to_data_types.find(PathInData());
+        if (root != info.path_to_data_types.end() && !root->second.empty()) {
+            const auto first = remove_nullable(root->second.front());
+            for (const auto& type : root->second) {
+                if (!first->equals(*remove_nullable(type))) {
+                    return Status::NotSupported(
+                            "root scalar conversion is not proven token preserving");
+                }
+            }
+        }
+    }
+    for (const auto& column : plan.columns()) {
+        if (!column->is_extracted_column() || column->parent_unique_id() != column_uid ||
+            column->type() == FieldType::OLAP_FIELD_TYPE_VARIANT ||
+            column->type() == FieldType::OLAP_FIELD_TYPE_MAP) {
+            continue;
+        }
+        const auto relative = column->path_info_ptr()->copy_pop_front();
+        const auto source = info.path_to_data_types.find(relative);
+        if (source == info.path_to_data_types.end()) {
+            return Status::NotSupported("root index source type is unavailable for {}",
+                                        column->name());
+        }
+        const auto target = remove_nullable(DataTypeFactory::instance().create_data_type(*column));
+        for (const auto& type : source->second) {
+            const auto value_type = remove_nullable(type);
+            if (!value_type->equals(*target)) {
+                // Integer widening has identical canonical decimal text. Boolean, FLOAT,
+                // DOUBLE, arrays and all other conversions need a rebuild.
+                const auto src = value_type->get_primitive_type();
+                const auto dst = target->get_primitive_type();
+                const auto integer_width = [](PrimitiveType t) {
+                    switch (t) {
+                    case TYPE_TINYINT:
+                        return 1;
+                    case TYPE_SMALLINT:
+                        return 2;
+                    case TYPE_INT:
+                        return 4;
+                    case TYPE_BIGINT:
+                        return 8;
+                    default:
+                        return 0;
+                    }
+                };
+                if (integer_width(src) == 0 || integer_width(dst) < integer_width(src)) {
+                    return Status::NotSupported(
+                            "root index canonical text may change for {}: {} -> {}", column->name(),
+                            value_type->get_name(), target->get_name());
+                }
+            }
+        }
+    }
+    return Status::OK();
+}
+
 // get the subpaths and sparse paths for the variant column
 void VariantCompactionUtil::get_subpaths(int32_t max_subcolumns_count,
                                          const PathToNoneNullValues& stats,
@@ -1348,12 +1425,21 @@ void VariantCompactionUtil::get_compaction_subcolumns_from_data_types(
 // ordinary extracted subcolumns. NG typed paths still use get_compaction_typed_columns(), keeping
 // typed-column rules out of the NG-specific regular-path filtering.
 Status VariantCompactionUtil::get_extended_compaction_schema(
-        const std::vector<RowsetSharedPtr>& rowsets, TabletSchemaSPtr& target) {
+        const std::vector<RowsetSharedPtr>& rowsets, TabletSchemaSPtr& target,
+        const std::set<std::pair<int32_t, int64_t>>& merged_snii_indexes) {
     std::unordered_map<int32_t, VariantExtendedInfo> uid_to_variant_extended_info;
+    const auto has_unmerged_root_index = [&](const TabletColumn& column) {
+        const auto parent_indexes = target->inverted_indexs(column.unique_id());
+        return std::ranges::any_of(parent_indexes, [&](const TabletIndex* index) {
+            return segment_v2::variant_root_index::is_root_index(*index) &&
+                   !merged_snii_indexes.contains({column.unique_id(), index->index_id()});
+        });
+    };
     const bool needs_variant_extended_info =
-            std::ranges::any_of(target->columns(), [](const TabletColumnPtr& column) {
-                return column->is_variant_type() && (should_check_variant_path_stats(*column) ||
-                                                     column->variant_enable_nested_group());
+            std::ranges::any_of(target->columns(), [&](const TabletColumnPtr& column) {
+                return column->is_variant_type() && !has_unmerged_root_index(*column) &&
+                       (should_check_variant_path_stats(*column) ||
+                        column->variant_enable_nested_group());
             });
     if (needs_variant_extended_info) {
         // collect path stats from all rowsets and segments
@@ -1376,6 +1462,20 @@ Status VariantCompactionUtil::get_extended_compaction_schema(
             continue;
         }
         VLOG_DEBUG << "column " << column->name() << " unique id " << column->unique_id();
+
+        if (has_unmerged_root_index(*column)) {
+            // A root index rebuild consumes the complete logical object. Keeping this column as
+            // one compaction field selects the hierarchical reader and lets the Variant writer
+            // shred the same logical value after all root indexes have observed it. If every root
+            // index merges natively, no writer needs the logical object and regular extracted
+            // columns are safe again.
+            // The values index exists on Variant V2 columns only. Flagging the logical column
+            // makes the compaction assemble it as Variant V2 and re-shred it through the V2
+            // writer, whose leaves reach the index writers directly; the legacy ColumnVariant
+            // path would rebuild the index from JSON text.
+            output_schema->mutable_column(output_schema->num_columns() - 1).set_variant_is_v2(true);
+            continue;
+        }
 
         const auto info_it = uid_to_variant_extended_info.find(column->unique_id());
         const VariantExtendedInfo empty_extended_info;
@@ -1777,7 +1877,14 @@ bool inherit_index(const std::vector<const TabletIndex*>& parent_indexes,
     if (field_is_numeric_type(column_type) ||
         (is_array_nested_type &&
          (field_is_numeric_type(column_type) || field_is_slice_type(column_type)))) {
-        auto index_ptr = std::make_shared<TabletIndex>(*parent_indexes[0]);
+        const auto parent_index = std::find_if(
+                parent_indexes.begin(), parent_indexes.end(), [](const TabletIndex* index) {
+                    return !segment_v2::variant_root_index::is_root_index(*index);
+                });
+        if (parent_index == parent_indexes.end()) {
+            return false;
+        }
+        auto index_ptr = std::make_shared<TabletIndex>(**parent_index);
         index_ptr->set_escaped_escaped_index_suffix_path(suffix_path);
         // no need parse for bkd index or array index
         index_ptr->remove_parser_and_analyzer();
@@ -1787,11 +1894,14 @@ bool inherit_index(const std::vector<const TabletIndex*>& parent_indexes,
     // string type need to inherit all indexes
     else if (field_is_slice_type(column_type) && !is_array_nested_type) {
         for (const auto& index : parent_indexes) {
+            if (segment_v2::variant_root_index::is_root_index(*index)) {
+                continue;
+            }
             auto index_ptr = std::make_shared<TabletIndex>(*index);
             index_ptr->set_escaped_escaped_index_suffix_path(suffix_path);
             subcolumns_indexes.emplace_back(std::move(index_ptr));
         }
-        return true;
+        return !subcolumns_indexes.empty();
     }
     return false;
 }

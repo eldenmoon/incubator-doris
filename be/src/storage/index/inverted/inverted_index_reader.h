@@ -54,11 +54,9 @@ namespace lucene {
 namespace store {
 class Directory;
 } // namespace store
-namespace util {
-namespace bkd {
+namespace util::bkd {
 class bkd_docid_set_iterator;
-} // namespace bkd
-} // namespace util
+} // namespace util::bkd
 } // namespace lucene
 namespace roaring {
 class Roaring;
@@ -81,6 +79,10 @@ class InvertedIndexResultBitmap {
 private:
     std::shared_ptr<roaring::Roaring> _data_bitmap = nullptr;
     std::shared_ptr<roaring::Roaring> _null_bitmap = nullptr;
+    // The rows are candidates (a superset) for the expression that produced them, not its
+    // answer: the expression must still be evaluated on them, the result must not be negated,
+    // and it never stands in for a count. Sticky across &=, |= and -=.
+    bool _requires_recheck = false;
 
 public:
     // Default constructor
@@ -89,8 +91,11 @@ public:
 
     // Constructor with arguments
     InvertedIndexResultBitmap(std::shared_ptr<roaring::Roaring> data_bitmap,
-                              std::shared_ptr<roaring::Roaring> null_bitmap)
-            : _data_bitmap(std::move(data_bitmap)), _null_bitmap(std::move(null_bitmap)) {}
+                              std::shared_ptr<roaring::Roaring> null_bitmap,
+                              bool requires_recheck = false)
+            : _data_bitmap(std::move(data_bitmap)),
+              _null_bitmap(std::move(null_bitmap)),
+              _requires_recheck(requires_recheck) {}
 
     // Copy constructor
     InvertedIndexResultBitmap(const InvertedIndexResultBitmap& other)
@@ -99,12 +104,14 @@ public:
                                    : nullptr),
               _null_bitmap(other._null_bitmap
                                    ? std::make_shared<roaring::Roaring>(*other._null_bitmap)
-                                   : nullptr) {}
+                                   : nullptr),
+              _requires_recheck(other._requires_recheck) {}
 
     // Move constructor
     InvertedIndexResultBitmap(InvertedIndexResultBitmap&& other) noexcept
             : _data_bitmap(std::move(other._data_bitmap)),
-              _null_bitmap(std::move(other._null_bitmap)) {}
+              _null_bitmap(std::move(other._null_bitmap)),
+              _requires_recheck(other._requires_recheck) {}
 
     // Copy assignment operator
     InvertedIndexResultBitmap& operator=(const InvertedIndexResultBitmap& other) {
@@ -115,6 +122,7 @@ public:
             _null_bitmap = other._null_bitmap
                                    ? std::make_shared<roaring::Roaring>(*other._null_bitmap)
                                    : nullptr;
+            _requires_recheck = other._requires_recheck;
         }
         return *this;
     }
@@ -124,12 +132,14 @@ public:
         if (this != &other) { // Prevent self-assignment
             _data_bitmap = std::move(other._data_bitmap);
             _null_bitmap = std::move(other._null_bitmap);
+            _requires_recheck = other._requires_recheck;
         }
         return *this;
     }
 
     // Operator &=
     InvertedIndexResultBitmap& operator&=(const InvertedIndexResultBitmap& other) {
+        _requires_recheck = _requires_recheck || other._requires_recheck;
         if (_data_bitmap && other._data_bitmap) {
             const auto& my_null = _null_bitmap ? *_null_bitmap : _empty_bitmap();
             const auto& ot_null = other._null_bitmap ? *other._null_bitmap : _empty_bitmap();
@@ -146,6 +156,7 @@ public:
 
     // Operator |=
     InvertedIndexResultBitmap& operator|=(const InvertedIndexResultBitmap& other) {
+        _requires_recheck = _requires_recheck || other._requires_recheck;
         if (_data_bitmap && other._data_bitmap) {
             const auto& my_null = _null_bitmap ? *_null_bitmap : _empty_bitmap();
             const auto& ot_null = other._null_bitmap ? *other._null_bitmap : _empty_bitmap();
@@ -168,6 +179,9 @@ public:
 
     // NOT operation
     const InvertedIndexResultBitmap& op_not(const roaring::Roaring* universe) const {
+        // The complement of a candidate superset is not a candidate set of anything: callers
+        // must leave a requires_recheck result to scalar evaluation instead of negating it.
+        DORIS_CHECK(!_requires_recheck);
         if (_data_bitmap) {
             if (_null_bitmap) {
                 *_data_bitmap = *universe - *_data_bitmap - *_null_bitmap;
@@ -181,6 +195,7 @@ public:
 
     // Operator -=
     InvertedIndexResultBitmap& operator-=(const InvertedIndexResultBitmap& other) {
+        _requires_recheck = _requires_recheck || other._requires_recheck;
         if (_data_bitmap && other._data_bitmap) {
             *_data_bitmap -= *other._data_bitmap;
             if (other._null_bitmap) {
@@ -202,6 +217,8 @@ public:
     const std::shared_ptr<roaring::Roaring>& get_data_bitmap() const { return _data_bitmap; }
 
     const std::shared_ptr<roaring::Roaring>& get_null_bitmap() const { return _null_bitmap; }
+
+    bool requires_recheck() const { return _requires_recheck; }
 
     // Check if both bitmaps are empty
     bool is_empty() const { return (_data_bitmap == nullptr && _null_bitmap == nullptr); }

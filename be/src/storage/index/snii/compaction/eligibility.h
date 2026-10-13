@@ -53,6 +53,7 @@ using AnalyzerProviderFactory = std::function<segment_v2::inverted_index::Analyz
         const InvertedIndexAnalyzerConfig&)>;
 
 enum class SniiStreamedMergeKind : uint8_t {
+    kDocsOnlyT1,
     kPlainT2,
     kCommonGramsT3,
 };
@@ -79,6 +80,9 @@ Status validate_plain_t2_source(const reader::LogicalIndexReader& source, size_t
 Status validate_plain_t2_source_eligibility(const reader::LogicalIndexReader& source,
                                             size_t source_ordinal);
 
+Status validate_docs_only_t1_source(const reader::LogicalIndexReader& source,
+                                    size_t source_ordinal);
+
 // Revalidates one opened source against an already selected streamed shape.
 // CommonGrams checks include exact current versions and static identity equality
 // with the eligibility seed.
@@ -101,8 +105,8 @@ Status validate_plain_t2_compaction_eligibility(
         std::span<const PlainT2CompactionSource> sources, const TabletIndex& destination_index,
         const AnalyzerProviderFactory& analyzer_provider_factory = {});
 
-// Accepts either the existing plain positions-only T2 shape or homogeneous,
-// complete CommonGrams T3 sources. Mixed shapes and any CommonGrams identity or
+// Accepts homogeneous docs-only T1, plain positions-only T2, or complete CommonGrams T3 sources.
+// Mixed shapes and any CommonGrams identity or
 // destination-build-policy mismatch return INVERTED_INDEX_NOT_SUPPORTED so the
 // caller can rebuild from raw columns before creating streamed output.
 Status validate_snii_compaction_eligibility(

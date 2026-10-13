@@ -62,6 +62,48 @@ public class InvertedIndexProperties {
 
     public static String INVERTED_INDEX_PARSER_FIELD_PATTERN_KEY = "field_pattern";
 
+    // VARIANT root index: one logical index per analyzer on a VARIANT column that stores every
+    // scalar leaf as a path-less typed term. `variant_index_scope = values` declares it; the legacy
+    // spelling `variant_index_mode = all_values` is normalized to the scope key. The format version
+    // names the BE term layout (be/src/storage/index/inverted/variant_term_codec.h); it is stamped
+    // by the FE, never chosen by users, and a BE that does not know the version treats the index
+    // as unusable instead of misreading it.
+    public static final String VARIANT_INDEX_SCOPE_KEY = "variant_index_scope";
+    public static final String VARIANT_INDEX_SCOPE_VALUES = "values";
+    public static final String VARIANT_INDEX_MODE_KEY = "variant_index_mode";
+    public static final String VARIANT_INDEX_MODE_ALL_VALUES = "all_values";
+    public static final String VARIANT_ROOT_FORMAT_VERSION_KEY = "variant_root_format_version";
+    // Path-less typed terms [tag][value], strings raw.
+    public static final String VARIANT_ROOT_FORMAT_VERSION_CURRENT = "4";
+
+    /** Canonical scope spelling for a scope or legacy mode value, or null when it is neither. */
+    public static String normalizeVariantIndexScope(String scopeOrMode) {
+        if (scopeOrMode == null) {
+            return null;
+        }
+        String value = scopeOrMode.trim().toLowerCase();
+        if (VARIANT_INDEX_SCOPE_VALUES.equals(value) || VARIANT_INDEX_MODE_ALL_VALUES.equals(value)) {
+            return VARIANT_INDEX_SCOPE_VALUES;
+        }
+        return null;
+    }
+
+    /** The canonical scope of a VARIANT index, or null when the properties describe no such index. */
+    public static String getVariantIndexScope(Map<String, String> properties) {
+        if (properties == null) {
+            return null;
+        }
+        String scope = normalizeVariantIndexScope(properties.get(VARIANT_INDEX_SCOPE_KEY));
+        if (scope != null) {
+            return scope;
+        }
+        return normalizeVariantIndexScope(properties.get(VARIANT_INDEX_MODE_KEY));
+    }
+
+    public static boolean isVariantRootIndex(Map<String, String> properties) {
+        return getVariantIndexScope(properties) != null;
+    }
+
     // Default analyzer key constant - matches BE's INVERTED_INDEX_DEFAULT_ANALYZER_KEY
     public static final String INVERTED_INDEX_DEFAULT_ANALYZER_KEY = "__default__";
 
@@ -107,6 +149,11 @@ public class InvertedIndexProperties {
         }
         String normalizer = properties.get(INVERTED_INDEX_NORMALIZER_NAME_KEY);
         return normalizer != null ? normalizer : "";
+    }
+
+    public static boolean isAnalyzed(Map<String, String> properties) {
+        return !Strings.isNullOrEmpty(getPreferredAnalyzer(properties))
+                || !INVERTED_INDEX_PARSER_NONE.equalsIgnoreCase(getInvertedIndexParser(properties));
     }
 
     public static Map<String, String> getInvertedIndexCharFilter(Map<String, String> properties) {

@@ -957,10 +957,20 @@ Status VExpr::_evaluate_inverted_index(VExprContext* context, const FunctionBase
                         continue;
                     }
                 }
-                if (origin_primitive_type != TYPE_VARIANT &&
-                    (storage_type->equals(*target_type) ||
-                     (is_string_type(target_primitive_type) &&
-                      is_string_type(origin_primitive_type)))) {
+                if (origin_primitive_type == TYPE_VARIANT) {
+                    // A path read from the VARIANT binary storage is typed only by the cast.
+                    // The VARIANT values index supplies candidates for string-typed equality
+                    // and IN, whose residual keeps the exact cast semantics. Numeric and
+                    // boolean casts admit spellings no finite term set covers, and a cast MATCH
+                    // compares JSON text (object keys included), so those stay scalar.
+                    if ((_node_type == TExprNodeType::BINARY_PRED ||
+                         _node_type == TExprNodeType::IN_PRED) &&
+                        is_string_type(target_primitive_type)) {
+                        children_exprs.emplace_back(expr_without_cast(child));
+                    }
+                } else if (storage_type->equals(*target_type) ||
+                           (is_string_type(target_primitive_type) &&
+                            is_string_type(origin_primitive_type))) {
                     children_exprs.emplace_back(expr_without_cast(child));
                 }
             } else {
@@ -1028,8 +1038,10 @@ Status VExpr::_evaluate_inverted_index(VExprContext* context, const FunctionBase
     }
     if (!result_bitmap.is_empty()) {
         index_context->set_index_result_for_expr(this, result_bitmap);
-        for (int column_id : column_ids) {
-            index_context->set_true_for_index_status(this, column_id);
+        if (!result_bitmap.requires_recheck()) {
+            for (int column_id : column_ids) {
+                index_context->set_true_for_index_status(this, column_id);
+            }
         }
     }
     return Status::OK();
