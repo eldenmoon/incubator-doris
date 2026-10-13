@@ -37,7 +37,6 @@
 
 #include "core/column/variant_v2/column_variant_v2.h"
 #include "core/data_type_serde/data_type_variant_v2_serde.h"
-#include "core/field.h"
 #include "core/value/variant/variant_value.h"
 #include "io/fs/local_file_system.h"
 #include "storage/index/index_file_reader.h"
@@ -53,12 +52,7 @@
 namespace doris::segment_v2::variant_root_index {
 namespace {
 
-using variant_term_codec::term_bool;
-using variant_term_codec::term_double;
-using variant_term_codec::term_int64;
-using variant_term_codec::term_string;
 using variant_term_codec::term_token;
-using variant_term_codec::term_uint64;
 
 // ------------------------------------------------------------------------------------------
 // Independent oracle
@@ -205,93 +199,11 @@ const std::vector<std::string> kDoubles = {"1.5",
 const std::vector<std::string> kWideInts = {"18446744073709551615", "9223372036854775808"};
 const std::vector<std::string> kWords = {"alpha",      "beta", "gamma", "delta",
                                          "alpha beta", "",     "3",     "gamma delta alpha"};
-struct Literal {
-    enum Type { INT, DOUBLE, BOOL, STRING } type = INT;
-    int64_t i = 0;
-    double d = 0.0;
-    bool b = false;
-    std::string s;
-
-    Field field() const {
-        switch (type) {
-        case INT:
-            return Field::create_field<TYPE_BIGINT>(i);
-        case DOUBLE:
-            return Field::create_field<TYPE_DOUBLE>(d);
-        case BOOL:
-            return Field::create_field<TYPE_BOOLEAN>(b);
-        case STRING:
-            return Field::create_field<TYPE_STRING>(s);
-        }
-        return Field::create_field<TYPE_BIGINT>(0);
-    }
-
-    // The literal as a string predicate would spell it (booleans and doubles probe "true").
-    std::string cast_text() const {
-        switch (type) {
-        case INT:
-            return std::to_string(i);
-        case STRING:
-            return s;
-        default:
-            return "true";
-        }
-    }
-
-    bool matches(const OracleLeaf& leaf) const {
-        switch (type) {
-        case INT:
-            return leaf.kind == OracleKind::INT64 && leaf.i64 == i;
-        case DOUBLE: {
-            const OracleLeaf canonical = oracle_number(d);
-            switch (canonical.kind) {
-            case OracleKind::INT64:
-                return leaf.kind == OracleKind::INT64 && leaf.i64 == canonical.i64;
-            case OracleKind::UINT64:
-                return leaf.kind == OracleKind::UINT64 && leaf.u64 == canonical.u64;
-            case OracleKind::DOUBLE:
-                return leaf.kind == OracleKind::DOUBLE && leaf.d == canonical.d;
-            default:
-                return false;
-            }
-        }
-        case BOOL:
-            return leaf.kind == OracleKind::BOOL && leaf.b == b;
-        case STRING:
-            return leaf.kind == OracleKind::STRING && leaf.text == s;
-        }
-        return false;
-    }
-};
-
 class DocGenerator {
 public:
     explicit DocGenerator(uint64_t seed) : _rng(seed) {}
 
     std::string document() { return value(0); }
-
-    Literal literal() {
-        Literal literal;
-        switch (_rng() % 4) {
-        case 0:
-            literal.type = Literal::INT;
-            literal.i = std::stoll(pick(kInts));
-            break;
-        case 1:
-            literal.type = Literal::DOUBLE;
-            literal.d = std::stod(pick(kDoubles));
-            break;
-        case 2:
-            literal.type = Literal::BOOL;
-            literal.b = _rng() % 2 == 0;
-            break;
-        default:
-            literal.type = Literal::STRING;
-            literal.s = pick(kWords);
-            break;
-        }
-        return literal;
-    }
 
     std::string match_query() {
         static const std::vector<std::string> queries = {"alpha",       "beta",       "gamma delta",
@@ -424,7 +336,6 @@ protected:
 
 // NOLINTNEXTLINE(readability-function-cognitive-complexity) -- one fixture drives every predicate class.
 TEST_F(VariantIndexParityTest, IndexAndScanAgreeOnRandomDocuments) {
-    const TabletIndex all_exact = make_index(92, VARIANT_INDEX_MODE_ALL_VALUES, "none");
     const TabletIndex all_token = make_index(93, VARIANT_INDEX_MODE_ALL_VALUES, "english");
 
     // Documents: hand-picked edge cases first, then random ones.
@@ -481,9 +392,8 @@ TEST_F(VariantIndexParityTest, IndexAndScanAgreeOnRandomDocuments) {
     IndexFileWriter index_file_writer(io::global_local_filesystem(), prefix, "parity_rowset",
                                       /*seg_id=*/0, InvertedIndexStorageFormatPB::SNII,
                                       std::move(file_writer));
-    VariantRootIndexWriter w_all_exact(&index_file_writer, &all_exact, false);
     VariantRootIndexWriter w_all_token(&index_file_writer, &all_token, false);
-    std::array<VariantRootIndexWriter*, 2> writers = {&w_all_exact, &w_all_token};
+    std::array<VariantRootIndexWriter*, 1> writers = {&w_all_token};
     for (VariantRootIndexWriter* writer : writers) {
         ASSERT_TRUE(writer->init().ok());
     }
@@ -497,11 +407,9 @@ TEST_F(VariantIndexParityTest, IndexAndScanAgreeOnRandomDocuments) {
     IndexFileReader index_file_reader(io::global_local_filesystem(), prefix,
                                       InvertedIndexStorageFormatPB::SNII);
     ASSERT_TRUE(index_file_reader.init().ok());
-    auto r_all_exact = index_file_reader.open_snii_index(&all_exact);
     auto r_all_token = index_file_reader.open_snii_index(&all_token);
-    ASSERT_TRUE(r_all_exact.has_value()) << r_all_exact.error();
     ASSERT_TRUE(r_all_token.has_value()) << r_all_token.error();
-    for (const auto* reader : {r_all_exact->get(), r_all_token->get()}) {
+    for (const auto* reader : {r_all_token->get()}) {
         // docid == rowid, including NULL rows and empty documents.
         EXPECT_EQ(reader->stats().doc_count, docs.size());
     }
@@ -529,75 +437,8 @@ TEST_F(VariantIndexParityTest, IndexAndScanAgreeOnRandomDocuments) {
         }
         return tokens;
     };
-    // CAST(leaf AS STRING) = text for the leaf kinds the literal pools can spell.
-    const auto text_matches = [](const OracleLeaf& leaf, const std::string& text) {
-        switch (leaf.kind) {
-        case OracleKind::STRING:
-            return leaf.text == text;
-        case OracleKind::INT64:
-            return std::to_string(leaf.i64) == text;
-        case OracleKind::UINT64:
-            return std::to_string(leaf.u64) == text;
-        default:
-            return false;
-        }
-    };
-
     size_t checks = 0;
-    size_t non_empty = 0;
     for (int round = 0; round < 600; ++round) {
-        const Literal literal = generator.literal();
-        const Field field = literal.field();
-
-        // 1. typed any-path equality: the literal's own term
-        {
-            std::vector<std::string> terms;
-            typed_literal_terms(field, &terms);
-            ASSERT_EQ(terms.size(), 1U);
-            const auto actual = term_docs(**r_all_exact, terms[0]);
-            const auto expected = expected_rows([&](const std::vector<OracleLeaf>& leaves) {
-                return std::ranges::any_of(
-                        leaves, [&](const OracleLeaf& leaf) { return literal.matches(leaf); });
-            });
-            EXPECT_EQ(actual, expected) << "round=" << round;
-            ++checks;
-            non_empty += !expected.empty();
-        }
-        // 2. whole-document exact MATCH: every leaf whose canonical text is the literal, the
-        //    string, the number and the boolean it spells alike
-        {
-            const std::string text = literal.cast_text();
-            std::vector<std::string> terms;
-            exact_text_terms(text, &terms);
-            const auto actual = union_docs(**r_all_exact, terms);
-            const auto expected = expected_rows([&](const std::vector<OracleLeaf>& leaves) {
-                return std::ranges::any_of(leaves, [&](const OracleLeaf& leaf) {
-                    return text_matches(leaf, text) ||
-                           (text == "true" && leaf.kind == OracleKind::BOOL && leaf.b);
-                });
-            });
-            EXPECT_EQ(actual, expected) << "text=" << text << " round=" << round;
-            ++checks;
-        }
-        // 5. the same literal bound to a path read from the binary storage: the CAST(path AS
-        //    STRING) spellings of booleans (1 / 0) join the probe and every document holding a
-        //    leaf the codec cannot spell is a candidate through the marker term
-        {
-            const std::string text = literal.cast_text();
-            std::vector<std::string> terms;
-            cast_text_candidate_terms(text, &terms);
-            terms.push_back(unspellable_marker_term());
-            const auto actual = union_docs(**r_all_exact, terms);
-            const auto expected = expected_rows([&](const std::vector<OracleLeaf>& leaves) {
-                return std::ranges::any_of(leaves, [&](const OracleLeaf& leaf) {
-                    return text_matches(leaf, text) || leaf.kind == OracleKind::OTHER ||
-                           (leaf.kind == OracleKind::BOOL &&
-                            ((text == "1" && leaf.b) || (text == "0" && !leaf.b)));
-                });
-            });
-            EXPECT_EQ(actual, expected) << "cast text=" << text << " round=" << round;
-            ++checks;
-        }
         // 3./4. any-path MATCH_ANY / MATCH_ALL on the token index
         {
             const std::string query = generator.match_query();
@@ -627,9 +468,8 @@ TEST_F(VariantIndexParityTest, IndexAndScanAgreeOnRandomDocuments) {
             checks += 2;
         }
     }
-    EXPECT_GE(checks, 3000U);
+    EXPECT_EQ(checks, 1200U);
     // The generator must actually produce hits, or the parity is vacuous.
-    EXPECT_GT(non_empty, 200U);
 
     // Typed semantics pinned on the edge documents. Random documents draw from the same value
     // pools, so the pins check membership of the edge row rather than an exact posting list.
@@ -638,42 +478,21 @@ TEST_F(VariantIndexParityTest, IndexAndScanAgreeOnRandomDocuments) {
         const std::vector<uint32_t> docids = term_docs(reader, term);
         return std::ranges::find(docids, row) != docids.end();
     };
-    const auto& exact = **r_all_exact;
     const auto& token = **r_all_token;
     // "3", 3 and 3.0 are two values, not three; -0.0 is 0.
-    EXPECT_TRUE(hits(exact, term_string("3"), 0));
-    EXPECT_TRUE(hits(exact, term_int64(3), 0));
-    EXPECT_FALSE(hits(exact, term_double(3.0), 0));
-    EXPECT_TRUE(hits(exact, term_int64(0), 0));
-    EXPECT_TRUE(hits(exact, term_string("gamma"), 0));
     // The token index spells numbers and booleans as text.
     EXPECT_TRUE(hits(token, term_token("3"), 0));
     EXPECT_TRUE(hits(token, term_token("true"), 7));
     EXPECT_TRUE(hits(token, term_token("false"), 7));
     // 2^63 lands in UINT64, 2^64 stays DOUBLE, INT64 max stays INT64.
-    EXPECT_TRUE(hits(exact, term_uint64(uint64_t {1} << 63), 1));
-    EXPECT_TRUE(hits(exact, term_double(18446744073709551616.0), 1));
-    EXPECT_TRUE(hits(exact, term_double(1e300), 1));
-    EXPECT_TRUE(hits(exact, term_int64(9223372036854775807), 1));
     // Root scalars and root array elements are leaves like any other.
-    EXPECT_TRUE(hits(exact, term_string("root scalar"), 2));
-    EXPECT_TRUE(hits(exact, term_int64(1), 3));
-    EXPECT_TRUE(hits(exact, term_string("alpha"), 3));
-    EXPECT_TRUE(hits(exact, term_string("beta"), 3));
     // Deeply nested arrays are recursed; JSON null inside arrays is skipped.
     EXPECT_TRUE(hits(token, term_token("gamma"), 7));
-    EXPECT_TRUE(hits(exact, term_bool(true), 7));
-    EXPECT_TRUE(hits(exact, term_bool(false), 7));
-    EXPECT_TRUE(hits(exact, term_string("delta"), 6));
-    EXPECT_TRUE(hits(exact, term_string("beta"), 6));
     // A leaf the codec cannot spell leaves the marker in the exact index only; documents made
     // of spellable leaves carry none.
-    EXPECT_TRUE(hits(exact, unspellable_marker_term(), 8));
-    EXPECT_FALSE(hits(token, unspellable_marker_term(), 8));
-    EXPECT_FALSE(hits(exact, unspellable_marker_term(), 0));
     // Empty objects and JSON null documents are indexed documents without terms; NULL rows are
     // SQL NULLs.
-    EXPECT_EQ(exact.stats().null_count,
+    EXPECT_EQ(token.stats().null_count,
               static_cast<uint64_t>(std::ranges::count(outer_nulls, uint8_t {1})));
 }
 

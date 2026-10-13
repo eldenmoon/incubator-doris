@@ -18,7 +18,6 @@
 package org.apache.doris.nereids.trees.plans.commands;
 
 import org.apache.doris.analysis.InvertedIndexProperties;
-import org.apache.doris.analysis.InvertedIndexUtil;
 import org.apache.doris.catalog.AggregateType;
 import org.apache.doris.catalog.Column;
 import org.apache.doris.catalog.Index;
@@ -165,7 +164,7 @@ public class IndexDefinitionTest {
                     AggregateType.NONE, true, null, "comment");
             IndexDefinition values = new IndexDefinition("variant_values_index", false,
                     Lists.newArrayList("col1"), "INVERTED",
-                    new HashMap<>(Map.of("variant_index_mode", "all_values", "parser", "none")),
+                    new HashMap<>(Map.of("variant_index_mode", "all_values", "parser", "english")),
                     "comment");
             values.checkColumn(variantColumn, KeysType.DUP_KEYS, false,
                     TInvertedIndexFileStorageFormat.SNII);
@@ -183,36 +182,27 @@ public class IndexDefinitionTest {
             Assertions.assertEquals("false", catalogProperties.get("support_phrase"));
             Index catalogValues = new Index(1, "variant_values_index", Lists.newArrayList("col1"),
                     IndexType.INVERTED,
-                    new HashMap<>(Map.of("variant_index_mode", "all_values", "parser", "none")),
+                    new HashMap<>(Map.of("variant_index_mode", "all_values", "parser", "english")),
                     "comment");
             Assertions.assertEquals("false", catalogValues.getProperties().get("support_phrase"));
             Assertions.assertTrue(catalogValues.isVariantRootIndex());
             Assertions.assertTrue(catalogValues.isVariantRootIndex());
 
-            // An exact and an analyzed values index share one column; two exact ones do not.
-            IndexDefinition tokenValues = new IndexDefinition("variant_values_token_index", false,
-                    Lists.newArrayList("col1"), "INVERTED",
-                    new HashMap<>(Map.of("variant_index_scope", "values", "parser", "english")),
-                    "comment");
-            tokenValues.checkColumn(variantColumn, KeysType.DUP_KEYS, false,
-                    TInvertedIndexFileStorageFormat.SNII);
-            Assertions.assertEquals("values", tokenValues.getProperties().get("variant_index_scope"));
-            Assertions.assertTrue(InvertedIndexUtil.canHaveMultipleInvertedIndexes(
-                    VariantType.INSTANCE, Lists.newArrayList(values, tokenValues)));
-            IndexDefinition duplicateExact = new IndexDefinition("variant_values_duplicate_exact",
-                    false, Lists.newArrayList("col1"), "INVERTED",
-                    new HashMap<>(Map.of("variant_index_scope", "values", "parser", "none")),
-                    "comment");
-            duplicateExact.checkColumn(variantColumn, KeysType.DUP_KEYS, false,
-                    TInvertedIndexFileStorageFormat.SNII);
-            Assertions.assertFalse(InvertedIndexUtil.canHaveMultipleInvertedIndexes(
-                    VariantType.INSTANCE, Lists.newArrayList(values, duplicateExact)));
+            for (String parser : List.of("none", "chinese")) {
+                IndexDefinition rejected = new IndexDefinition("rejected_parser", false,
+                        Lists.newArrayList("col1"), "INVERTED",
+                        new HashMap<>(Map.of("variant_index_scope", "values", "parser", parser)), "comment");
+                Assertions.assertThrows(AnalysisException.class, () -> rejected.checkColumn(
+                        variantColumn, KeysType.DUP_KEYS, false, TInvertedIndexFileStorageFormat.SNII));
+            }
+            Assertions.assertThrows(AnalysisException.class, () -> values.checkColumn(
+                    variantColumn, KeysType.UNIQUE_KEYS, true, TInvertedIndexFileStorageFormat.SNII));
 
             // SHOW CREATE TABLE prints the stamped version; replaying it is accepted, any other
             // version is not.
             IndexDefinition stampedVersion = new IndexDefinition("variant_stamped_version", false,
                     Lists.newArrayList("col1"), "INVERTED",
-                    new HashMap<>(Map.of("variant_index_scope", "values",
+                    new HashMap<>(Map.of("variant_index_scope", "values", "parser", "english",
                             "variant_root_format_version",
                             InvertedIndexProperties.VARIANT_ROOT_FORMAT_VERSION_CURRENT)),
                     "comment");
@@ -220,7 +210,7 @@ public class IndexDefinitionTest {
                     TInvertedIndexFileStorageFormat.SNII);
             IndexDefinition legacyVersion = new IndexDefinition("variant_legacy_version", false,
                     Lists.newArrayList("col1"), "INVERTED",
-                    new HashMap<>(Map.of("variant_index_scope", "values",
+                    new HashMap<>(Map.of("variant_index_scope", "values", "parser", "english",
                             "variant_root_format_version", "1")),
                     "comment");
             Assertions.assertThrows(AnalysisException.class, () -> legacyVersion.checkColumn(

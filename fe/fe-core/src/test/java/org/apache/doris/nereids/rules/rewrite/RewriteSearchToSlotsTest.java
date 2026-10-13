@@ -17,6 +17,7 @@
 
 package org.apache.doris.nereids.rules.rewrite;
 
+import org.apache.doris.analysis.InvertedIndexProperties;
 import org.apache.doris.analysis.SearchDslParser;
 import org.apache.doris.catalog.AggregateType;
 import org.apache.doris.catalog.Column;
@@ -49,6 +50,7 @@ import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Map;
 
 /**
  * Unit tests for RewriteSearchToSlots rule
@@ -342,6 +344,31 @@ public class RewriteSearchToSlotsTest {
         Assertions.assertTrue(searchExpression.getSlotChildren().get(0) instanceof SlotReference);
         Assertions.assertEquals("name",
                 ((SlotReference) searchExpression.getSlotChildren().get(0)).getName());
+    }
+
+    @Test
+    public void testVariantValuesIndexCannotServeSearchSubpath() throws Exception {
+        OlapTable table = buildVariantTableWithInvertedIndex(103L);
+        Index pathIndex = table.getIndexes().get(0);
+        Index rootIndex = new Index(3L, "idx_values", ImmutableList.of("v"), IndexType.INVERTED,
+                Map.of("parser", "english", "variant_index_scope", "values",
+                        "variant_root_format_version",
+                        InvertedIndexProperties.VARIANT_ROOT_FORMAT_VERSION_CURRENT), "");
+        table.setIndexes(ImmutableList.of(rootIndex));
+        LogicalOlapScan scan = new LogicalOlapScan(PlanConstructor.getNextRelationId(),
+                table, ImmutableList.of("db"));
+        Search search = new Search(new StringLiteral("v.foo:bar"));
+        Method rewriteMethod = RewriteSearchToSlots.class.getDeclaredMethod(
+                "rewriteSearch", Search.class, LogicalOlapScan.class);
+        rewriteMethod.setAccessible(true);
+        InvocationTargetException thrown = Assertions.assertThrows(InvocationTargetException.class,
+                () -> rewriteMethod.invoke(rewriteRule, search, scan));
+        Assertions.assertInstanceOf(AnalysisException.class, thrown.getCause());
+        Assertions.assertTrue(thrown.getCause().getMessage().contains("has no inverted index"));
+
+        // The values index does not prevent an ordinary path index from serving SEARCH.
+        table.setIndexes(ImmutableList.of(rootIndex, pathIndex));
+        Assertions.assertInstanceOf(SearchExpression.class, rewriteMethod.invoke(rewriteRule, search, scan));
     }
 
     private static OlapTable buildStudentWithInvertedIndexOnName(long tableId) {

@@ -40,10 +40,9 @@ class IndexStorageVariantCompactionReadTest : public IndexStorageTestFixture {
 protected:
     void run_deep_sparse_variant_lifecycle(bool external_segment_meta, int64_t tablet_id);
     void run_nested_group_variant_lifecycle(bool external_segment_meta, int64_t tablet_id);
-    // Two root indexes (exact + english) on one VARIANT column merge natively and
-    // independently under the given compaction kind.
+    // One token root index merges natively under either compaction kind.
     void run_direct_merge_of_root_indexes(IndexCompactionKind kind, int64_t tablet_id,
-                                          int64_t first_index_id);
+                                          int64_t first_index_id, int conversion_case = 0);
 };
 
 void IndexStorageVariantCompactionReadTest::run_deep_sparse_variant_lifecycle(
@@ -294,7 +293,7 @@ TEST_F(IndexStorageVariantCompactionReadTest, VariantDocModeWritesDocValueColumn
 }
 
 TEST_F(IndexStorageVariantCompactionReadTest,
-       FullCompactionRebuildsExactAndTokenRootIndexesFromLogicalVariant) {
+       FullCompactionRebuildsTokenRootIndexFromLogicalVariant) {
     VariantColumnSpec variant;
     variant.unique_id = 2;
     variant.name = "v";
@@ -328,7 +327,6 @@ TEST_F(IndexStorageVariantCompactionReadTest,
     };
     IndexSchemaPatch patch;
     patch.add_inverted_indexes = {
-            IndexSpec::column_index(10056, "idx_v_root_exact", 2, root_properties("none")),
             IndexSpec::column_index(10057, "idx_v_root_english", 2, root_properties("english")),
     };
     auto indexed_schema = build_patched_tablet_schema(*tablet_schema(), patch);
@@ -360,17 +358,14 @@ TEST_F(IndexStorageVariantCompactionReadTest,
             compacted.value()->segment(0).inverted_index_file_info(), options.tablet_id);
     ASSERT_TRUE(index_file_reader.init().ok());
     const auto root_indexes = compacted.value()->tablet_schema()->inverted_indexs(2);
-    ASSERT_EQ(root_indexes.size(), 2);
-    auto exact = index_file_reader.open_snii_index(root_indexes[0]);
-    auto token = index_file_reader.open_snii_index(root_indexes[1]);
-    ASSERT_TRUE(exact.has_value()) << exact.error();
+    ASSERT_EQ(root_indexes.size(), 1);
+    auto token = index_file_reader.open_snii_index(root_indexes[0]);
     ASSERT_TRUE(token.has_value()) << token.error();
-    EXPECT_EQ((*exact)->stats().doc_count, 4U);
     EXPECT_EQ((*token)->stats().doc_count, 4U);
 
     std::vector<uint32_t> docids;
     ASSERT_TRUE(snii::query::term_query(
-                        **exact, segment_v2::variant_term_codec::term_string("opened"), &docids)
+                        **token, segment_v2::variant_term_codec::term_token("opened"), &docids)
                         .ok());
     EXPECT_EQ(docids, (std::vector<uint32_t> {0, 2}));
     docids.clear();
@@ -420,7 +415,6 @@ TEST_F(IndexStorageVariantCompactionReadTest,
     };
     IndexSchemaPatch patch;
     patch.add_inverted_indexes = {
-            IndexSpec::column_index(10062, "idx_v_root_exact", 2, root_properties("none")),
             IndexSpec::column_index(10063, "idx_v_root_english", 2, root_properties("english")),
     };
     auto indexed_schema = build_patched_tablet_schema(*tablet_schema(), patch);
@@ -455,22 +449,19 @@ TEST_F(IndexStorageVariantCompactionReadTest,
             compacted.value()->segment(0).inverted_index_file_info(), options.tablet_id);
     ASSERT_TRUE(index_file_reader.init().ok());
     const auto root_indexes = compacted.value()->tablet_schema()->inverted_indexs(2);
-    ASSERT_EQ(root_indexes.size(), 2);
-    auto exact = index_file_reader.open_snii_index(root_indexes[0]);
-    auto token = index_file_reader.open_snii_index(root_indexes[1]);
-    ASSERT_TRUE(exact.has_value()) << exact.error();
+    ASSERT_EQ(root_indexes.size(), 1);
+    auto token = index_file_reader.open_snii_index(root_indexes[0]);
     ASSERT_TRUE(token.has_value()) << token.error();
-    EXPECT_EQ((*exact)->stats().doc_count, 2U);
     EXPECT_EQ((*token)->stats().doc_count, 2U);
 
     std::vector<uint32_t> docids;
     ASSERT_TRUE(snii::query::term_query(
-                        **exact, segment_v2::variant_term_codec::term_string("opened"), &docids)
+                        **token, segment_v2::variant_term_codec::term_token("opened"), &docids)
                         .ok());
     EXPECT_EQ(docids, (std::vector<uint32_t> {0, 1}));
     docids.clear();
     ASSERT_TRUE(snii::query::term_query(
-                        **exact, segment_v2::variant_term_codec::term_int64(53301496), &docids)
+                        **token, segment_v2::variant_term_codec::term_token("53301496"), &docids)
                         .ok());
     EXPECT_EQ(docids, (std::vector<uint32_t> {0}));
     // Key names are not values: the token index must not carry them.
@@ -488,7 +479,7 @@ TEST_F(IndexStorageVariantCompactionReadTest,
 
 // NOLINTNEXTLINE(readability-function-cognitive-complexity,readability-function-size): one fixture pins the whole native merge, from tablet setup to term lookup.
 void IndexStorageVariantCompactionReadTest::run_direct_merge_of_root_indexes(
-        IndexCompactionKind kind, int64_t tablet_id, int64_t first_index_id) {
+        IndexCompactionKind kind, int64_t tablet_id, int64_t first_index_id, int conversion_case) {
     const auto root_properties = [](std::string parser) {
         return std::map<std::string, std::string> {
                 {"parser", std::move(parser)},
@@ -501,14 +492,13 @@ void IndexStorageVariantCompactionReadTest::run_direct_merge_of_root_indexes(
     VariantColumnSpec variant;
     variant.unique_id = 2;
     variant.name = "v";
-    variant.max_subcolumns_count = 1;
+    variant.max_subcolumns_count = 1024;
 
     IndexTabletOptions options;
     options.tablet_id = tablet_id;
     options.index_storage_format = InvertedIndexStorageFormatPB::SNII;
     options.variant_columns = {std::move(variant)};
     options.inverted_indexes = {
-            IndexSpec::column_index(first_index_id, "idx_v_root_exact", 2, root_properties("none")),
             IndexSpec::column_index(first_index_id + 1, "idx_v_root_english", 2,
                                     root_properties("english")),
     };
@@ -539,6 +529,28 @@ void IndexStorageVariantCompactionReadTest::run_direct_merge_of_root_indexes(
                     {R"({"action":"opened","payload":{"repo":"Another Root","nested":{"v":3}}})",
                      R"({"action":"missing"})"}),
             100));
+    if (conversion_case == 1) {
+        rowset0.batches.clear();
+        rowset1.batches.clear();
+        rowset0.batches.push_back(IndexBatch::single_variant_column(
+                make_variant_v2(
+                        {R"({"n":true,"text":"root opened"})", R"({"n":false,"text":"other"})"}),
+                0));
+        rowset1.batches.push_back(IndexBatch::single_variant_column(
+                make_variant_v2({R"({"n":2,"text":"root opened"})", R"({"n":3,"text":"other"})"}),
+                100));
+    }
+    if (conversion_case == 2) {
+        rowset0.batches.clear();
+        rowset1.batches.clear();
+        rowset0.batches.push_back(IndexBatch::single_variant_column(
+                make_variant_v2({R"({"n":1,"text":"root opened"})", R"({"n":2,"text":"other"})"}),
+                0));
+        rowset1.batches.push_back(IndexBatch::single_variant_column(
+                make_variant_v2(
+                        {R"({"n":100000,"text":"root opened"})", R"({"n":200000,"text":"other"})"}),
+                100));
+    }
     auto rowsets = write_rowsets({rowset0, rowset1});
     ASSERT_TRUE(rowsets.has_value()) << rowsets.error();
 
@@ -550,6 +562,12 @@ void IndexStorageVariantCompactionReadTest::run_direct_merge_of_root_indexes(
 
     const bool old_debug_points = config::enable_debug_points;
     const bool old_index_compaction = config::inverted_index_compaction_enable;
+    const bool old_variant_vertical = config::enable_vertical_compact_variant_subcolumns;
+    if (conversion_case == 3) {
+        config::enable_vertical_compact_variant_subcolumns = false;
+    }
+    const bool source_v2_hint =
+            rowsets.value().front()->tablet_schema()->column_by_uid(2).variant_is_v2();
     config::enable_debug_points = true;
     config::inverted_index_compaction_enable = true;
     constexpr std::string_view kSessionPoint = "Compaction::before_add_snii_destination_session";
@@ -560,6 +578,7 @@ void IndexStorageVariantCompactionReadTest::run_direct_merge_of_root_indexes(
         DebugPoints::instance()->remove(std::string(kValidationPoint));
         config::enable_debug_points = old_debug_points;
         config::inverted_index_compaction_enable = old_index_compaction;
+        config::enable_vertical_compact_variant_subcolumns = old_variant_vertical;
     });
     size_t session_count = 0;
     size_t validation_count = 0;
@@ -574,17 +593,19 @@ void IndexStorageVariantCompactionReadTest::run_direct_merge_of_root_indexes(
     ASSERT_TRUE(compacted.has_value()) << compacted.error();
     ASSERT_NE(compacted.value(), nullptr);
     EXPECT_EQ(compacted.value()->num_rows(), 4);
+    EXPECT_EQ(rowsets.value().front()->tablet_schema()->column_by_uid(2).variant_is_v2(),
+              source_v2_hint);
     EXPECT_EQ(compacted.value()->num_segments(), 1);
-    EXPECT_EQ(session_count, 2);
-    EXPECT_EQ(validation_count, 1);
+    EXPECT_EQ(session_count, (conversion_case == 1 || conversion_case == 3) ? 0 : 1);
+    EXPECT_EQ(validation_count, (conversion_case == 1 || conversion_case == 3) ? 0 : 1);
 
     auto after = read_rowsets({compacted.value()}, read_options);
     ASSERT_TRUE(after.has_value()) << after.error();
-    EXPECT_EQ(after->variant_values_by_uid.at(2), before->variant_values_by_uid.at(2));
+    if (conversion_case != 1) {
+        EXPECT_EQ(after->variant_values_by_uid.at(2), before->variant_values_by_uid.at(2));
+    }
     auto compacted_probe = probe_rowset(compacted.value());
     ASSERT_TRUE(compacted_probe.has_value()) << compacted_probe.error();
-    EXPECT_TRUE(has_sparse_path_stat(compacted_probe.value(), "payload.repo"));
-    EXPECT_TRUE(has_sparse_path_stat(compacted_probe.value(), "payload.arr"));
 
     auto segment_path = compacted.value()->segment_path(0);
     ASSERT_TRUE(segment_path.has_value()) << segment_path.error();
@@ -594,17 +615,39 @@ void IndexStorageVariantCompactionReadTest::run_direct_merge_of_root_indexes(
             compacted.value()->segment(0).inverted_index_file_info(), options.tablet_id);
     ASSERT_TRUE(index_file_reader.init().ok());
     const auto root_indexes = compacted.value()->tablet_schema()->inverted_indexs(2);
-    ASSERT_EQ(root_indexes.size(), 2);
-    auto exact = index_file_reader.open_snii_index(root_indexes[0]);
-    auto token = index_file_reader.open_snii_index(root_indexes[1]);
-    ASSERT_TRUE(exact.has_value()) << exact.error();
+    ASSERT_EQ(root_indexes.size(), 1);
+    auto token = index_file_reader.open_snii_index(root_indexes[0]);
     ASSERT_TRUE(token.has_value()) << token.error();
-    EXPECT_EQ((*exact)->stats().doc_count, 4U);
     EXPECT_EQ((*token)->stats().doc_count, 4U);
 
+    if (conversion_case == 1 || conversion_case == 2) {
+        for (std::string_view token_text :
+             {"true", "false", "0", "1", "2", "3", "100000", "200000"}) {
+            std::vector<uint32_t> expected;
+            const auto& persisted = after->variant_values_by_uid.at(2);
+            for (size_t row = 0; row < persisted.size(); ++row) {
+                ASSERT_TRUE(persisted[row].has_value());
+                // The fixture has only one numeric/boolean leaf; JSON text is an independent
+                // readable record of the value actually persisted by this compaction.
+                if (persisted[row]->find(std::string("\"n\":") + std::string(token_text) + ",") !=
+                            std::string::npos ||
+                    persisted[row]->find(std::string("\"n\": ") + std::string(token_text) + ",") !=
+                            std::string::npos) {
+                    expected.push_back(row);
+                }
+            }
+            std::vector<uint32_t> actual;
+            ASSERT_TRUE(snii::query::term_query(
+                                **token, segment_v2::variant_term_codec::term_token(token_text),
+                                &actual)
+                                .ok());
+            EXPECT_EQ(actual, expected) << token_text;
+        }
+        return;
+    }
     std::vector<uint32_t> docids;
     ASSERT_TRUE(snii::query::term_query(
-                        **exact, segment_v2::variant_term_codec::term_string("opened"), &docids)
+                        **token, segment_v2::variant_term_codec::term_token("opened"), &docids)
                         .ok());
     EXPECT_EQ(docids, (std::vector<uint32_t> {0, 2}));
     docids.clear();
@@ -615,141 +658,27 @@ void IndexStorageVariantCompactionReadTest::run_direct_merge_of_root_indexes(
 }
 
 TEST_F(IndexStorageVariantCompactionReadTest,
-       FullCompactionDirectMergesExactAndTokenRootIndexesIndependently) {
+       FullCompactionDirectMergesTokenRootIndexIndependently) {
     run_direct_merge_of_root_indexes(IndexCompactionKind::FULL, 110057, 10058);
 }
 
 // Cumulative compaction shares merge_input_rowsets() with full compaction: the same native
 // merge, planned per (column, index), applies to it.
 TEST_F(IndexStorageVariantCompactionReadTest,
-       CumulativeCompactionDirectMergesExactAndTokenRootIndexesIndependently) {
+       CumulativeCompactionDirectMergesTokenRootIndexIndependently) {
     run_direct_merge_of_root_indexes(IndexCompactionKind::CUMULATIVE, 110079, 10079);
 }
 
-TEST_F(IndexStorageVariantCompactionReadTest,
-       FullCompactionDirectMergesOneRootSiblingAndRebuildsTheOther) {
-    const auto root_properties = [](std::string parser) {
-        return std::map<std::string, std::string> {
-                {"parser", std::move(parser)},
-                {std::string(segment_v2::variant_root_index::VARIANT_INDEX_MODE_KEY),
-                 std::string(segment_v2::variant_root_index::VARIANT_INDEX_MODE_ALL_VALUES)},
-                {std::string(segment_v2::variant_root_index::VARIANT_ROOT_FORMAT_VERSION_KEY),
-                 std::string(segment_v2::variant_root_index::VARIANT_ROOT_FORMAT_VERSION_CURRENT)}};
-    };
+TEST_F(IndexStorageVariantCompactionReadTest, ValueConversionRebuildsRootTokenIndex) {
+    run_direct_merge_of_root_indexes(IndexCompactionKind::FULL, 110080, 10080, 1);
+}
 
-    VariantColumnSpec variant;
-    variant.unique_id = 2;
-    variant.name = "v";
-    variant.max_subcolumns_count = 1;
+TEST_F(IndexStorageVariantCompactionReadTest, IntegerWideningKeepsNativeRootTokenIndex) {
+    run_direct_merge_of_root_indexes(IndexCompactionKind::FULL, 110081, 10081, 2);
+}
 
-    IndexTabletOptions options;
-    options.tablet_id = 110068;
-    options.index_storage_format = InvertedIndexStorageFormatPB::SNII;
-    options.variant_columns = {std::move(variant)};
-    options.inverted_indexes = {
-            IndexSpec::column_index(10060, "idx_v_root_exact", 2, root_properties("none"))};
-    ASSERT_TRUE(create_tablet(options).ok());
-
-    const auto make_variant_v2 = [](std::initializer_list<std::string_view> jsons) {
-        auto values = ColumnVariantV2::create();
-        DataTypeVariantV2SerDe serde;
-        DataTypeSerDe::FormatOptions format_options;
-        for (const std::string_view json : jsons) {
-            Slice slice(json.data(), json.size());
-            DORIS_CHECK(serde.deserialize_one_cell_from_json(*values, slice, format_options).ok());
-        }
-        return values->get_ptr();
-    };
-
-    IndexRowsetSpec rowset0;
-    rowset0.version = 0;
-    rowset0.batches.push_back(IndexBatch::single_variant_column(
-            make_variant_v2(
-                    {R"({"action":"opened","payload":{"repo":"Root Index","arr":[1,{"z":2}]}})",
-                     R"({"action":"closed","note":"Other"})"}),
-            0));
-    IndexRowsetSpec rowset1;
-    rowset1.version = 1;
-    rowset1.batches.push_back(IndexBatch::single_variant_column(
-            make_variant_v2(
-                    {R"({"action":"opened","payload":{"repo":"Another Root","nested":{"v":3}}})",
-                     R"({"action":"missing"})"}),
-            100));
-    auto rowsets = write_rowsets({rowset0, rowset1});
-    ASSERT_TRUE(rowsets.has_value()) << rowsets.error();
-
-    IndexSchemaPatch patch;
-    patch.add_inverted_indexes = {
-            IndexSpec::column_index(10061, "idx_v_root_english", 2, root_properties("english"))};
-    auto indexed_schema = build_patched_tablet_schema(*tablet_schema(), patch);
-    ASSERT_NE(indexed_schema, nullptr);
-    auto indexed_rowsets =
-            inject_reader_schema_for_rowsets(rowsets.value(), std::move(indexed_schema));
-    ASSERT_TRUE(indexed_rowsets.has_value()) << indexed_rowsets.error();
-
-    IndexReadOptions read_options;
-    read_options.return_columns = {0, 1};
-    read_options.collect_variant_values = true;
-    auto before = read_rowsets(indexed_rowsets.value(), read_options);
-    ASSERT_TRUE(before.has_value()) << before.error();
-
-    const bool old_debug_points = config::enable_debug_points;
-    const bool old_index_compaction = config::inverted_index_compaction_enable;
-    config::enable_debug_points = true;
-    config::inverted_index_compaction_enable = true;
-    constexpr std::string_view kSessionPoint = "Compaction::before_add_snii_destination_session";
-    DEFER({
-        DebugPoints::instance()->remove(std::string(kSessionPoint));
-        config::enable_debug_points = old_debug_points;
-        config::inverted_index_compaction_enable = old_index_compaction;
-    });
-    size_t session_count = 0;
-    std::function<void(size_t, Status*)> count_session = [&session_count](size_t, Status*) {
-        ++session_count;
-    };
-    DebugPoints::instance()->add_with_callback(std::string(kSessionPoint), count_session);
-
-    auto compacted = compact_rowsets(IndexCompactionKind::FULL, indexed_rowsets.value());
-    ASSERT_TRUE(compacted.has_value()) << compacted.error();
-    ASSERT_NE(compacted.value(), nullptr);
-    EXPECT_EQ(compacted.value()->num_rows(), 4);
-    EXPECT_EQ(compacted.value()->num_segments(), 1);
-    EXPECT_EQ(session_count, 1);
-
-    auto after = read_rowsets({compacted.value()}, read_options);
-    ASSERT_TRUE(after.has_value()) << after.error();
-    EXPECT_EQ(after->variant_values_by_uid.at(2), before->variant_values_by_uid.at(2));
-    auto compacted_probe = probe_rowset(compacted.value());
-    ASSERT_TRUE(compacted_probe.has_value()) << compacted_probe.error();
-    EXPECT_TRUE(has_sparse_path_stat(compacted_probe.value(), "payload.repo"));
-    EXPECT_TRUE(has_sparse_path_stat(compacted_probe.value(), "payload.arr"));
-
-    auto segment_path = compacted.value()->segment_path(0);
-    ASSERT_TRUE(segment_path.has_value()) << segment_path.error();
-    const std::string prefix(InvertedIndexDescriptor::get_index_file_path_prefix(*segment_path));
-    IndexFileReader index_file_reader(
-            compacted.value()->rowset_meta()->fs(), prefix, InvertedIndexStorageFormatPB::SNII,
-            compacted.value()->segment(0).inverted_index_file_info(), options.tablet_id);
-    ASSERT_TRUE(index_file_reader.init().ok());
-    const auto root_indexes = compacted.value()->tablet_schema()->inverted_indexs(2);
-    ASSERT_EQ(root_indexes.size(), 2);
-    auto exact = index_file_reader.open_snii_index(root_indexes[0]);
-    auto token = index_file_reader.open_snii_index(root_indexes[1]);
-    ASSERT_TRUE(exact.has_value()) << exact.error();
-    ASSERT_TRUE(token.has_value()) << token.error();
-    EXPECT_EQ((*exact)->stats().doc_count, 4U);
-    EXPECT_EQ((*token)->stats().doc_count, 4U);
-
-    std::vector<uint32_t> docids;
-    ASSERT_TRUE(snii::query::term_query(
-                        **exact, segment_v2::variant_term_codec::term_string("opened"), &docids)
-                        .ok());
-    EXPECT_EQ(docids, (std::vector<uint32_t> {0, 2}));
-    docids.clear();
-    ASSERT_TRUE(snii::query::term_query(**token, segment_v2::variant_term_codec::term_token("root"),
-                                        &docids)
-                        .ok());
-    EXPECT_EQ(docids, (std::vector<uint32_t> {0, 2}));
+TEST_F(IndexStorageVariantCompactionReadTest, LogicalRebuildKeepsSourceSchemaImmutable) {
+    run_direct_merge_of_root_indexes(IndexCompactionKind::FULL, 110082, 10082, 3);
 }
 
 } // namespace doris::index_storage_test

@@ -220,8 +220,8 @@ TEST_F(IndexStorageVariantCompactionSchemaTest,
     options.index_storage_format = InvertedIndexStorageFormatPB::SNII;
     options.variant_columns = {std::move(variant)};
     options.inverted_indexes = {IndexSpec::column_index(
-            10055, "idx_v_root_exact", 2,
-            {{"parser", "none"},
+            10055, "idx_v_root_english", 2,
+            {{"parser", "english"},
              {std::string(segment_v2::variant_root_index::VARIANT_INDEX_MODE_KEY),
               std::string(segment_v2::variant_root_index::VARIANT_INDEX_MODE_ALL_VALUES)},
              {std::string(segment_v2::variant_root_index::VARIANT_ROOT_FORMAT_VERSION_KEY),
@@ -253,7 +253,7 @@ TEST_F(IndexStorageVariantCompactionSchemaTest,
 }
 
 TEST_F(IndexStorageVariantCompactionSchemaTest,
-       RootIndexedVariantUsesExtractedSchemaOnlyWhenEverySiblingDirectMerges) {
+       RootIndexedVariantUsesExtractedSchemaForNativeMerge) {
     const auto root_properties = [](std::string parser) {
         return std::map<std::string, std::string> {
                 {"parser", std::move(parser)},
@@ -273,7 +273,6 @@ TEST_F(IndexStorageVariantCompactionSchemaTest,
     options.index_storage_format = InvertedIndexStorageFormatPB::SNII;
     options.variant_columns = {std::move(variant)};
     options.inverted_indexes = {
-            IndexSpec::column_index(10056, "idx_v_root_exact", 2, root_properties("none")),
             IndexSpec::column_index(10057, "idx_v_root_english", 2, root_properties("english"))};
     ASSERT_TRUE(create_tablet(options).ok());
 
@@ -294,14 +293,14 @@ TEST_F(IndexStorageVariantCompactionSchemaTest,
 
     auto partially_merged_schema = std::make_shared<TabletSchema>(*tablet_schema());
     auto status = variant_util::VariantCompactionUtil::get_extended_compaction_schema(
-            {rowset_result.value()}, partially_merged_schema, {{2, 10056}});
+            {rowset_result.value()}, partially_merged_schema, {});
     ASSERT_TRUE(status.ok()) << status.to_string();
     EXPECT_FALSE(schema_has_extracted_variant_path(*partially_merged_schema, 2, "hot"));
     EXPECT_FALSE(schema_has_extracted_variant_path(*partially_merged_schema, 2, "payload"));
 
     auto fully_merged_schema = std::make_shared<TabletSchema>(*tablet_schema());
     status = variant_util::VariantCompactionUtil::get_extended_compaction_schema(
-            {rowset_result.value()}, fully_merged_schema, {{2, 10056}, {2, 10057}});
+            {rowset_result.value()}, fully_merged_schema, {{2, 10057}});
     ASSERT_TRUE(status.ok()) << status.to_string();
     EXPECT_TRUE(schema_has_extracted_variant_path(*fully_merged_schema, 2, "hot"));
     EXPECT_FALSE(schema_has_extracted_variant_path(*fully_merged_schema, 2, "payload"));

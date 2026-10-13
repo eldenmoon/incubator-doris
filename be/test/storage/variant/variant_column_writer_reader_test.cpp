@@ -6884,15 +6884,7 @@ TEST_F(VariantColumnWriterReaderTest, test_find_subcolumn_tablet_indexes_branch_
                 make_subcolumn("v.sparse", FieldType::OLAP_FIELD_TYPE_VARIANT, "v.sparse",
                                root_unique_id),
                 std::make_shared<DataTypeVariant>(10, false), &selected_sparse_reader);
-        ASSERT_EQ(sparse_logical_path.size(), 1);
-        EXPECT_EQ(sparse_logical_path[0]->index_id(), 10005);
-        EXPECT_EQ(sparse_logical_path[0]->properties().at(
-                          std::string(segment_v2::variant_root_index::VARIANT_ROOT_QUERY_PATH_KEY)),
-                  "sparse");
-        // A path read from the binary storage is typed only by the cast: it binds the values
-        // index without a value family, and the reader admits string literals and MATCH.
-        EXPECT_FALSE(sparse_logical_path[0]->properties().contains(
-                std::string(segment_v2::variant_root_index::VARIANT_ROOT_QUERY_VALUE_FAMILY_KEY)));
+        EXPECT_TRUE(sparse_logical_path.empty());
     }
 
     TabletIndexPB all_values_index_pb;
@@ -6920,19 +6912,7 @@ TEST_F(VariantColumnWriterReaderTest, test_find_subcolumn_tablet_indexes_branch_
                 make_subcolumn("v.sparse", FieldType::OLAP_FIELD_TYPE_VARIANT, "v.sparse",
                                root_unique_id),
                 std::make_shared<DataTypeVariant>(10, false), &selected_sparse_reader);
-        ASSERT_EQ(sparse_logical_path.size(), 2);
-        const auto all_values = std::ranges::find_if(
-                sparse_logical_path, [](const auto& index) { return index->index_id() == 10004; });
-        ASSERT_NE(all_values, sparse_logical_path.end());
-        EXPECT_EQ((*all_values)
-                          ->properties()
-                          .at(std::string(
-                                  segment_v2::variant_root_index::VARIANT_ROOT_QUERY_PATH_KEY)),
-                  "sparse");
-        EXPECT_FALSE((*all_values)
-                             ->properties()
-                             .contains(std::string(segment_v2::variant_root_index::
-                                                           VARIANT_ROOT_QUERY_VALUE_FAMILY_KEY)));
+        EXPECT_TRUE(sparse_logical_path.empty());
     }
 
     {

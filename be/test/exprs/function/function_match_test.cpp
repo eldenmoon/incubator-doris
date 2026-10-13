@@ -696,12 +696,6 @@ TEST(FunctionMatchTest, VariantRootResidualMatchesAcrossPathsArraysAndScalars) {
     EXPECT_EQ(execute(match_any, "doris"), std::vector<uint8_t>({1, 0, 1, 1, 0}));
     EXPECT_EQ(execute(match_any, "secretkey"), std::vector<uint8_t>({0, 0, 0, 0, 0}));
     EXPECT_EQ(execute(match_any, "leafvalue"), std::vector<uint8_t>({0, 1, 0, 0, 0}));
-
-    auto exact_analyzer = create_inverted_index_ctx(InvertedIndexParserType::PARSER_NONE);
-    context->set_function_state(
-            FunctionContext::THREAD_LOCAL,
-            std::shared_ptr<InvertedIndexAnalyzerCtx>(std::move(exact_analyzer.ctx)));
-    EXPECT_EQ(execute(match_any, "doris"), std::vector<uint8_t>({0, 0, 1, 0, 0}));
 }
 
 TEST(FunctionMatchTest, IndexRecheckDoesNotEnableUnindexedMatch) {
@@ -1023,6 +1017,30 @@ TEST(FunctionMatchTest, function_registration) {
     // Note: Full testing would require access to SimpleFunctionFactory
     // This test verifies the concept exists
     EXPECT_TRUE(true);
+}
+
+TEST(FunctionMatchTest, VariantRootScanRejectsMissingAnalyzer) {
+    JsonStringToVariantEncoder encoder;
+    const std::string json = R"({"a":"hello"})";
+    encoder.add_json({json.data(), json.size()});
+    auto values = ColumnVariantV2::create();
+    values->insert_encoded_batch(encoder.finish_batch());
+    auto query = ColumnString::create();
+    query->insert_data("hello", 5);
+    TQueryOptions options;
+    options.__set_enable_match_without_inverted_index(true);
+    RuntimeState state(options, TQueryGlobals {});
+    auto context = FunctionContext::create_context(
+            &state, std::make_shared<DataTypeUInt8>(),
+            {std::make_shared<DataTypeVariantV2>(), std::make_shared<DataTypeString>()});
+    Block block;
+    block.insert({std::move(values), std::make_shared<DataTypeVariantV2>(), "payload"});
+    block.insert({std::move(query), std::make_shared<DataTypeString>(), "query"});
+    block.insert({ColumnUInt8::create(), std::make_shared<DataTypeUInt8>(), "result"});
+    FunctionMatchAny function;
+    const auto status = function.execute_impl(context.get(), block, {0, 1}, 2, 1);
+    EXPECT_FALSE(status.ok());
+    EXPECT_NE(status.to_string().find("bound analyzer"), std::string::npos);
 }
 
 } // namespace doris

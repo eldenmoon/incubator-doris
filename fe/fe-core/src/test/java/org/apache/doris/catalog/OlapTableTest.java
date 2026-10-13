@@ -97,6 +97,11 @@ public class OlapTableTest {
         // Sub-column predicates keep the ordinary selection; a whole-root MATCH needs the
         // values index.
         Assert.assertSame(values, table.getVariantAllValuesIndex(variantColumn, "english"));
+        Assert.assertSame(children, table.getInvertedIndex(variantColumn, Lists.newArrayList(), "english"));
+        Assert.assertSame(children, table.getInvertedIndex(variantColumn, Lists.newArrayList("a"), "english"));
+        table.setIndexes(Lists.newArrayList(values));
+        Assert.assertNull(table.getInvertedIndex(variantColumn, Lists.newArrayList(), "english"));
+        Assert.assertNull(table.getInvertedIndex(variantColumn, Lists.newArrayList("a"), "english"));
         Map<String, String> legacyProperties = Maps.newHashMap(valuesProperties);
         legacyProperties.remove(InvertedIndexProperties.VARIANT_INDEX_SCOPE_KEY);
         legacyProperties.put(InvertedIndexProperties.VARIANT_INDEX_MODE_KEY,
