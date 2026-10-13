@@ -61,6 +61,10 @@ public class CheckMatchExpression extends OneRewriteRuleFactory {
                 if (!Config.enable_variant_v2) {
                     throw new AnalysisException("VARIANT root MATCH requires enable_variant_v2=true");
                 }
+                if (matchExpression.getAnalyzer().isPresent()
+                        && !"english".equals(matchExpression.getAnalyzer().get())) {
+                    throw new AnalysisException("VARIANT root MATCH supports only the english analyzer");
+                }
                 Operator operator = matchExpression.op();
                 if (operator != Operator.MATCH_ANY && operator != Operator.MATCH_ALL) {
                     throw new AnalysisException(String.format(

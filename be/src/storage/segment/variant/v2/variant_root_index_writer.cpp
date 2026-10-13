@@ -19,9 +19,7 @@
 
 #include "common/cast_set.h"
 #include "common/exception.h"
-#include "core/column/column_variant.h"
 #include "core/value/variant/variant_leaf_visitor.h"
-#include "exprs/function/parse/variant_string_parse.h"
 #include "storage/index/inverted/analyzer/analyzer.h"
 #include "storage/index/inverted/inverted_index_parser.h"
 #include "storage/index/inverted/variant_root_index.h"
@@ -49,10 +47,10 @@ Status VariantRootIndexWriter::init() {
         return Status::Error<ErrorCode::INVERTED_INDEX_NOT_SUPPORTED>(
                 "VARIANT root index does not support phrase positions");
     }
-    _ignore_above = cast_set<uint32_t>(
-            std::stoul(get_parser_ignore_above_value_from_properties(_index_meta->properties())));
-    _should_analyze =
-            inverted_index::InvertedIndexAnalyzer::should_analyzer(_index_meta->properties());
+    if (!inverted_index::InvertedIndexAnalyzer::should_analyzer(_index_meta->properties())) {
+        return Status::Error<ErrorCode::INVERTED_INDEX_NOT_SUPPORTED>(
+                "VARIANT values index requires a text analyzer");
+    }
     _writer = std::make_unique<SniiIndexColumnWriter>(_index_file_writer, _index_meta,
                                                       FieldType::OLAP_FIELD_TYPE_VARCHAR);
     RETURN_IF_ERROR(_writer->init());
@@ -65,10 +63,8 @@ Status VariantRootIndexWriter::begin_document(bool sql_null) {
     DORIS_CHECK(!_document_open);
     _document_open = true;
     _sql_null = sql_null;
-    _exact_terms.clear();
     _analyzed_values.clear();
     _owned_texts.clear();
-    _has_unspellable_leaf = false;
     return Status::OK();
 }
 
@@ -76,20 +72,6 @@ Status VariantRootIndexWriter::add_leaf(const VariantLeaf& leaf) {
     DORIS_CHECK(_document_open);
     DORIS_CHECK(!_sql_null);
     if (leaf.kind == VariantLeafKind::OTHER) {
-        // A non-null scalar the codec cannot spell has no value term. The exact index records
-        // one marker per document instead, so an equality over the binary storage still lists
-        // the document as a candidate for its residual.
-        if (!_should_analyze && !_has_unspellable_leaf &&
-            leaf.value.basic_type() == VariantBasicType::PRIMITIVE && !leaf.value.is_null()) {
-            _has_unspellable_leaf = true;
-            _exact_terms.push_back(variant_root_index::unspellable_marker_term());
-        }
-        return Status::OK();
-    }
-    if (!_should_analyze) {
-        if (leaf.kind != VariantLeafKind::STRING || leaf.string_value.size <= _ignore_above) {
-            _exact_terms.push_back(variant_root_index::leaf_term(leaf));
-        }
         return Status::OK();
     }
     if (leaf.kind == VariantLeafKind::STRING) {
@@ -115,7 +97,7 @@ Status VariantRootIndexWriter::end_document() {
         for (const std::string& text : _owned_texts) {
             _analyzed_values.emplace_back(text);
         }
-        status = _writer->add_document(_exact_terms, variant_term_codec::token_term_prefix(),
+        status = _writer->add_document({}, variant_term_codec::token_term_prefix(),
                                        _analyzed_values);
     }
     _document_open = false;
@@ -137,9 +119,6 @@ void VariantRootIndexWriter::close_on_error() {
 
 size_t VariantRootIndexWriter::size() const {
     size_t result = _analyzed_values.capacity() * sizeof(Slice);
-    for (const std::string& term : _exact_terms) {
-        result += term.capacity();
-    }
     for (const std::string& text : _owned_texts) {
         result += text.capacity();
     }
@@ -193,51 +172,6 @@ Status append_variant_root_indexes(std::span<VariantRootIndexWriter*> writers,
         }
         return Status::OK();
     } catch (const Exception& exception) {
-        return exception.to_status();
-    }
-}
-
-Status append_variant_root_indexes(std::span<VariantRootIndexWriter*> writers,
-                                   const ColumnVariant& column, size_t begin, size_t length,
-                                   std::span<const uint8_t> outer_nulls) {
-    DORIS_CHECK(!writers.empty());
-    if (begin > column.size() || length > column.size() - begin) {
-        return Status::InvalidArgument("VARIANT root index range [{}, {}) exceeds input size {}",
-                                       begin, begin + length, column.size());
-    }
-    if (!outer_nulls.empty() && outer_nulls.size() != length) {
-        return Status::InvalidArgument(
-                "VARIANT root index outer-null span has {} rows, expected {}", outer_nulls.size(),
-                length);
-    }
-    try {
-        // Every string is escaped (control characters included) so the text parses back to the
-        // same leaves, and text that still fails to parse is an error rather than a document
-        // silently indexed as one string.
-        JsonToVariantOptions encoder_options = JsonToVariantOptions::current_config();
-        encoder_options.throw_on_invalid_json = true;
-        JsonStringToVariantEncoder encoder(encoder_options);
-        DataTypeSerDe::FormatOptions format_options;
-        format_options.escape_char = '\\';
-        for (size_t offset = 0; offset < length; ++offset) {
-            const bool outer_null = !outer_nulls.empty() && outer_nulls[offset] != 0;
-            std::string json;
-            if (outer_null) {
-                json = "{}";
-            } else {
-                column.serialize_one_row_to_string(begin + offset, &json, format_options);
-            }
-            RETURN_IF_ERROR(encoder.try_add_json({json.data(), json.size()}));
-        }
-        VariantBatchBuilder batch = encoder.finish_batch();
-        auto encoded = ColumnVariantV2::create();
-        encoded->insert_encoded_batch(batch);
-        return append_variant_root_indexes(writers, encoded->read_view(), 0, length, outer_nulls);
-    } catch (const Exception& exception) {
-        for (VariantRootIndexWriter* writer : writers) {
-            DORIS_CHECK(writer != nullptr);
-            writer->close_on_error();
-        }
         return exception.to_status();
     }
 }

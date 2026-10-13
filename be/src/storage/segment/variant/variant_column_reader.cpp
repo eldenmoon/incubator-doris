@@ -1520,33 +1520,6 @@ TabletIndexes VariantColumnReader::find_subcolumn_tablet_indexes(
     // Otherwise, inherit index from the VARIANT parent column.
     if (!parent_index.empty() &&
         index_data_type->get_primitive_type() != PrimitiveType::TYPE_MAP /*SPARSE COLUMN*/) {
-        const PrimitiveType path_type = remove_nullable(index_data_type)->get_primitive_type();
-        // A root index binds to a scalar path with a value family (typed or dynamically
-        // materialized) and to a path read from the binary storage; JSONB / ARRAY sub-columns
-        // and object prefixes have no family and no scalar residual the candidates could serve.
-        const bool has_value_family = !variant_root_index::value_family(path_type).empty();
-        const bool reads_untyped_binary_value =
-                path_type == PrimitiveType::TYPE_VARIANT &&
-                dynamic_cast<const BinaryColumnExtractIterator*>(selected_path_reader) != nullptr;
-        for (const TabletIndex* index : parent_index) {
-            if (!variant_root_index::is_root_index(*index)) {
-                continue;
-            }
-            // Doc indexes describe original values, while declared paths can read converted
-            // materialized columns. Their terms cannot safely bound those typed predicates.
-            if (is_typed_path && _tablet_schema->column_by_uid(column.parent_unique_id())
-                                         .variant_enable_doc_mode()) {
-                continue;
-            }
-            // A typed scalar path carries its value family into the binding so the reader can
-            // gate the literal types; a path read from the binary storage is typed only by the
-            // cast, which the reader admits for string literals and MATCH. Either way the
-            // result is a candidate set that the residual expression settles.
-            if (has_value_family || reads_untyped_binary_value) {
-                sub_column_info.indexes.push_back(
-                        variant_root_index::bind_to_path(*index, relative_path_str, path_type));
-            }
-        }
         // type in column maynot be real type, so use data_type to get the real type
         PathInData index_path {*column.path_info_ptr()};
         TabletColumn target_column =

@@ -307,15 +307,75 @@ Status Compaction::merge_input_rowsets() {
     // Propagate input rowset readers into the rowset writer context before the writer is created.
     // Variant nested-group compaction uses this metadata to enable the streaming writer path.
     ctx.input_rs_readers = input_rs_readers;
-    construct_index_compaction_columns(ctx);
     if (_enable_vertical_compact_variant_subcolumns &&
         has_variant_root_index(*_cur_tablet_schema)) {
+        const auto logical_schema = _cur_tablet_schema;
+        std::set<std::pair<int32_t, int64_t>> proposed_native;
+        for (const auto& index : logical_schema->inverted_indexes()) {
+            if (segment_v2::variant_root_index::is_root_index(*index)) {
+                proposed_native.emplace(index->col_unique_ids().front(), index->index_id());
+            }
+        }
+        // Form the data plan first. Format eligibility alone says nothing about conversions.
+        RETURN_IF_ERROR(variant_util::VariantCompactionUtil::get_extended_compaction_schema(
+                _input_rowsets, _cur_tablet_schema, proposed_native));
+        for (const auto& [uid, index_id] : proposed_native) {
+            const auto status =
+                    variant_util::VariantCompactionUtil::root_index_plan_preserves_tokens(
+                            _input_rowsets, *_cur_tablet_schema, uid);
+            if (!status.ok() && !status.is<ErrorCode::NOT_IMPLEMENTED_ERROR>()) {
+                return status;
+            }
+            if (!status.ok()) {
+                _snii_merge_eligibility.emplace(std::make_pair(uid, index_id), status);
+                LOG(INFO) << "tablet[" << _tablet->tablet_id() << "] index[" << index_id
+                          << "] root index mode=rebuild reason=" << status;
+            }
+        }
+        construct_index_compaction_columns(ctx);
+        _cur_tablet_schema = logical_schema;
+        // Freeze the final layout: native retains the validated plan; rebuild retains a
+        // complete V2 value and feeds only the final-value writer, never a native session.
         RETURN_IF_ERROR(variant_util::VariantCompactionUtil::get_extended_compaction_schema(
                 _input_rowsets, _cur_tablet_schema, ctx.snii_indexes_to_do_compaction));
-        // The extended schema may expose additional indexable columns. Reuse the same context;
-        // already-selected SNII indexes are skipped below, so successful Root preflight is not
-        // repeated.
-        construct_index_compaction_columns(ctx);
+    }
+    if (!_enable_vertical_compact_variant_subcolumns &&
+        has_variant_root_index(*_cur_tablet_schema)) {
+        // The source rowset schema is shared with readers and other compactions. Keep this
+        // runtime V2 hint on an owned copy rather than mutating that shared schema.
+        auto rebuild_schema = std::make_shared<TabletSchema>();
+        rebuild_schema->copy_from(*_cur_tablet_schema);
+        _cur_tablet_schema = std::move(rebuild_schema);
+        // This path has no extracted-column conversion plan to validate.
+        for (const auto& index : _cur_tablet_schema->inverted_indexes()) {
+            if (segment_v2::variant_root_index::is_root_index(*index)) {
+                const auto uid = index->col_unique_ids().front();
+                _cur_tablet_schema->mutable_column_by_uid(uid).set_variant_is_v2(true);
+                _snii_merge_eligibility.emplace(
+                        std::make_pair(uid, index->index_id()),
+                        Status::NotSupported(
+                                "root index native merge requires a validated vertical data plan"));
+            }
+        }
+    }
+    construct_index_compaction_columns(ctx);
+    for (const auto& index : _cur_tablet_schema->inverted_indexes()) {
+        if (!segment_v2::variant_root_index::is_root_index(*index)) {
+            continue;
+        }
+        const auto key = std::make_pair(index->col_unique_ids().front(), index->index_id());
+        if (ctx.snii_indexes_to_do_compaction.contains(key)) {
+            LOG(INFO) << "tablet[" << _tablet->tablet_id() << "] index[" << index->index_id()
+                      << "] root index mode=native";
+        } else if (!_enable_inverted_index_compaction) {
+            LOG(INFO) << "tablet[" << _tablet->tablet_id() << "] index[" << index->index_id()
+                      << "] root index mode=rebuild reason=inverted_index_compaction_enable=false";
+        } else {
+            const auto decision = _snii_merge_eligibility.find(key);
+            DORIS_CHECK(decision != _snii_merge_eligibility.end());
+            LOG(INFO) << "tablet[" << _tablet->tablet_id() << "] index[" << index->index_id()
+                      << "] root index mode=rebuild reason=" << decision->second;
+        }
     }
     RETURN_IF_ERROR(construct_output_rowset_writer(ctx));
 
@@ -1678,6 +1738,8 @@ void Compaction::construct_index_compaction_columns(RowsetWriterContext& ctx) {
             // of the column.
             if (eligible) {
                 ctx.snii_indexes_to_do_compaction.emplace(index_key);
+                LOG(INFO) << "tablet[" << _tablet->tablet_id() << "] index["
+                          << destination_index->index_id() << "] mode=native";
             } else {
                 LOG(INFO) << "tablet[" << _tablet->tablet_id() << "] index["
                           << destination_index->index_id()

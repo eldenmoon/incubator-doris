@@ -59,18 +59,17 @@ Status init_variant_root_index_writers(
     DORIS_CHECK(root_index_writers->empty());
     DORIS_CHECK(root_index_writer_ptrs->empty());
 
-    std::unordered_set<std::string> analyzer_keys;
+    bool has_root_index = false;
     for (const TabletIndex* index : parent_indexes) {
         DORIS_CHECK(index != nullptr);
         if (!variant_root_index::is_root_index(*index)) {
             continue;
         }
-        const std::string analyzer_key = build_analyzer_key_from_properties(index->properties());
-        if (!analyzer_keys.emplace(analyzer_key).second) {
-            return Status::InvalidArgument(
-                    "VARIANT column {} has duplicate root index analyzer identity {}",
-                    parent_column.name(), analyzer_key);
+        if (has_root_index) {
+            return Status::InvalidArgument("VARIANT column {} supports only one values index",
+                                           parent_column.name());
         }
+        has_root_index = true;
         if (opts.rowset_ctx->snii_indexes_to_do_compaction.contains(
                     {parent_column.unique_id(), index->index_id()})) {
             continue;

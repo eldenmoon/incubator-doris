@@ -1331,8 +1331,11 @@ Status VariantV1ColumnWriter::init() {
             _opts, *_tablet_column, _opts.inverted_indexes, &_root_index_writers,
             &_root_index_writer_ptrs));
 
-    const bool can_use_streaming =
-            _root_index_writers.empty() && _can_use_nested_group_streaming_compaction();
+    if (!_root_index_writers.empty()) {
+        return Status::NotSupported(
+                "VARIANT values index requires V2 input, not the legacy JSON bridge");
+    }
+    const bool can_use_streaming = _can_use_nested_group_streaming_compaction();
 
     if (can_use_streaming) {
         _streaming_compaction_writer = std::make_unique<VariantStreamingCompactionWriter>(
@@ -1564,16 +1567,6 @@ Status VariantV1ColumnWriter::finalize() {
     RETURN_IF_ERROR(prepare_non_root_write_plan_before_write(
             non_root_write_plan, ptr, *_tablet_column, *_opts.rowset_ctx->tablet_schema,
             &_subcolumns_info));
-
-    if (!_root_index_writers.empty()) {
-        const std::span<const uint8_t> outer_nulls =
-                _tablet_column->is_nullable()
-                        ? std::span<const uint8_t> {_null_column->get_data().data(),
-                                                    _null_column->size()}
-                        : std::span<const uint8_t> {};
-        RETURN_IF_ERROR(append_variant_root_indexes(_root_index_writer_ptrs, *ptr, 0, num_rows,
-                                                    outer_nulls));
-    }
 
     // Root NG dedup is handled in _process_root_column() — see the
     // has_root_ng check there. We intentionally do NOT modify the in-memory

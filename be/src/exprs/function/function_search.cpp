@@ -65,6 +65,7 @@
 #include "storage/index/inverted/query_v2/term_query/term_query.h"
 #include "storage/index/inverted/query_v2/wildcard_query/wildcard_query.h"
 #include "storage/index/inverted/util/string_helper.h"
+#include "storage/index/inverted/variant_root_index.h"
 #include "storage/olap_common.h"
 #include "storage/segment/variant/nested_group_provider.h"
 #include "storage/types.h"
@@ -789,6 +790,10 @@ Status FunctionSearch::build_leaf_query(const TSearchClause& clause,
             binding_key->clear();
         }
         return finish_leaf_query(make_unknown_query(num_rows));
+    }
+
+    if (variant_root_index::is_root_index(binding.index_properties)) {
+        return Status::NotSupported("SEARCH cannot use a VARIANT values index; use a path index");
     }
 
     if (binding_key) {

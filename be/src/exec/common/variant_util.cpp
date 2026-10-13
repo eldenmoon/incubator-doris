@@ -1043,6 +1043,82 @@ Status VariantCompactionUtil::aggregate_variant_extended_info(
     return Status::OK();
 }
 
+Status VariantCompactionUtil::root_index_plan_preserves_tokens(
+        const std::vector<RowsetSharedPtr>& rowsets, const TabletSchema& plan, int32_t column_uid) {
+    std::unordered_map<int32_t, VariantExtendedInfo> sources;
+    for (const auto& rowset : rowsets) {
+        RETURN_IF_ERROR(aggregate_variant_extended_info(rowset, &sources));
+    }
+    const auto& parent = plan.column_by_uid(column_uid);
+    if (parent.variant_enable_nested_group()) {
+        return Status::NotSupported(
+                "root index native merge does not support nested-group conversion");
+    }
+    const auto& info = sources[column_uid];
+    // Sparse paths have no complete type metadata. A newly materialized sparse path can
+    // change boolean/numeric or floating text; keep the whole value for the rebuild writer.
+    if (!info.sparse_paths.empty() || !parent.get_sub_columns().empty()) {
+        return Status::NotSupported("root index conversion includes sparse or declared paths");
+    }
+    // The VARIANT root may itself hold promoted scalar/array values, even when there is
+    // no extracted column. Include that runtime merge in the proof as well.
+    if (!parent.variant_enable_doc_mode()) {
+        const auto root = info.path_to_data_types.find(PathInData());
+        if (root != info.path_to_data_types.end() && !root->second.empty()) {
+            const auto first = remove_nullable(root->second.front());
+            for (const auto& type : root->second) {
+                if (!first->equals(*remove_nullable(type))) {
+                    return Status::NotSupported(
+                            "root scalar conversion is not proven token preserving");
+                }
+            }
+        }
+    }
+    for (const auto& column : plan.columns()) {
+        if (!column->is_extracted_column() || column->parent_unique_id() != column_uid ||
+            column->type() == FieldType::OLAP_FIELD_TYPE_VARIANT ||
+            column->type() == FieldType::OLAP_FIELD_TYPE_MAP) {
+            continue;
+        }
+        const auto relative = column->path_info_ptr()->copy_pop_front();
+        const auto source = info.path_to_data_types.find(relative);
+        if (source == info.path_to_data_types.end()) {
+            return Status::NotSupported("root index source type is unavailable for {}",
+                                        column->name());
+        }
+        const auto target = remove_nullable(DataTypeFactory::instance().create_data_type(*column));
+        for (const auto& type : source->second) {
+            const auto value_type = remove_nullable(type);
+            if (!value_type->equals(*target)) {
+                // Integer widening has identical canonical decimal text. Boolean, FLOAT,
+                // DOUBLE, arrays and all other conversions need a rebuild.
+                const auto src = value_type->get_primitive_type();
+                const auto dst = target->get_primitive_type();
+                const auto integer_width = [](PrimitiveType t) {
+                    switch (t) {
+                    case TYPE_TINYINT:
+                        return 1;
+                    case TYPE_SMALLINT:
+                        return 2;
+                    case TYPE_INT:
+                        return 4;
+                    case TYPE_BIGINT:
+                        return 8;
+                    default:
+                        return 0;
+                    }
+                };
+                if (integer_width(src) == 0 || integer_width(dst) < integer_width(src)) {
+                    return Status::NotSupported(
+                            "root index canonical text may change for {}: {} -> {}", column->name(),
+                            value_type->get_name(), target->get_name());
+                }
+            }
+        }
+    }
+    return Status::OK();
+}
+
 // get the subpaths and sparse paths for the variant column
 void VariantCompactionUtil::get_subpaths(int32_t max_subcolumns_count,
                                          const PathToNoneNullValues& stats,

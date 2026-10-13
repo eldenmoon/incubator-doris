@@ -184,6 +184,14 @@ Status FunctionMatchBase::execute_impl(FunctionContext* context, Block& block,
         }
         RETURN_IF_ERROR(check(context, get_name()));
 
+        // A keyword analyzer remains valid for ordinary VARIANT path MATCH. The FE
+        // separately requires a values text index when binding a direct-root MATCH.
+        if (analyzer_ctx == nullptr ||
+            (analyzer_ctx->requires_analysis() && analyzer_ctx->analyzer == nullptr)) {
+            return Status::Error<ErrorCode::INVERTED_INDEX_NOT_SUPPORTED>(
+                    "VARIANT MATCH requires a bound analyzer");
+        }
+
         auto result_values = ColumnUInt8::create();
         ColumnUInt8::Container& result_data = result_values->get_data();
         result_data.resize_fill(input_rows_count);

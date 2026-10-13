@@ -43,9 +43,8 @@ class IndexFileWriter;
 // Owns the one logical SNII document stream of a VARIANT root index (contract 1 in
 // variant_root_index.h). A document is one row: begin_document(), add_leaf() for every scalar
 // leaf the caller's traversal reaches, end_document(). The ordinary V2 shredder feeds leaves
-// while it already traverses the object; append_variant_root_indexes() traverses rows itself for
-// callers that hold a whole column. Every leaf becomes one path-less typed term (exact index)
-// or one canonical text for the analyzer (token index).
+// after final storage conversion; append_variant_root_indexes() traverses rows itself for
+// callers that hold a whole column. Every supported leaf contributes canonical text to the analyzer.
 class VariantRootIndexWriter final {
 public:
     VariantRootIndexWriter(IndexFileWriter* index_file_writer, const TabletIndex* index_meta,
@@ -66,13 +65,9 @@ private:
     IndexFileWriter* _index_file_writer = nullptr;
     const TabletIndex* _index_meta = nullptr;
     bool _is_direct_load = false;
-    bool _should_analyze = false;
-    uint32_t _ignore_above = 0;
     bool _document_open = false;
     bool _sql_null = false;
-    bool _has_unspellable_leaf = false;
     std::unique_ptr<SniiIndexColumnWriter> _writer;
-    std::vector<std::string> _exact_terms;
     // String leaves borrow the document's bytes until end_document(); the canonical texts of
     // number and boolean leaves are owned here.
     std::vector<Slice> _analyzed_values;
@@ -89,12 +84,6 @@ Status append_variant_root_index_leaves(std::span<VariantRootIndexWriter*> write
 Status append_variant_root_indexes(std::span<VariantRootIndexWriter*> writers,
                                    const ColumnVariantV2::ReadView& view, size_t begin,
                                    size_t length, std::span<const uint8_t> outer_nulls);
-
-// The legacy row model (ColumnVariant) reaches the index through its JSON text; rows that fail
-// to parse back are an error rather than a document indexed as one string.
-Status append_variant_root_indexes(std::span<VariantRootIndexWriter*> writers,
-                                   const ColumnVariant& column, size_t begin, size_t length,
-                                   std::span<const uint8_t> outer_nulls);
 
 Status finish_variant_root_indexes(std::span<VariantRootIndexWriter*> writers);
 

@@ -414,6 +414,10 @@ public class InvertedIndexUtil {
             return false;
         }
 
+        if (indexDefs.stream().filter(IndexDefinition::isVariantRootIndex).count() > 1) {
+            return false;
+        }
+
         Set<String> analyzerKeys = new HashSet<>();
         for (IndexDefinition indexDef : indexDefs) {
             String key = buildAnalyzerIdentity(indexDef.getProperties());

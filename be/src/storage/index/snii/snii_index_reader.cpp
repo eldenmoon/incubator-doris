@@ -867,143 +867,39 @@ Status SniiIndexReader::_execute_prepared_query(
     return Status::OK();
 }
 
-namespace {
-
-// The terms a path-bound equality probes on an exact VARIANT root index (contract 3 in
-// variant_root_index.h), or INVERTED_INDEX_EVALUATE_SKIPPED when no candidate superset exists.
-Status plan_variant_root_equality(const variant_root_index::QueryBinding& binding,
-                                  bool should_analyze, size_t ignore_above, const Field& value,
-                                  std::vector<std::string>* terms) {
-    if (!binding.path_bound) {
-        // CAST(v AS STRING) = text compares the JSON text of the whole document. A leaf term
-        // only proves that one leaf equals the text and a leaf without a term proves nothing,
-        // so there is neither an exact answer nor a candidate superset here.
-        return Status::Error<ErrorCode::INVERTED_INDEX_EVALUATE_SKIPPED>(
-                "VARIANT root index does not evaluate whole-document equality");
-    }
-    if (should_analyze) {
-        // Equality needs exact terms; a token index only knows analyzer tokens, and "all
-        // tokens present" is a superset of equality. Leave it to scalar evaluation.
-        return Status::Error<ErrorCode::INVERTED_INDEX_EVALUATE_SKIPPED>(
-                "VARIANT token index cannot evaluate equality");
-    }
-    if (value.is_null()) {
-        return Status::Error<ErrorCode::INVERTED_INDEX_EVALUATE_SKIPPED>(
-                "VARIANT root index does not evaluate NULL or missing paths");
-    }
-    const std::string_view query_family = variant_root_index::value_family(value.get_type());
-    if (query_family.empty()) {
-        return Status::Error<ErrorCode::INVERTED_INDEX_EVALUATE_SKIPPED>(
-                "VARIANT root index has no term for this literal type");
-    }
-    // The residual is CAST(path AS <literal type>) = literal. The candidates are a superset
-    // only when the cast cannot admit leaves whose term differs from the literal's: a typed
-    // materialized path of the literal's own family (integral widths may differ because a
-    // narrowing cast overflows to NULL; casts between integers and doubles or between float
-    // and double round, so those never bind), or a path read from the binary storage (no
-    // family) with a string literal, whose typed spellings cast_text_candidate_terms()
-    // enumerates and whose unspellable leaves the marker term covers. Numeric and boolean
-    // casts of arbitrary strings have no finite term set and stay scalar.
-    const bool admissible =
-            binding.family.empty() ? query_family == "string" : binding.family == query_family;
-    if (!admissible) {
-        return Status::Error<ErrorCode::INVERTED_INDEX_EVALUATE_SKIPPED>(
-                "VARIANT root index path type is incompatible with the query value type");
-    }
-    if (query_family != "string") {
-        variant_root_index::typed_literal_terms(value, terms);
-        if (terms->empty()) {
-            return Status::Error<ErrorCode::INVERTED_INDEX_EVALUATE_SKIPPED>(
-                    "VARIANT root index has no term for this literal");
-        }
-        return Status::OK();
-    }
-    const std::string_view text = value.as_string_view();
-    if (text.size() > ignore_above) {
-        // Strings longer than ignore_above are not in the index at all.
-        return Status::Error<ErrorCode::INVERTED_INDEX_EVALUATE_SKIPPED>(
-                "VARIANT root index equality value exceeds ignore_above");
-    }
-    if (binding.binary_path() && !text.empty() && (text.front() == '{' || text.front() == '[')) {
-        // A binary path may hold objects and arrays, whose JSON text the cast compares as a
-        // whole; the index has no term for containers.
-        return Status::Error<ErrorCode::INVERTED_INDEX_EVALUATE_SKIPPED>(
-                "VARIANT root index cannot bound a JSON container literal");
-    }
-    variant_root_index::cast_text_candidate_terms(text, terms);
-    if (binding.binary_path()) {
-        // A leaf the codec cannot spell left the marker instead of a value term; its document
-        // is a candidate for the residual.
-        terms->push_back(variant_root_index::unspellable_marker_term());
-    }
-    return Status::OK();
-}
-
-} // namespace
-
 Status SniiIndexReader::_query_variant_root(const IndexQueryContextPtr& context,
                                             const std::string& column_name,
                                             const Field& query_value,
                                             InvertedIndexQueryType query_type,
                                             std::shared_ptr<roaring::Roaring>& bit_map,
                                             const InvertedIndexAnalyzerCtx* analyzer_ctx) {
-    // Contract 3 of variant_root_index.h: a whole-document MATCH is exact, a predicate bound to
-    // a sub-column path yields candidates that the iterator marks requires_recheck.
-    const auto& properties = _index_meta.properties();
-    const variant_root_index::QueryBinding binding = variant_root_index::query_binding(properties);
-    const bool should_analyze = inverted_index::InvertedIndexAnalyzer::should_analyzer(properties);
-    const auto ignore_above =
-            cast_set<size_t>(std::stoul(get_parser_ignore_above_value_from_properties(properties)));
-
-    std::vector<std::string> terms;
-    InvertedIndexQueryInfo query_info;
-    InvertedIndexQueryType execution_query_type = InvertedIndexQueryType::EQUAL_QUERY;
-    switch (query_type) {
-    case InvertedIndexQueryType::EQUAL_QUERY:
-        RETURN_IF_ERROR(plan_variant_root_equality(binding, should_analyze, ignore_above,
-                                                   query_value, &terms));
-        break;
-    case InvertedIndexQueryType::MATCH_ANY_QUERY:
-    case InvertedIndexQueryType::MATCH_ALL_QUERY: {
-        if (variant_root_index::value_family(query_value.get_type()) != "string") {
-            return Status::Error<ErrorCode::INVERTED_INDEX_EVALUATE_SKIPPED>(
-                    "VARIANT root index MATCH value is not a string");
-        }
-        const std::string_view text = query_value.as_string_view();
-        if (!should_analyze) {
-            // Keyword lane: MATCH on a non-analyzed inverted index is whole-value equality; here
-            // some scalar leaf's canonical text equals the query, exactly.
-            if (text.size() > ignore_above) {
-                return Status::Error<ErrorCode::INVERTED_INDEX_EVALUATE_SKIPPED>(
-                        "VARIANT root index MATCH value exceeds ignore_above");
-            }
-            variant_root_index::exact_text_terms(text, &terms);
-            break;
-        }
-        RETURN_IF_ERROR(_parse_query_terms(context, std::string(text), query_type, analyzer_ctx,
-                                           &query_info));
-        for (const TermInfo& term : query_info.term_infos) {
-            DORIS_CHECK(term.is_single_term());
-            terms.push_back(variant_term_codec::term_token(term.get_single_term()));
-        }
-        if (terms.empty()) {
-            bit_map = std::make_shared<roaring::Roaring>();
-            return Status::OK();
-        }
-        // MATCH_ALL is "every token appears in some leaf of the document", across leaves.
-        execution_query_type = query_type;
-        break;
-    }
-    default:
+    if ((query_type != InvertedIndexQueryType::MATCH_ANY_QUERY &&
+         query_type != InvertedIndexQueryType::MATCH_ALL_QUERY) ||
+        !is_string_type(query_value.get_type())) {
         return Status::Error<ErrorCode::INVERTED_INDEX_EVALUATE_SKIPPED>(
-                "VARIANT root index supports only equality, IN, MATCH_ANY, and MATCH_ALL");
+                "VARIANT values index supports only root MATCH_ANY and MATCH_ALL");
     }
-    if (execution_query_type == InvertedIndexQueryType::EQUAL_QUERY && terms.size() > 1) {
-        // The literal spells several typed values (for example "1": the string, the integer
-        // and, under CAST, the boolean); any of them satisfies the predicate.
-        execution_query_type = InvertedIndexQueryType::MATCH_ANY_QUERY;
+    if (context->collection_similarity != nullptr) {
+        return Status::Error<ErrorCode::INVERTED_INDEX_NOT_SUPPORTED>(
+                "VARIANT values index does not support scoring");
     }
-
+    if (!inverted_index::InvertedIndexAnalyzer::should_analyzer(_index_meta.properties())) {
+        return Status::Error<ErrorCode::INVERTED_INDEX_EVALUATE_SKIPPED>(
+                "VARIANT values index requires a text analyzer");
+    }
+    InvertedIndexQueryInfo query_info;
+    RETURN_IF_ERROR(_parse_query_terms(context, std::string(query_value.as_string_view()),
+                                       query_type, analyzer_ctx, &query_info));
+    std::vector<std::string> terms;
+    for (const TermInfo& term : query_info.term_infos) {
+        DORIS_CHECK(term.is_single_term());
+        terms.push_back(variant_term_codec::term_token(term.get_single_term()));
+    }
+    if (terms.empty()) {
+        bit_map = std::make_shared<roaring::Roaring>();
+        return Status::OK();
+    }
+    const auto execution_query_type = query_type;
     std::string physical_query_key;
     for (const std::string& term : terms) {
         physical_query_key.append(std::to_string(term.size()));

@@ -198,6 +198,10 @@ public:
             const RowsetSharedPtr& rs,
             std::unordered_map<int32_t, VariantExtendedInfo>* uid_to_variant_extended_info);
 
+    // Checks the actual extracted-column plan against source segment type metadata.
+    static Status root_index_plan_preserves_tokens(const std::vector<RowsetSharedPtr>& rowsets,
+                                                   const TabletSchema& plan, int32_t column_uid);
+
     // collect path stats from the variant column
     static Status aggregate_path_to_stats(
             const RowsetSharedPtr& rs,

@@ -603,11 +603,14 @@ public class IndexDefinition {
         if ("true".equals(properties.get(InvertedIndexUtil.INVERTED_INDEX_SUPPORT_PHRASE_KEY))) {
             throw new AnalysisException("VARIANT values index does not support support_phrase=true");
         }
-        if (keysType != KeysType.DUP_KEYS
-                && !(keysType == KeysType.UNIQUE_KEYS && enableUniqueKeyMergeOnWrite)) {
-            throw new AnalysisException(
-                    "VARIANT values index supports only DUP_KEYS or UNIQUE_KEYS merge-on-write tables");
+        if (keysType != KeysType.DUP_KEYS) {
+            throw new AnalysisException("VARIANT values index supports only DUP_KEYS tables");
         }
+        if (!"english".equals(properties.get(InvertedIndexUtil.INVERTED_INDEX_PARSER_KEY))
+                || properties.containsKey("analyzer") || properties.containsKey("normalizer")) {
+            throw new AnalysisException("VARIANT values index requires the built-in english parser");
+        }
+
     }
 
     private void validateBloomFilterProperties() {
