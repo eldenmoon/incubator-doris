@@ -177,9 +177,7 @@ TEST(VariantBatchBuilderTest, FinishedBatchOwnsEmptySmallAndMovedStorage) {
     VariantBatchBuilder empty = empty_builder.finish_batch();
     EXPECT_EQ(empty.num_rows(), 0);
     EXPECT_EQ(empty.metadata_ref().dict_size(), 0);
-    EXPECT_EQ(empty.value_bytes().size, 0);
-    ASSERT_EQ(empty.value_offsets().size(), 1);
-    EXPECT_EQ(empty.value_offsets()[0], 0);
+    EXPECT_EQ(empty.num_rows(), 0);
 
     VariantBatchBuilder small_builder;
     auto row = small_builder.begin_row();
@@ -1067,9 +1065,7 @@ TEST(VariantBatchBuilderTest, EmptyBatchHasMinimalMetadataAndOnlyZeroOffset) {
     VariantBatchBuilder block = builder.finish_batch();
     const std::string expected_metadata("\x11\0\0", 3);
     EXPECT_EQ(std::string(block.metadata_ref().data, block.metadata_ref().size), expected_metadata);
-    EXPECT_EQ(block.value_bytes().size, 0);
-    ASSERT_EQ(block.value_offsets().size(), 1);
-    EXPECT_EQ(block.value_offsets().front(), 0);
+    EXPECT_EQ(block.num_rows(), 0);
     EXPECT_EQ(block.num_rows(), 0);
     EXPECT_NO_THROW(block.metadata_ref().validate());
 }

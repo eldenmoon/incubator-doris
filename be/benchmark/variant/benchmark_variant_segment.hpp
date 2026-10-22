@@ -578,8 +578,9 @@ private:
             return Status::OK();
         }
         auto compaction_schema = std::make_shared<TabletSchema>(*_schema);
+        VariantCompactionPathsMap compaction_paths;
         RETURN_IF_ERROR(variant_util::VariantCompactionUtil::get_extended_compaction_schema(
-                _input_rowsets, compaction_schema));
+                _input_rowsets, compaction_schema, compaction_paths));
         for (const TabletColumnPtr& column : compaction_schema->columns()) {
             if (column->is_extracted_column() && column->parent_unique_id() == ROOT_UID &&
                 column->is_variant_type() &&
@@ -767,7 +768,6 @@ private:
         RETURN_IF_ERROR(output->create_reader(&reader));
         RowsetReaderContext context;
         context.reader_type = ReaderType::READER_QUERY;
-        context.tablet_schema = query_schema;
         context.need_ordered_result = true;
         context.read_schema = read_schema;
         context.stats = statistics;
@@ -1283,9 +1283,7 @@ Status validate_sparse_import_output(const TabletSchemaSPtr& schema, const std::
                                                       /*tablet_id=*/1, segment_id, RowsetId(),
                                                       schema, reader_options, &segment, {},
                                                       &stats));
-            StorageReadOptions options;
-            options.stats = &stats;
-            options.tablet_schema = schema;
+            StorageReadOptions options(stats);
             std::unique_ptr<RowwiseIterator> iterator;
             RETURN_IF_ERROR(segment->new_iterator(read_schema, options, &iterator));
             RETURN_IF_ERROR(iterator->init(options));

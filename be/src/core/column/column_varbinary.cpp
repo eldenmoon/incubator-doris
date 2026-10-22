@@ -20,8 +20,11 @@
 #include <crc32c/crc32c.h>
 #include <glog/logging.h>
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
+#include <vector>
 
 #include "core/arena.h"
 #include "core/assert_cast.h"
@@ -55,16 +58,28 @@ void ColumnVarbinary::insert_many_dict_data(const int32_t* data_array, size_t st
 
 MutableColumnPtr ColumnVarbinary::clone_resized(size_t size) const {
     auto res = create();
-    if (size > 0) {
-        auto& new_col = *res;
-        size_t count = std::min(this->size(), size);
-        for (size_t i = 0; i < count; ++i) {
-            auto value = this->get_data_at(i);
-            new_col.insert_data(value.data, value.size);
+    if (size == 0) {
+        return res;
+    }
+    auto& new_col = *res;
+    auto& new_data = new_col.get_data();
+    const size_t count = std::min(this->size(), size);
+    new_data.reserve(size);
+    new_data.resize(count);
+    // A short value owns its bytes inside the descriptor, so copying descriptors already clones it.
+    // Only long values need their payload copied into the new arena.
+    if (count != 0) {
+        std::copy_n(_data.data(), count, new_data.data());
+    }
+    for (size_t row = 0; row < count; ++row) {
+        auto& value = new_data[row];
+        if (!value.isInline()) {
+            const char* dst = new_col._arena.insert(value.data(), value.size());
+            value = StringView(dst, value.size());
         }
-        if (size > count) {
-            new_col.insert_many_defaults(size - count);
-        }
+    }
+    if (size > count) {
+        new_col.insert_many_defaults(size - count);
     }
     return res;
 }
@@ -82,21 +97,39 @@ void ColumnVarbinary::insert_range_from(const IColumn& src, size_t start, size_t
                                start, length, src_col.size());
     }
 
-    for (size_t i = 0; i < length; ++i) {
-        auto value = src_col.get_data_at(start + i);
-        insert_data(value.data, value.size);
+    const size_t old_size = _data.size();
+    if (static_cast<const void*>(&src) == static_cast<const void*>(this)) {
+        // Self-append keeps the source descriptors in this column; reserve first so the resize
+        // below cannot move them out from under the bulk copy.
+        _data.reserve(old_size + length);
+    }
+    _data.resize(old_size + length);
+    // Copy the descriptors first: short values are already complete, long values are rewritten
+    // below after their payload is copied into this column's arena. Avoids rebuilding every
+    // descriptor through insert_data(), which dominated small-value range appends.
+    std::copy_n(src_col._data.data() + start, length, _data.data() + old_size);
+    for (size_t row = old_size; row < old_size + length; ++row) {
+        auto& value = _data[row];
+        if (!value.isInline()) {
+            const char* dst = _arena.insert(value.data(), value.size());
+            value = StringView(dst, value.size());
+        }
     }
 }
 
 void ColumnVarbinary::insert_indices_from(const IColumn& src, const uint32_t* indices_begin,
                                           const uint32_t* indices_end) {
     const Self& src_vec = assert_cast<const Self&>(src);
-    auto new_size = indices_end - indices_begin;
+    const size_t count = indices_end - indices_begin;
+    const size_t old_size = _data.size();
+    _data.resize(old_size + count);
 
-    for (uint32_t i = 0; i < new_size; ++i) {
-        auto offset = *(indices_begin + i);
-        auto value = src_vec.get_data_at(offset);
-        insert_data(value.data, value.size);
+    for (size_t row = 0; row < count; ++row) {
+        auto& value = _data[old_size + row] = src_vec._data[indices_begin[row]];
+        if (!value.isInline()) {
+            const char* dst = _arena.insert(value.data(), value.size());
+            value = StringView(dst, value.size());
+        }
     }
 }
 
@@ -104,7 +137,7 @@ ColumnPtr ColumnVarbinary::filter(const IColumn::Filter& filt, ssize_t result_si
     size_t size = this->size();
     column_match_filter_size(size, filt.size());
 
-    if (_data.size() == 0) {
+    if (_data.empty()) {
         return doris::ColumnVarbinary::create();
     }
     auto res = doris::ColumnVarbinary::create();
@@ -114,38 +147,123 @@ ColumnPtr ColumnVarbinary::filter(const IColumn::Filter& filt, ssize_t result_si
         res_data.reserve(result_size_hint > 0 ? result_size_hint : size);
     }
 
-    const UInt8* filt_pos = filt.data();
-    const UInt8* filt_end = filt_pos + size;
-    const auto* data_pos = _data.data();
-
-    while (filt_pos < filt_end) {
-        if (*filt_pos) {
-            res->insert_data(data_pos->data(), data_pos->size());
+    for (size_t row = 0; row < size; ++row) {
+        if (filt[row]) {
+            res_data.push_back(_data[row]);
         }
-        ++filt_pos;
-        ++data_pos;
+    }
+    // Descriptors were copied as-is; only long values need their payload in the new arena.
+    for (auto& value : res_data) {
+        if (!value.isInline()) {
+            const char* dst = res->_arena.insert(value.data(), value.size());
+            value = StringView(dst, value.size());
+        }
     }
     return res;
 };
 
+void ColumnVarbinary::reserve_bytes(size_t bytes) {
+    // A batch hint must not turn the arena back into a multi-GiB contiguous allocation.
+    const size_t reserve_size = std::min(bytes, size_t {128 * 1024 * 1024});
+    if (reserve_size > _arena.remaining_space_in_current_chunk()) {
+        static_cast<void>(_arena.alloc(reserve_size));
+        _arena.rollback(reserve_size);
+    }
+}
+
+bool ColumnVarbinary::owns_data(StringRef value) const {
+    const auto begin = reinterpret_cast<uintptr_t>(_data.data());
+    const auto address = reinterpret_cast<uintptr_t>(value.data);
+    const size_t bytes = _data.size() * sizeof(value_type);
+    return (address >= begin && address - begin < bytes &&
+            value.size <= bytes - (address - begin)) ||
+           _arena.contains(value.data, value.size);
+}
+
+namespace {
+
+// Erasing rows drops descriptors only: an Arena cannot release the payload of individual values, so
+// a consume-and-refill analytic sink would retain every erased long value and grow without bound.
+// Once the garbage dominates the live payload, rebuild the arena from the surviving values instead.
+// Values at or below the inline threshold live inside their descriptor and are never affected.
+constexpr size_t COMPACTION_MIN_ARENA_BYTES = 1 << 20;
+
+void compact_arena_if_needed(ColumnVarbinary::Container& data, Arena& arena) {
+    if (arena.size() <= COMPACTION_MIN_ARENA_BYTES) {
+        return;
+    }
+    size_t live_bytes = 0;
+    for (const auto& value : data) {
+        if (!value.isInline()) {
+            live_bytes += value.size();
+        }
+    }
+    // More than half of the arena is garbage. The extra copy below is paid back by the reclaim and
+    // keeps the retained memory proportional to the live payload instead of the appended history.
+    if (arena.size() <= live_bytes * 2) {
+        return;
+    }
+    if (live_bytes == 0) {
+        arena.clear(true);
+        return;
+    }
+    // Stage the survivors outside the arena, release every chunk, then copy them into one
+    // right-sized chunk. Views must be rewritten because the arena address changes.
+    std::vector<char> staged(live_bytes);
+    char* cursor = staged.data();
+    for (auto& value : data) {
+        if (value.isInline()) {
+            continue;
+        }
+        std::memcpy(cursor, value.data(), value.size());
+        value = StringView(cursor, value.size());
+        cursor += value.size();
+    }
+    arena.clear(true);
+    char* compacted = arena.alloc(live_bytes);
+    std::memcpy(compacted, staged.data(), live_bytes);
+    cursor = compacted;
+    for (auto& value : data) {
+        if (value.isInline()) {
+            continue;
+        }
+        value = StringView(cursor, value.size());
+        cursor += value.size();
+    }
+}
+
+} // namespace
+
+void ColumnVarbinary::erase(size_t start, size_t length) {
+    DORIS_CHECK_LE(start, size());
+    DORIS_CHECK_LE(length, size() - start);
+    if (length == 0) {
+        // Empty analytic partitions do not have a backing view array.
+        return;
+    }
+    std::memmove(_data.data() + start, _data.data() + start + length,
+                 (size() - start - length) * sizeof(value_type));
+    _data.resize(size() - length);
+    compact_arena_if_needed(_data, _arena);
+}
+
 size_t ColumnVarbinary::filter(const IColumn::Filter& filter) {
+    column_match_filter_size(size(), filter.size());
     size_t pos = 0;
-    const Self& src_vec = *this;
-    for (size_t i = 0; i < filter.size(); i++) {
-        if (filter[i]) {
-            if (src_vec.get_data()[i].isInline()) {
-                _data[pos] = src_vec.get_data()[i];
-            } else {
-                auto val = src_vec.get_data()[i];
-                const auto* dst = _arena.insert(val.data(), val.size());
-                _data[pos] = doris::StringView(dst, val.size());
-            }
-            pos++;
+    for (size_t row = 0; row < filter.size(); ++row) {
+        if (filter[row]) {
+            // The arena remains owned by this column. Moving views preserves the payload; copying
+            // long values into the same arena would retain the old bytes and grow on every filter.
+            _data[pos++] = _data[row];
         }
     }
     resize(pos);
+    // In-place filtering on a freshly built column starts from an arena that already holds about
+    // twice the live payload, so garbage always looks dominant here. Reclaiming it would copy the
+    // survivors on every filter and turn a descriptor-only selection into a payload copy; keep the
+    // arena and let erase() own the reclamation decision instead.
     return pos;
-};
+}
 
 MutableColumnPtr ColumnVarbinary::permute(const IColumn::Permutation& perm, size_t limit) const {
     size_t size = _data.size();

@@ -23,6 +23,7 @@
 #include <memory>
 #include <span>
 
+#include "core/column/column_varbinary.h"
 #include "core/pod_array.h"
 #include "core/string_ref.h"
 #include "core/value/variant/variant_metadata.h"
@@ -74,8 +75,8 @@ private:
 // Collects a batch through one stack-only active Row at a time. The implementation owns one
 // metadata dictionary and one set of batch-level scalar/node/container/child/row-root arenas.
 // The shared scalar/node/container/child scratch for the complete encoding unit stays within its
-// uint32 index/offset domain. Row and its scopes never own per-row heap containers and must not
-// outlive this builder.
+// uint32 node index domain; scalar bytes use a chunked binary column. Row and its scopes never
+// own per-row heap containers and must not outlive this builder.
 class VariantBatchBuilder {
 public:
     struct ReserveHint {
@@ -229,10 +230,6 @@ public:
         return {.data = _metadata.data(), .size = _metadata.size()};
     }
     VariantRef value_at(size_t row) const;
-    StringRef value_bytes() const noexcept { return {_values.data(), _values.size()}; }
-    std::span<const uint32_t> value_offsets() const noexcept {
-        return {_offsets.data(), _offsets.size()};
-    }
 
 #ifdef BE_TEST
     const TestCounters& test_counters() const noexcept;
@@ -241,8 +238,7 @@ public:
 private:
     struct Impl;
 
-    VariantBatchBuilder(PaddedPODArray<char> metadata, PaddedPODArray<char> values,
-                        PaddedPODArray<uint32_t> offsets) noexcept;
+    VariantBatchBuilder(PaddedPODArray<char> metadata, ColumnVarbinary::MutablePtr values) noexcept;
 
     void _add_scalar(uint64_t generation, const VariantScalarRef& scalar);
     void _add_null(uint64_t generation);
@@ -258,8 +254,7 @@ private:
 
     std::unique_ptr<Impl> _impl;
     PaddedPODArray<char> _metadata;
-    PaddedPODArray<char> _values;
-    PaddedPODArray<uint32_t> _offsets;
+    ColumnVarbinary::MutablePtr _values;
 };
 
 } // namespace doris

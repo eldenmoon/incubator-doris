@@ -52,6 +52,9 @@
 #include "runtime/memory/mem_tracker_limiter.h"
 #include "runtime/memory/thread_mem_tracker_mgr.h"
 #include "runtime/thread_context.h"
+#include "variant/benchmark_variant_binary.hpp"
+#include "variant/benchmark_variant_cost.hpp"
+#include "variant/benchmark_variant_element.hpp"
 #include "variant/benchmark_variant_segment.hpp"
 
 namespace doris { // change if need
