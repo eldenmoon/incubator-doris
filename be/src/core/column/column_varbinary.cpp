@@ -137,7 +137,7 @@ ColumnPtr ColumnVarbinary::filter(const IColumn::Filter& filt, ssize_t result_si
     size_t size = this->size();
     column_match_filter_size(size, filt.size());
 
-    if (_data.size() == 0) {
+    if (_data.empty()) {
         return doris::ColumnVarbinary::create();
     }
     auto res = doris::ColumnVarbinary::create();
