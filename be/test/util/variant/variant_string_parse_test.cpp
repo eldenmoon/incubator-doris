@@ -33,6 +33,7 @@
 #include <utility>
 #include <vector>
 
+#include "common/cast_set.h"
 #include "common/config.h"
 #include "common/exception.h"
 #include "core/column/column_string.h"
@@ -96,13 +97,21 @@ VariantBatchBuilder encode_jsons(const std::vector<std::string_view>& jsons,
 }
 
 std::string block_value_bytes(const VariantBatchBuilder& block) {
-    const StringRef bytes = block.value_bytes();
-    return {bytes.data, bytes.size};
+    std::string bytes;
+    for (size_t row = 0; row < block.num_rows(); ++row) {
+        const auto value = block.value_at(row).value;
+        bytes.append(value.data, value.size);
+    }
+    return bytes;
 }
 
 std::vector<uint32_t> block_value_offsets(const VariantBatchBuilder& block) {
-    const std::span<const uint32_t> offsets = block.value_offsets();
-    return {offsets.begin(), offsets.end()};
+    std::vector<uint32_t> offsets {0};
+    for (size_t row = 0; row < block.num_rows(); ++row) {
+        offsets.push_back(cast_set<uint32_t>(static_cast<size_t>(offsets.back()) +
+                                             block.value_at(row).value.size));
+    }
+    return offsets;
 }
 
 template <typename Function>
@@ -604,7 +613,11 @@ TEST(VariantJsonTest, DISABLED_MB1Initial) {
                     encoder.add_json(StringRef(json));
                 }
                 VariantBatchBuilder block = encoder.finish_batch();
-                return block.value_bytes().size + block.metadata_ref().size;
+                size_t bytes = block.metadata_ref().size;
+                for (size_t row = 0; row < block.num_rows(); ++row) {
+                    bytes += block.value_at(row).value.size;
+                }
+                return bytes;
             });
 
     const auto [jsonb_seconds, jsonb_checksum] =

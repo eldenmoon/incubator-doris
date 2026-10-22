@@ -39,6 +39,7 @@
 #include "core/column/column_decimal.h"
 #include "core/column/column_nullable.h"
 #include "core/column/column_string.h"
+#include "core/column/column_varbinary.h"
 #include "core/column/column_vector.h"
 #include "core/data_type/data_type_date.h"
 #include "core/data_type/data_type_date_or_datetime_v2.h"
@@ -420,7 +421,7 @@ const IColumn* subcolumn_address(ColumnVariantV2& column, size_t target) {
 }
 
 size_t metadata_count(ColumnVariantV2& column) {
-    return assert_cast<const ColumnString&>(*subcolumn_address(column, 0)).size();
+    return column.read_view().metadata_count();
 }
 
 struct JsonWriter {
@@ -1011,7 +1012,7 @@ TEST(ColumnVariantV2Test, EncodedScalarObjectAndArray) {
     EXPECT_EQ(metadata_ids[1], metadata_ids[3]);
     EXPECT_NE(metadata_ids[0], metadata_ids[1]);
     EXPECT_NE(metadata_ids[1], metadata_ids[4]);
-    EXPECT_EQ(assert_cast<const ColumnString&>(*children[0]).size(), 3);
+    EXPECT_EQ(assert_cast<const ColumnVarbinary&>(*children[0]).size(), 3);
 
     EXPECT_GT(column->byte_size(), 0);
     EXPECT_LE(column->byte_size(), column->allocated_bytes());
@@ -1076,7 +1077,7 @@ TEST(ColumnVariantV2Test, PreservesLegalNoncanonicalBytes) {
     const auto& metadata_ids = assert_cast<const MetaIdsColumn&>(*children[1]).get_data();
     ASSERT_EQ(metadata_ids.size(), 2);
     EXPECT_EQ(metadata_ids[0], metadata_ids[1]);
-    EXPECT_EQ(assert_cast<const ColumnString&>(*children[0]).size(), 1);
+    EXPECT_EQ(assert_cast<const ColumnVarbinary&>(*children[0]).size(), 1);
 }
 
 TEST(ColumnVariantV2Test, InsertRejectsMalformedMetadataAndTrailingValueBytes) {
@@ -1545,8 +1546,7 @@ TEST(ColumnVariantV2Test, InsertsCodecOwnedBatchAtLeast64KRows) {
         row.finish();
     }
     VariantBatchBuilder block = builder.finish_batch();
-    ASSERT_EQ(block.value_offsets().size(), static_cast<size_t>(ROWS) + 1);
-    ASSERT_EQ(block.value_offsets().back(), ROWS);
+    ASSERT_EQ(block.num_rows(), ROWS);
 
     auto column = ColumnVariantV2::create();
     column->insert_encoded_batch(block);
@@ -2391,7 +2391,7 @@ TEST(ColumnVariantV2Test, EncodedRowCountInvariant) {
             {
                 auto column = ColumnVariantV2::create();
                 insert_encoded_field(*column, encode_json("1"));
-                ColumnVariantV2::TestAccess::replace_values(*column, ColumnString::create());
+                ColumnVariantV2::TestAccess::replace_values(*column, ColumnVarbinary::create());
                 column->sanity_check();
             },
             "encoded row counts differ");
