@@ -80,28 +80,33 @@ TEST(VariantBinaryStorageTest, RepeatedInPlaceFilterDoesNotCopyLongValues) {
     EXPECT_EQ(column->get_data_at(1), StringRef(payload));
 }
 
-TEST(VariantBinaryStorageTest, EncodedAndConstValuesRoundTripAcrossExecVersions) {
-    auto column = string_variant(std::string(32768, 'x'), 4);
+void expect_binary_roundtrip(const IColumn& source, int version, std::vector<char>& bytes) {
     const DataTypeVariantV2 type;
-    for (const int version :
-         {10, SUPPORT_VARIANT_BINARY_COLUMN_VERSION - 1, SUPPORT_VARIANT_BINARY_COLUMN_VERSION}) {
-        for (const bool constant : {false, true}) {
-            ColumnPtr source = column->get_ptr();
-            if (constant) {
-                source = ColumnConst::create(column->clone_resized(1), 17);
-            }
-            std::vector<char> bytes(type.get_uncompressed_serialized_bytes(*source, version));
-            const char* end = type.serialize(*source, bytes.data(), version);
-            ASSERT_LE(end, bytes.data() + bytes.size());
-            MutableColumnPtr restored = type.create_column();
-            EXPECT_EQ(type.deserialize(bytes.data(), &restored, version), end);
-            EXPECT_EQ(restored->size(), source->size());
-            const auto materialized = restored->convert_to_full_column_if_const();
-            const auto& values = assert_cast<const ColumnVariantV2&>(*materialized);
-            EXPECT_EQ(values.get_value_ref(0).get_string(), StringRef(std::string(32768, 'x')));
-            EXPECT_EQ(values.get_value_ref(values.size() - 1).get_string(),
-                      column->get_value_ref(0).get_string());
+    bytes.resize(type.get_uncompressed_serialized_bytes(source, version));
+    const char* end = type.serialize(source, bytes.data(), version);
+    ASSERT_EQ(end, bytes.data() + bytes.size());
+    MutableColumnPtr restored = type.create_column();
+    EXPECT_EQ(type.deserialize(bytes.data(), &restored, version), end);
+    ASSERT_EQ(restored->size(), source.size());
+    const auto materialized = restored->convert_to_full_column_if_const();
+    const auto expected = source.convert_to_full_column_if_const();
+    EXPECT_EQ(materialized->compare_at(0, 0, *expected, 1), 0);
+    EXPECT_EQ(materialized->compare_at(source.size() - 1, source.size() - 1, *expected, 1), 0);
+}
+
+TEST(VariantBinaryStorageTest, EncodedAndConstValuesUseOneBinaryLayout) {
+    auto column = string_variant(std::string(32768, 'x'), 4);
+    for (const bool constant : {false, true}) {
+        ColumnPtr source = column->get_ptr();
+        if (constant) {
+            source = ColumnConst::create(column->clone_resized(1), 17);
         }
+        std::vector<char> first_encoding;
+        expect_binary_roundtrip(*source, 10, first_encoding);
+        std::vector<char> current_encoding;
+        expect_binary_roundtrip(*source, BeExecVersionManager::get_newest_version(),
+                                current_encoding);
+        EXPECT_EQ(current_encoding, first_encoding);
     }
 }
 
@@ -147,7 +152,7 @@ TEST(VariantBinaryStorageTest, LargeBatch) {
     EXPECT_EQ(column->get_value_ref(ROWS).get_string(), StringRef(payload));
 
     const DataTypeVariantV2 type;
-    constexpr int VERSION = SUPPORT_VARIANT_BINARY_COLUMN_VERSION;
+    const int VERSION = BeExecVersionManager::get_newest_version();
     DorisVector<char> bytes(type.get_uncompressed_serialized_bytes(*column, VERSION));
     const char* end = type.serialize(*column, bytes.data(), VERSION);
     ASSERT_EQ(end, bytes.data() + bytes.size());

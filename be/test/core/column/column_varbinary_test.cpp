@@ -451,6 +451,82 @@ TEST_F(ColumnVarbinaryTest, FilterBothModes) {
     }
 }
 
+TEST_F(ColumnVarbinaryTest, EraseReclaimsConsumedPayloadArena) {
+    // A Variant analytic sink erases the rows it consumed and appends a fresh batch while the row
+    // count stays fixed. Erasing only drops descriptors, so without compaction the arena would
+    // retain every consumed payload and grow with each cycle.
+    constexpr size_t rows = 1024;
+    constexpr size_t value_size = doris::StringView::kInlineSize + 1012;
+    std::vector<std::string> payloads;
+    payloads.reserve(rows);
+    for (size_t row = 0; row < rows; ++row) {
+        std::string value = make_bytes(value_size, static_cast<uint8_t>(row % 251));
+        std::memcpy(value.data(), &row, sizeof(row));
+        payloads.push_back(std::move(value));
+    }
+    std::vector<std::string> expected(payloads);
+    expected.emplace_back(make_bytes(5, 0x33)); // inline value that survives the cycles
+
+    auto column = ColumnVarbinary::create();
+    for (const auto& value : payloads) {
+        column->insert_data(value.data(), value.size());
+    }
+    column->insert_data(expected.back().data(), expected.back().size());
+    const size_t initial_allocated = column->allocated_bytes();
+    ASSERT_GT(initial_allocated, size_t {1} << 20);
+
+    for (int cycle = 0; cycle < 8; ++cycle) {
+        column->erase(0, rows / 2);
+        expected.erase(expected.begin(), expected.begin() + rows / 2);
+        for (size_t row = 0; row < rows / 2; ++row) {
+            column->insert_data(payloads[row].data(), payloads[row].size());
+            expected.push_back(payloads[row]);
+        }
+        if (cycle == 0) {
+            // The first erase already reclaims the consumed half instead of waiting for growth.
+            EXPECT_LT(column->allocated_bytes(), initial_allocated);
+        }
+    }
+
+    ASSERT_EQ(column->size(), expected.size());
+    for (size_t row = 0; row < expected.size(); ++row) {
+        const auto value = column->get_data_at(row);
+        ASSERT_EQ(value.size, expected[row].size()) << row;
+        ASSERT_EQ(std::memcmp(value.data, expected[row].data(), value.size), 0) << row;
+    }
+    // Retained memory follows the live payload, not the history of erased copies.
+    EXPECT_LT(column->allocated_bytes(), initial_allocated * 2);
+}
+
+TEST_F(ColumnVarbinaryTest, InPlaceFilterKeepsArenaUntilEraseReclaims) {
+    constexpr size_t rows = 1024;
+    constexpr size_t value_size = doris::StringView::kInlineSize + 1012;
+    auto column = ColumnVarbinary::create();
+    std::string kept;
+    for (size_t row = 0; row < rows; ++row) {
+        std::string value = make_bytes(value_size, static_cast<uint8_t>(row % 251));
+        std::memcpy(value.data(), &row, sizeof(row));
+        if (row == 0) {
+            kept = value;
+        }
+        column->insert_data(value.data(), value.size());
+    }
+    const size_t allocated = column->allocated_bytes();
+    IColumn::Filter filter(rows, 0);
+    filter[0] = 1;
+    ASSERT_EQ(column->filter(filter), 1U);
+    // Selection only moves descriptors: the arena stays for the next append instead of copying the
+    // survivor, because a freshly built arena already holds about twice the live payload.
+    EXPECT_GE(column->allocated_bytes(), allocated / 2);
+    const auto value = column->get_data_at(0);
+    ASSERT_EQ(value.size, kept.size());
+    ASSERT_EQ(std::memcmp(value.data, kept.data(), value.size), 0);
+    // erase() owns reclamation: dropping the last rows releases the retained arena.
+    column->erase(0, 1);
+    EXPECT_EQ(column->size(), 0U);
+    EXPECT_LT(column->allocated_bytes(), size_t {1} << 20);
+}
+
 TEST_F(ColumnVarbinaryTest, Permute) {
     auto col = ColumnVarbinary::create();
     // Include large (non-inline) entries to exercise arena path

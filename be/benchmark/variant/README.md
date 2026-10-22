@@ -131,3 +131,31 @@ payload in the selected object; chain measures `element_at(element_at(v, 'outer'
 The source is nullable with a zero null map. TypedMissing covers a typed scalar root with
 an absent object key; it does not represent a shredded typed-leaf hit. Divide CPU time by
 rows to compare ns/row, and use the same CPU and interleaved repeated runs for before/after.
+
+### Encoded storage costs and controls
+
+`benchmark_variant_cost.hpp` covers batch construction, row/batch append, clone, 50%/1%
+selection, in-place selection, permutation, comparison, sorting, hash/CRC, binary size
+calculation, binary serialization/deserialization, row-key serialization and JSON output.
+Fixtures include encoded integers, short strings, objects, per-row high-entropy strings and a
+typed integer control. Inputs and binary round-trip checks are outside timing; the build case
+includes fixture construction. Binary buffers are preallocated for serialization timing.
+
+```bash
+BUILD_TYPE=RELEASE ./build.sh --benchmark
+DORIS_HOME="$PWD" be/output/lib/benchmark_test \
+  --benchmark_filter='^BM_Variant(Cost|Raw)' \
+  --benchmark_repetitions=5 --benchmark_enable_random_interleaving=true \
+  --benchmark_out=variant-cost.json --benchmark_out_format=json
+```
+
+`BM_VariantRawString` and `BM_VariantRawBinary` compare the two containers in one process;
+the final argument selects continuous import (0), clone (1), 50% filter (2) or read (3).
+The fixtures report logical bytes, allocated bytes and actual wire bytes separately.
+`BM_VariantCostRetainAppend` keeps 4096 logical rows while repeatedly erasing/appending half a
+batch, exposing arena retention that a one-shot append benchmark does not measure.
+`BM_VariantCostDefaults` isolates default-row construction.
+
+Encoded Variant children use one `DataTypeVarbinary` transport layout, with no legacy
+`ColumnString` conversion or execution-version gate. Round trips under multiple version
+arguments test the current layout, not interoperability with an older peer.
