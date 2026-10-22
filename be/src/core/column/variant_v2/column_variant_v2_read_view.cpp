@@ -19,9 +19,9 @@
 
 namespace doris {
 
-ColumnVariantV2::ReadView::ReadView(const ColumnString* metadatas,
+ColumnVariantV2::ReadView::ReadView(const ColumnVarbinary* metadatas,
                                     const MetadataIdsColumn* metadata_ids,
-                                    const ColumnString* values)
+                                    const ColumnVarbinary* values)
         : _metadatas(metadatas), _metadata_ids(metadata_ids), _values(values) {
     DORIS_CHECK(_metadatas != nullptr);
     DORIS_CHECK(_metadata_ids != nullptr);

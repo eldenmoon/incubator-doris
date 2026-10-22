@@ -67,6 +67,12 @@ public:
     // Notice: after this buffer maybe have some useless data
     void resize(size_t n) override { _data.resize(n); }
 
+    void reserve(size_t n) override { _data.reserve(n); }
+
+    void reserve_bytes(size_t bytes);
+    bool owns_data(StringRef value) const;
+    void erase(size_t start, size_t length) override;
+
     void clear() override {
         _data.clear();
         _arena.clear();
@@ -166,7 +172,12 @@ public:
 
     size_t byte_size() const override {
         size_t bytes = _data.size() * sizeof(doris::StringView);
-        return bytes + _arena.used_size();
+        // Filtering and popping views retain arena chunks for reuse. Logical size counts only
+        // live long values; allocated_bytes() accounts for all retained arena memory.
+        for (const auto& value : _data) {
+            bytes += value.isInline() ? 0 : value.size();
+        }
+        return bytes;
     }
 
     bool has_enough_capacity(const IColumn& src) const override {

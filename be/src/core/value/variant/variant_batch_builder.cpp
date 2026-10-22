@@ -30,6 +30,7 @@
 #include <utility>
 
 #include "common/exception.h"
+#include "core/column/column_varbinary.h"
 #include "core/custom_allocator.h"
 #include "core/pod_array.h"
 #include "core/value/large_int_value.h"
@@ -432,7 +433,8 @@ public:
 
     void reserve(size_t scalar_byte_count, size_t node_count, size_t container_count,
                  size_t child_count) {
-        scalar_bytes.reserve(scalar_byte_count);
+        scalar_bytes->reserve(node_count);
+        scalar_bytes->reserve_bytes(scalar_byte_count);
         nodes.reserve(node_count);
         containers.reserve(container_count);
         children.reserve(child_count);
@@ -443,7 +445,7 @@ public:
     }
 
     CapacitySnapshot capacity_snapshot() const noexcept {
-        return {.scalar_bytes = scalar_bytes.capacity(),
+        return {.scalar_bytes = scalar_bytes->allocated_bytes(),
                 .nodes = nodes.capacity(),
                 .containers = containers.capacity(),
                 .children = children.capacity(),
@@ -454,7 +456,7 @@ public:
     }
 
     Checkpoint checkpoint() const noexcept {
-        return {.scalar_bytes = scalar_bytes.size(),
+        return {.scalar_bytes = scalar_bytes->size(),
                 .nodes = nodes.size(),
                 .containers = containers.size(),
                 .children = children.size()};
@@ -473,11 +475,11 @@ public:
     }
 
     void rollback(const Checkpoint& start) noexcept {
-        DCHECK_LE(start.scalar_bytes, scalar_bytes.size());
+        DCHECK_LE(start.scalar_bytes, scalar_bytes->size());
         DCHECK_LE(start.nodes, nodes.size());
         DCHECK_LE(start.containers, containers.size());
         DCHECK_LE(start.children, children.size());
-        scalar_bytes.resize(start.scalar_bytes);
+        scalar_bytes->resize(start.scalar_bytes);
         nodes.resize(start.nodes);
         containers.erase(containers.begin() + start.containers, containers.end());
         children.resize(start.children);
@@ -553,11 +555,8 @@ public:
 
     uint32_t prepare_arena_scalar(size_t encoded_size) const {
         prepare_value_node();
-        if (encoded_size > std::numeric_limits<uint32_t>::max() - scalar_bytes.size()) {
-            throw Exception(ErrorCode::INVALID_ARGUMENT,
-                            "Variant encoding unit scalar scratch exceeds the uint32 byte limit");
-        }
-        return static_cast<uint32_t>(scalar_bytes.size());
+        DORIS_CHECK_LE(encoded_size, std::numeric_limits<uint32_t>::max());
+        return cast_set<uint32_t>(scalar_bytes->size());
     }
 
     void add_scalar(const VariantScalarRef& scalar) {
@@ -570,8 +569,16 @@ public:
         }
 
         const uint32_t offset = prepare_arena_scalar(scalar.encoded_size());
-        scalar_bytes.resize(scalar_bytes.size() + scalar.encoded_size());
-        scalar.write_physical(scalar_bytes.data() + offset, scalar.encoded_size());
+        std::array<char, StringView::kInlineSize> inline_bytes;
+        if (scalar.encoded_size() <= inline_bytes.size()) {
+            scalar.write_physical(inline_bytes.data(), scalar.encoded_size());
+            scalar_bytes->insert_data(inline_bytes.data(), scalar.encoded_size());
+        } else {
+            char* destination = scalar_bytes->alloc(scalar.encoded_size());
+            scalar.write_physical(destination, scalar.encoded_size());
+            scalar_bytes->get_data().emplace_back(destination,
+                                                  cast_set<uint32_t>(scalar.encoded_size()));
+        }
         complete_scalar(offset);
     }
 
@@ -806,10 +813,9 @@ public:
     }
 
     void complete_scalar(uint32_t offset) {
-        DCHECK_LE(scalar_bytes.size() - offset, std::numeric_limits<uint32_t>::max());
         const auto node_index = static_cast<uint32_t>(nodes.size());
         nodes.emplace_back(NodeKind::SCALAR, offset,
-                           static_cast<uint32_t>(scalar_bytes.size() - offset));
+                           cast_set<uint32_t>(scalar_bytes->get_data_at(offset).size));
         attach_node(node_index);
     }
 
@@ -1167,7 +1173,8 @@ public:
             return;
         }
         if (node.kind == NodeKind::SCALAR) {
-            std::memcpy(output, scalar_bytes.data() + node.payload_index, node.payload_size);
+            std::memcpy(output, scalar_bytes->get_data_at(node.payload_index).data,
+                        node.payload_size);
             output += node.payload_size;
             return;
         }
@@ -1237,7 +1244,7 @@ public:
     }
 
     void release_scratch() noexcept {
-        release_batch_container(scalar_bytes);
+        scalar_bytes.reset();
         release_batch_container(nodes);
         release_batch_container(containers);
         release_batch_container(children);
@@ -1252,7 +1259,7 @@ public:
     }
 
     VariantMetadataBuilder& metadata;
-    DorisVector<char> scalar_bytes;
+    ColumnVarbinary::MutablePtr scalar_bytes = ColumnVarbinary::create();
     DorisVector<Node> nodes;
     DorisVector<Container> containers;
     DorisVector<Child> children;
@@ -1378,17 +1385,14 @@ VariantBatchBuilder::~VariantBatchBuilder() {
     }
 }
 
-VariantBatchBuilder::VariantBatchBuilder(PaddedPODArray<char> metadata, PaddedPODArray<char> values,
-                                         PaddedPODArray<uint32_t> offsets) noexcept
-        : _metadata(std::move(metadata)),
-          _values(std::move(values)),
-          _offsets(std::move(offsets)) {}
+VariantBatchBuilder::VariantBatchBuilder(PaddedPODArray<char> metadata,
+                                         ColumnVarbinary::MutablePtr values) noexcept
+        : _metadata(std::move(metadata)), _values(std::move(values)) {}
 
 VariantBatchBuilder::VariantBatchBuilder(VariantBatchBuilder&& other) noexcept {
     DORIS_CHECK(other._impl == nullptr) << "An active VariantBatchBuilder cannot be moved";
     _metadata = std::move(other._metadata);
     _values = std::move(other._values);
-    _offsets = std::move(other._offsets);
 }
 
 VariantBatchBuilder& VariantBatchBuilder::operator=(VariantBatchBuilder&& other) noexcept {
@@ -1399,12 +1403,11 @@ VariantBatchBuilder& VariantBatchBuilder::operator=(VariantBatchBuilder&& other)
     DORIS_CHECK(other._impl == nullptr) << "An active VariantBatchBuilder cannot be moved";
     _metadata = std::move(other._metadata);
     _values = std::move(other._values);
-    _offsets = std::move(other._offsets);
     return *this;
 }
 
 size_t VariantBatchBuilder::num_rows() const noexcept {
-    return _offsets.empty() ? 0 : _offsets.size() - 1;
+    return _values ? _values->size() : 0;
 }
 
 VariantRef VariantBatchBuilder::value_at(size_t row) const {
@@ -1412,9 +1415,7 @@ VariantRef VariantBatchBuilder::value_at(size_t row) const {
         throw Exception(ErrorCode::INVALID_ARGUMENT,
                         "Variant encoded batch row {} is outside [0, {})", row, num_rows());
     }
-    const uint32_t begin = _offsets[row];
-    const uint32_t end = _offsets[row + 1];
-    return {.metadata = metadata_ref(), .value = {_values.data() + begin, end - begin}};
+    return {.metadata = metadata_ref(), .value = _values->get_data_at(row)};
 }
 
 void VariantBatchBuilder::_add_scalar(uint64_t generation, const VariantScalarRef& scalar) {
@@ -1542,36 +1543,28 @@ VariantBatchBuilder VariantBatchBuilder::finish_batch() {
 #endif
     _impl->collection.reset_plan();
 
-    PaddedPODArray<uint32_t> offsets;
-    constexpr size_t MAX_OFFSET_COUNT = std::numeric_limits<size_t>::max() / sizeof(uint32_t);
-    if (_impl->roots.size() >= MAX_OFFSET_COUNT) {
-        throw Exception(ErrorCode::INVALID_ARGUMENT,
-                        "Variant batch row offsets exceed the addressable size");
-    }
-    offsets.reserve(_impl->roots.size() + 1);
-    offsets.push_back(0);
-    uint32_t total_size = 0;
+    auto values = ColumnVarbinary::create();
+    values->reserve(_impl->roots.size());
     for (uint32_t root : _impl->roots) {
-        const size_t row_size = _impl->collection.prepare_plan(root);
-        if (row_size > std::numeric_limits<uint32_t>::max() - total_size) {
-            throw Exception(ErrorCode::INVALID_ARGUMENT,
-                            "Variant batch values exceed the ColumnString uint32 byte limit");
+        const size_t size = _impl->collection.prepare_plan(root);
+        DORIS_CHECK_LE(size, std::numeric_limits<uint32_t>::max());
+        // Keep small encoded scalars inline; larger rows are written straight into the arena.
+        std::array<char, StringView::kInlineSize> inline_value;
+        if (size <= inline_value.size()) {
+            char* output = inline_value.data();
+            _impl->collection.write_node(root, output);
+            values->insert_data(inline_value.data(), size);
+        } else {
+            char* destination = values->alloc(size);
+            char* output = destination;
+            _impl->collection.write_node(root, output);
+            DCHECK_EQ(output, destination + size);
+            values->get_data().emplace_back(destination, cast_set<uint32_t>(size));
         }
-        total_size += static_cast<uint32_t>(row_size);
-        offsets.push_back(total_size);
     }
-#ifdef BE_TEST
-    _impl->observe_collection_growth(before);
-#endif
-    PaddedPODArray<char> values;
-    values.resize(total_size);
-    char* output = values.data();
-    for (uint32_t root : _impl->roots) {
-        _impl->collection.write_node(root, output);
-    }
-    DCHECK_EQ(output, values.data() + values.size());
 
 #ifdef BE_TEST
+    _impl->observe_collection_growth(before);
     _impl->refresh_counters(_impl->metadata._key_capacity(),
                             _impl->metadata._key_capacity_growths(), _impl->metadata.num_keys());
     _impl->counters_finalized = true;
@@ -1581,7 +1574,7 @@ VariantBatchBuilder VariantBatchBuilder::finish_batch() {
     release_batch_container(_impl->roots);
     release_batch_container(_impl->previous_object_tokens);
     release_batch_container(_impl->pending_object_tokens);
-    return {std::move(metadata), std::move(values), std::move(offsets)};
+    return {std::move(metadata), std::move(values)};
 }
 
 #ifdef BE_TEST

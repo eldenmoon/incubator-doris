@@ -57,6 +57,7 @@ MutableColumnPtr ColumnVarbinary::clone_resized(size_t size) const {
     auto res = create();
     if (size > 0) {
         auto& new_col = *res;
+        new_col.reserve(size);
         size_t count = std::min(this->size(), size);
         for (size_t i = 0; i < count; ++i) {
             auto value = this->get_data_at(i);
@@ -128,24 +129,49 @@ ColumnPtr ColumnVarbinary::filter(const IColumn::Filter& filt, ssize_t result_si
     return res;
 };
 
+void ColumnVarbinary::reserve_bytes(size_t bytes) {
+    // A batch hint must not turn the arena back into a multi-GiB contiguous allocation.
+    const size_t reserve_size = std::min(bytes, size_t {128 * 1024 * 1024});
+    if (reserve_size > _arena.remaining_space_in_current_chunk()) {
+        static_cast<void>(_arena.alloc(reserve_size));
+        _arena.rollback(reserve_size);
+    }
+}
+
+bool ColumnVarbinary::owns_data(StringRef value) const {
+    const auto begin = reinterpret_cast<uintptr_t>(_data.data());
+    const auto address = reinterpret_cast<uintptr_t>(value.data);
+    const size_t bytes = _data.size() * sizeof(value_type);
+    return (address >= begin && address - begin < bytes &&
+            value.size <= bytes - (address - begin)) ||
+           _arena.contains(value.data, value.size);
+}
+
+void ColumnVarbinary::erase(size_t start, size_t length) {
+    DORIS_CHECK_LE(start, size());
+    DORIS_CHECK_LE(length, size() - start);
+    if (length == 0) {
+        // Empty analytic partitions do not have a backing view array.
+        return;
+    }
+    std::memmove(_data.data() + start, _data.data() + start + length,
+                 (size() - start - length) * sizeof(value_type));
+    _data.resize(size() - length);
+}
+
 size_t ColumnVarbinary::filter(const IColumn::Filter& filter) {
+    column_match_filter_size(size(), filter.size());
     size_t pos = 0;
-    const Self& src_vec = *this;
-    for (size_t i = 0; i < filter.size(); i++) {
-        if (filter[i]) {
-            if (src_vec.get_data()[i].isInline()) {
-                _data[pos] = src_vec.get_data()[i];
-            } else {
-                auto val = src_vec.get_data()[i];
-                const auto* dst = _arena.insert(val.data(), val.size());
-                _data[pos] = doris::StringView(dst, val.size());
-            }
-            pos++;
+    for (size_t row = 0; row < filter.size(); ++row) {
+        if (filter[row]) {
+            // The arena remains owned by this column. Moving views preserves the payload; copying
+            // long values into the same arena would retain the old bytes and grow on every filter.
+            _data[pos++] = _data[row];
         }
     }
     resize(pos);
     return pos;
-};
+}
 
 MutableColumnPtr ColumnVarbinary::permute(const IColumn::Permutation& perm, size_t limit) const {
     size_t size = _data.size();

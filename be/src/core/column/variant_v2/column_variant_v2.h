@@ -29,7 +29,7 @@
 #include "core/assert_cast.h"
 #include "core/column/column.h"
 #include "core/column/column_const.h"
-#include "core/column/column_string.h"
+#include "core/column/column_varbinary.h"
 #include "core/column/column_vector.h"
 #include "core/column/variant_v2/column_variant_v2_typed_column.h"
 #include "core/custom_allocator.h"
@@ -164,14 +164,14 @@ public:
 
     private:
         friend class ColumnVariantV2;
-        ReadView(const ColumnString* metadatas, const MetadataIdsColumn* metadata_ids,
-                 const ColumnString* values);
+        ReadView(const ColumnVarbinary* metadatas, const MetadataIdsColumn* metadata_ids,
+                 const ColumnVarbinary* values);
         ReadView(const IColumn* typed, const DataTypePtr* typed_type);
 
         bool _typed_state = false;
-        const ColumnString* _metadatas = nullptr;
+        const ColumnVarbinary* _metadatas = nullptr;
         const MetadataIdsColumn* _metadata_ids = nullptr;
-        const ColumnString* _values = nullptr;
+        const ColumnVarbinary* _values = nullptr;
         const IColumn* _typed = nullptr;
         const DataTypePtr* _typed_type = nullptr;
     };
@@ -181,7 +181,7 @@ public:
     struct TestAccess {
         static void replace_metadata_ids(ColumnVariantV2& column,
                                          MetadataIdsColumn::Ptr replacement);
-        static void replace_values(ColumnVariantV2& column, ColumnString::Ptr replacement);
+        static void replace_values(ColumnVariantV2& column, ColumnVarbinary::Ptr replacement);
     };
 #endif
 
@@ -228,7 +228,7 @@ public:
     void finalize() override {}
 
     // Validates the borrowed buffer/offset/id structure, then appends codec-validated encoded rows
-    // without retaining any input pointer. Offsets use the ColumnString uint32 domain and start at
+    // without retaining any input pointer. Offsets use the uint32 domain and start at
     // zero. Empty meta_ids is the compact representation for a batch whose rows all use its single
     // metadata blob. Input buffers must not alias this column; use insert_range_from for that case.
     void insert_encoded_rows(const EncodedDataView& data);
@@ -238,7 +238,7 @@ public:
     EncodedRowsAppender create_encoded_rows_appender();
 
     // Direct trusted codec adapter. VariantBatchBuilder already produces canonical metadata,
-    // validated values, and ColumnString-compatible uint32 offsets, so this path copies its buffers
+    // validated per-row values, so this path appends its rows
     // without validating the encoded tree a second time.
     void insert_encoded_batch(const VariantBatchBuilder& block);
 
@@ -334,9 +334,9 @@ private:
     // uint32 id costs four bytes per encoded row, but avoids repeating object-key metadata and
     // gives canonical comparison, hashing, subpath lookup, and binary SerDe O(1) schema access.
     // It is required because valid external Variant rows may use different metadata dictionaries.
-    ColumnString::WrappedPtr _metadatas;
+    ColumnVarbinary::WrappedPtr _metadatas;
     MetadataIdsColumn::WrappedPtr _meta_ids;
-    ColumnString::WrappedPtr _values;
+    ColumnVarbinary::WrappedPtr _values;
 
     // A non-null _typed always means all encoded buffers are empty and the entire column has the
     // single type described by _typed_type.

@@ -31,12 +31,14 @@
 #include <span>
 #include <utility>
 
+#include "agent/be_exec_version_manager.h"
 #include "common/cast_set.h"
 #include "common/exception.h"
 #include "core/arena.h"
 #include "core/assert_cast.h"
 #include "core/column/column_const.h"
 #include "core/column/column_string.h"
+#include "core/column/column_varbinary.h"
 #include "core/column/column_vector.h"
 #include "core/column/variant_v2/column_variant_v2.h"
 #include "core/column/variant_v2/column_variant_v2_typed_column.h"
@@ -45,6 +47,7 @@
 #include "core/data_type/data_type_factory.hpp"
 #include "core/data_type/data_type_nullable.h"
 #include "core/data_type/data_type_string.h"
+#include "core/data_type/data_type_varbinary.h"
 #include "core/data_type_serde/data_type_string_serde.h"
 #include "core/types.h"
 #include "core/value/jsonb_value.h"
@@ -100,6 +103,48 @@ Status append_flight_variant_value(VariantRef value, VariantBatchBuilder::Row& o
         output.add_value(value);
     }
     return Status::OK();
+}
+
+// Versions before 20 exchange encoded Variant children as ColumnString. Keep that layout for
+// mixed-version queries; new peers use per-value lengths and avoid uint32 cumulative offsets and
+// the single-buffer LZ4 input limit. On-disk Variant and canonical key encodings are unchanged.
+ColumnString::MutablePtr legacy_binary_column(const IColumn& column) {
+    auto result = ColumnString::create();
+    for (size_t row = 0; row < column.size(); ++row) {
+        const auto value = column.get_data_at(row);
+        result->insert_data(value.data, value.size);
+    }
+    return result;
+}
+
+int64_t encoded_binary_size(const IColumn& column, int version) {
+    if (version >= SUPPORT_VARIANT_BINARY_COLUMN_VERSION) {
+        return DataTypeVarbinary().get_uncompressed_serialized_bytes(column, version);
+    }
+    return DataTypeString().get_uncompressed_serialized_bytes(*legacy_binary_column(column),
+                                                              version);
+}
+
+char* serialize_encoded_binary(const IColumn& column, char* buffer, int version) {
+    if (version >= SUPPORT_VARIANT_BINARY_COLUMN_VERSION) {
+        return DataTypeVarbinary().serialize(column, buffer, version);
+    }
+    return DataTypeString().serialize(*legacy_binary_column(column), buffer, version);
+}
+
+const char* deserialize_encoded_binary(const char* buffer, MutableColumnPtr* column, int version) {
+    if (version >= SUPPORT_VARIANT_BINARY_COLUMN_VERSION) {
+        return DataTypeVarbinary().deserialize(buffer, column, version);
+    }
+    MutableColumnPtr legacy = ColumnString::create();
+    buffer = DataTypeString().deserialize(buffer, &legacy, version);
+    auto& output = assert_cast<ColumnVarbinary&>(**column);
+    output.reserve(legacy->size());
+    for (size_t row = 0; row < legacy->size(); ++row) {
+        const auto value = legacy->get_data_at(row);
+        output.insert_data(value.data, value.size);
+    }
+    return buffer;
 }
 
 using MetaIdsColumn = ColumnVector<TYPE_UINT32>;
@@ -373,10 +418,9 @@ int64_t DataTypeVariantV2SerDe::get_uncompressed_serialized_bytes(const IColumn&
         return size + VARIANT_V2_TYPE_META_BYTES +
                nullable_type->get_uncompressed_serialized_bytes(*variant._typed, be_exec_version);
     }
-    const DataTypeString string_type;
-    size += string_type.get_uncompressed_serialized_bytes(*variant._metadatas, be_exec_version);
+    size += encoded_binary_size(*variant._metadatas, be_exec_version);
     size += sizeof(size_t) + variant._meta_ids->size() * sizeof(uint32_t);
-    size += string_type.get_uncompressed_serialized_bytes(*variant._values, be_exec_version);
+    size += encoded_binary_size(*variant._values, be_exec_version);
     return size;
 }
 
@@ -392,10 +436,9 @@ char* DataTypeVariantV2SerDe::serialize(const IColumn& column, char* buf, int be
         write_variant_v2_type(variant._typed_type, buf);
         return make_nullable(variant._typed_type)->serialize(*variant._typed, buf, be_exec_version);
     }
-    const DataTypeString string_type;
-    buf = string_type.serialize(*variant._metadatas, buf, be_exec_version);
+    buf = serialize_encoded_binary(*variant._metadatas, buf, be_exec_version);
     buf = serialize_meta_ids(*variant._meta_ids, buf);
-    return string_type.serialize(*variant._values, buf, be_exec_version);
+    return serialize_encoded_binary(*variant._values, buf, be_exec_version);
 }
 
 const char* DataTypeVariantV2SerDe::deserialize(const char* buf, MutableColumnPtr* column,
@@ -414,13 +457,12 @@ const char* DataTypeVariantV2SerDe::deserialize(const char* buf, MutableColumnPt
         buf = nullable_type->deserialize(buf, &typed_column, be_exec_version);
         decoded = ColumnVariantV2::create_typed(std::move(typed_column), std::move(type));
     } else {
-        const DataTypeString string_type;
-        MutableColumnPtr metadatas = string_type.create_column();
+        MutableColumnPtr metadatas = ColumnVarbinary::create();
         MutableColumnPtr meta_ids = MetaIdsColumn::create();
-        MutableColumnPtr values = string_type.create_column();
-        buf = string_type.deserialize(buf, &metadatas, be_exec_version);
+        MutableColumnPtr values = ColumnVarbinary::create();
+        buf = deserialize_encoded_binary(buf, &metadatas, be_exec_version);
         buf = deserialize_meta_ids(buf, &meta_ids);
-        buf = string_type.deserialize(buf, &values, be_exec_version);
+        buf = deserialize_encoded_binary(buf, &values, be_exec_version);
 
         const auto& ids = assert_cast<const MetaIdsColumn&>(*meta_ids).get_data();
         if (ids.size() != values->size()) {
@@ -436,12 +478,13 @@ const char* DataTypeVariantV2SerDe::deserialize(const char* buf, MutableColumnPt
             }
         }
         decoded = ColumnVariantV2::create();
-        static_cast<ColumnString::Ptr&>(decoded->_metadatas) =
-                ColumnString::cast_to_column_ptr(assert_cast<const ColumnString*>(metadatas.get()));
+        static_cast<ColumnVarbinary::Ptr&>(decoded->_metadatas) =
+                ColumnVarbinary::cast_to_column_ptr(
+                        assert_cast<const ColumnVarbinary*>(metadatas.get()));
         static_cast<MetaIdsColumn::Ptr&>(decoded->_meta_ids) = MetaIdsColumn::cast_to_column_ptr(
                 assert_cast<const MetaIdsColumn*>(meta_ids.get()));
-        static_cast<ColumnString::Ptr&>(decoded->_values) =
-                ColumnString::cast_to_column_ptr(assert_cast<const ColumnString*>(values.get()));
+        static_cast<ColumnVarbinary::Ptr&>(decoded->_values) = ColumnVarbinary::cast_to_column_ptr(
+                assert_cast<const ColumnVarbinary*>(values.get()));
         decoded->sanity_check();
     }
     if (decoded->size() != saved_rows) {
