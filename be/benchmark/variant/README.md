@@ -109,3 +109,25 @@ To run only one suite, pass its own filter as the third argument, e.g.
 - On a shared/busy host, run-to-run noise can be large (see `BASELINE.md` for a measured example).
   Prefer the median of several samples, and re-run before concluding a change regressed or improved
   performance.
+
+### VARIANT `element_at` extraction
+
+`benchmark_variant_element.hpp` invokes the registered `element_at` IFunction, including
+nullable handling, constant-key materialization, path resolution, lookup, result copying,
+and result-column construction. Input building and first/last-row checks are outside timing;
+JSON parsing, storage scanning, RPC, and SQL planning are excluded.
+
+```bash
+BUILD_TYPE=RELEASE ./build.sh --benchmark
+taskset -c 0 be/output/lib/benchmark_test \
+  --benchmark_filter='^BM_VariantElement' \
+  --benchmark_min_time=0.25s --benchmark_repetitions=5 \
+  --benchmark_out=element-at.json --benchmark_out_format=json
+```
+
+Names end in `/rows/payload_bytes`. Scalar/missing cases use the payload as an unselected
+sibling; string/array cases return that many string bytes. Object/chain cases include that
+payload in the selected object; chain measures `element_at(element_at(v, 'outer'), 'target')`.
+The source is nullable with a zero null map. TypedMissing covers a typed scalar root with
+an absent object key; it does not represent a shredded typed-leaf hit. Divide CPU time by
+rows to compare ns/row, and use the same CPU and interleaved repeated runs for before/after.
