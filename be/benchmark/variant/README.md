@@ -1,6 +1,6 @@
 # Variant benchmarks
 
-Two Google Benchmark suites live here:
+Google Benchmark suites here include:
 
 - `BM_VariantCumulativeCompaction`: a source-version-neutral, high-level cumulative compaction
   workload. It writes 10 overlapping rowsets of synthetic Variant rows, runs a real
@@ -17,8 +17,19 @@ Two Google Benchmark suites live here:
   timed region is `VerticalSegmentWriter` init/append/finalize, which shreds every value through the
   Variant path builders.
 
+- `BM_VariantEncodedAppend` and `BM_VariantEncodedBatch`: encoded storage microbenchmarks with
+  128 B, 1 KiB, 64 KiB and 1 MiB string payloads, each totalling 64 MiB. Append repeats a one-row
+  source through the same column range-insertion interface used by join build-block merges; Batch
+  includes scalar collection, encoding and insertion into the destination column. Compare identical
+  cases and Release build settings across commits. `allocated_bytes` reports the final append
+  destination's retained capacity, not process peak memory or total query memory.
+- `BM_VariantEncodedCapacity`: one 4,096-row append with 1 MiB payloads. Run this separately to check
+  the real 4 GiB boundary and measure process peak RSS. It requires several GiB of available memory;
+  a failure on the old implementation is an expected capacity result, not a timing sample.
+
 The files are:
 
+- `benchmark_variant_binary.hpp`: encoded append, batch and capacity microbenchmarks.
 - `benchmark_variant_segment.hpp`: both workloads' scenario definitions, synthetic data generation,
   correctness checks, and Google Benchmark registration.
 - `run_variant_segment_benchmark.sh`: wraps a benchmark run with an `environment.txt` snapshot
@@ -32,7 +43,7 @@ The files are:
 Performance results must come from a Release build:
 
 ```shell
-./build.sh --be --benchmark
+BUILD_TYPE=RELEASE ./build.sh --be --benchmark
 ```
 
 This installs `be/output/lib/benchmark_test`.
