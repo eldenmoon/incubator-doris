@@ -57,6 +57,7 @@
 #include "storage/types.h"
 #include "storage/utils.h"
 #include "util/json/path_in_data.h"
+#include "util/string_util.h"
 
 namespace doris {
 FieldType TabletColumn::get_field_type_by_string(const std::string& type_str) {
@@ -746,6 +747,11 @@ std::string escape_for_path_name(const std::string& s) {
     return res;
 }
 
+bool TabletIndex::is_variant_values_index() const {
+    const auto scope = _properties.find("variant_index_scope");
+    return is_inverted_index() && scope != _properties.end() && iequal(scope->second, "values");
+}
+
 void TabletIndex::set_escaped_escaped_index_suffix_path(const std::string& path_name) {
     std::string escaped_path = escape_for_path_name(path_name);
     _escaped_index_suffix_path = escaped_path;
@@ -914,6 +920,8 @@ void TabletSchema::append_column(TabletColumn column, ColumnType col_type) {
         _commit_tso_col_idx = _num_columns;
     } else if (UNLIKELY(column.name() == ROW_LSN_COL)) {
         _row_lsn_col_idx = _num_columns;
+    } else if (UNLIKELY(column.name() == TTL_COL)) {
+        _ttl_col_idx = _num_columns;
     } else if (UNLIKELY(column.name() == CHANGELOG_TSO_COL)) {
         _changelog_tso_col_idx = _num_columns;
     } else if (UNLIKELY(column.name() == CHANGELOG_LSN_COL)) {
@@ -1128,6 +1136,9 @@ void TabletSchema::init_from_pb(const TabletSchemaPB& schema, bool ignore_extrac
     _changelog_tso_col_idx = field_index(CHANGELOG_TSO_COL);
     _changelog_lsn_col_idx = field_index(CHANGELOG_LSN_COL);
     _changelog_op_col_idx = field_index(CHANGELOG_OP_COL);
+    _ttl_col_idx = schema.ttl_col_idx();
+    _row_ttl_duration_us = schema.row_ttl_duration_us();
+    _row_ttl_time_zone_offset_seconds = schema.row_ttl_time_zone_offset_seconds();
     _sort_type = schema.sort_type();
     _sort_col_num = schema.sort_col_num();
     _compression_type = schema.compression_type();
@@ -1232,6 +1243,7 @@ void TabletSchema::shawdow_copy_without_columns(const TabletSchema& tablet_schem
     _skip_bitmap_col_idx = -1;
     _commit_tso_col_idx = -1;
     _row_lsn_col_idx = -1;
+    _ttl_col_idx = -1;
     _changelog_tso_col_idx = -1;
     _changelog_lsn_col_idx = -1;
     _changelog_op_col_idx = -1;
@@ -1279,6 +1291,8 @@ void TabletSchema::build_current_tablet_schema(int64_t index_id, int32_t version
     _row_store_page_size = ori_tablet_schema.row_store_page_size();
     _storage_page_size = ori_tablet_schema.storage_page_size();
     _storage_dict_page_size = ori_tablet_schema.storage_dict_page_size();
+    _row_ttl_duration_us = ori_tablet_schema.row_ttl_duration_us();
+    _row_ttl_time_zone_offset_seconds = ori_tablet_schema._row_ttl_time_zone_offset_seconds;
     _deprecated_enable_variant_flatten_nested =
             ori_tablet_schema.deprecated_variant_flatten_nested();
 
@@ -1301,6 +1315,7 @@ void TabletSchema::build_current_tablet_schema(int64_t index_id, int32_t version
     _skip_bitmap_col_idx = -1;
     _commit_tso_col_idx = -1;
     _row_lsn_col_idx = -1;
+    _ttl_col_idx = -1;
     _changelog_tso_col_idx = -1;
     _changelog_lsn_col_idx = -1;
     _changelog_op_col_idx = -1;
@@ -1333,6 +1348,8 @@ void TabletSchema::build_current_tablet_schema(int64_t index_id, int32_t version
             _commit_tso_col_idx = _num_columns;
         } else if (UNLIKELY(column->name() == ROW_LSN_COL)) {
             _row_lsn_col_idx = _num_columns;
+        } else if (UNLIKELY(column->name() == TTL_COL)) {
+            _ttl_col_idx = _num_columns;
         } else if (UNLIKELY(column->name() == CHANGELOG_TSO_COL)) {
             _changelog_tso_col_idx = _num_columns;
         } else if (UNLIKELY(column->name() == CHANGELOG_LSN_COL)) {
@@ -1464,6 +1481,9 @@ void TabletSchema::to_schema_pb(TabletSchemaPB* tablet_schema_pb) const {
     tablet_schema_pb->set_skip_bitmap_col_idx(_skip_bitmap_col_idx);
     tablet_schema_pb->set_commit_tso_col_idx(_commit_tso_col_idx);
     tablet_schema_pb->set_row_lsn_col_idx(_row_lsn_col_idx);
+    tablet_schema_pb->set_ttl_col_idx(_ttl_col_idx);
+    tablet_schema_pb->set_row_ttl_duration_us(_row_ttl_duration_us);
+    tablet_schema_pb->set_row_ttl_time_zone_offset_seconds(_row_ttl_time_zone_offset_seconds);
     tablet_schema_pb->set_inverted_index_storage_format(_inverted_index_storage_format);
     tablet_schema_pb->mutable_row_store_column_unique_ids()->Assign(
             _row_store_column_unique_ids.begin(), _row_store_column_unique_ids.end());
@@ -1645,6 +1665,12 @@ std::vector<TabletIndexPtr> TabletSchema::inverted_index_by_field_pattern(
 }
 
 std::vector<const TabletIndex*> TabletSchema::inverted_indexs(const TabletColumn& col) const {
+    if (col.is_variant_type() && !col.is_extracted_column()) {
+        auto result = inverted_indexs(col.unique_id(), col.suffix_path());
+        std::erase_if(result,
+                      [](const TabletIndex* index) { return !index->is_variant_values_index(); });
+        return result;
+    }
     // Some columns(Float, Double, JSONB ...) from the variant do not support inverted index
     if (!segment_v2::IndexColumnWriter::check_support_inverted_index(col)) {
         return {};
@@ -1815,6 +1841,15 @@ bool operator==(const TabletSchema& a, const TabletSchema& b) {
     if (a._skip_bitmap_col_idx != b._skip_bitmap_col_idx) return false;
     if (a._commit_tso_col_idx != b._commit_tso_col_idx) return false;
     if (a._row_lsn_col_idx != b._row_lsn_col_idx) return false;
+    if (a._ttl_col_idx != b._ttl_col_idx) {
+        return false;
+    }
+    if (a._row_ttl_duration_us != b._row_ttl_duration_us) {
+        return false;
+    }
+    if (a._row_ttl_time_zone_offset_seconds != b._row_ttl_time_zone_offset_seconds) {
+        return false;
+    }
     if (a._changelog_tso_col_idx != b._changelog_tso_col_idx) return false;
     if (a._changelog_lsn_col_idx != b._changelog_lsn_col_idx) return false;
     if (a._changelog_op_col_idx != b._changelog_op_col_idx) return false;

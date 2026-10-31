@@ -79,6 +79,7 @@
 #include "storage/index/inverted/snii/writer/snii_build_memory_tracker.h"
 #include "storage/olap_common.h"
 #include "storage/olap_define.h"
+#include "storage/row_ttl.h"
 #include "storage/rowset/beta_rowset.h"
 #include "storage/rowset/beta_rowset_reader.h"
 #include "storage/rowset/beta_rowset_writer.h"
@@ -204,6 +205,11 @@ Compaction::Compaction(BaseTabletSPtr tablet, const std::string& label)
     init_profile(label);
     SCOPED_SWITCH_THREAD_MEM_TRACKER_LIMITER(_mem_tracker);
     _rowid_conversion = std::make_unique<RowIdConversion>();
+    if (config::enable_missing_rows_correctness_check ||
+        config::enable_mow_compaction_correctness_check_core ||
+        config::enable_mow_compaction_correctness_check_fail) {
+        _rowid_conversion->enable_visibility_filter_tracking();
+    }
 }
 
 Compaction::~Compaction() {
@@ -290,6 +296,27 @@ int64_t Compaction::merge_way_num() {
     }
 
     return way_num;
+}
+
+void Compaction::snapshot_row_ttl() {
+    if (!_cur_tablet_schema->has_ttl_col() || !row_ttl_uses_source_time(*_cur_tablet_schema)) {
+        return;
+    }
+    int64_t duration_us;
+    {
+        std::shared_lock lock(_tablet->get_header_lock());
+        duration_us = _tablet->tablet_meta()->row_ttl_config().duration_us();
+    }
+    if (_cur_tablet_schema->row_ttl_duration_us() == duration_us) {
+        return;
+    }
+    // Rowset schemas and their cache entries are shared. Only this compaction's copy uses
+    // the current policy; changing TTL never rewrites the stored source-time cells.
+    TabletSchemaPB schema;
+    _cur_tablet_schema->to_schema_pb(&schema);
+    schema.set_row_ttl_duration_us(duration_us);
+    _cur_tablet_schema = std::make_shared<TabletSchema>();
+    _cur_tablet_schema->init_from_pb(schema);
 }
 
 void Compaction::snapshot_changelog_ttl() {
@@ -392,6 +419,16 @@ Status Compaction::prepare_merge_input_rowsets_execution(MergeInputRowsetsContex
     // Propagate input rowset readers into the rowset writer context before the writer is created.
     // Variant nested-group compaction uses this metadata to enable the streaming writer path.
     ctx.input_rs_readers = context->input_rs_readers;
+    // only do index compaction for dup_keys and unique_keys with mow enabled
+    if (_should_compact_indexes()) {
+        construct_index_compaction_columns(ctx);
+    }
+    if (variant_util::VariantCompactionUtil::has_values_index(*_cur_tablet_schema)) {
+        RETURN_IF_ERROR(variant_util::VariantCompactionUtil::plan_values_index_compaction(
+                _input_rowsets, _enable_vertical_compact_variant_subcolumns,
+                ctx.snii_indexes_to_do_compaction, _cur_tablet_schema,
+                &_cur_variant_compaction_paths));
+    }
     RETURN_IF_ERROR(construct_output_rowset_writer(ctx));
 
     // write merged rows to output rowset
@@ -568,6 +605,10 @@ Tablet* CompactionMixin::tablet() {
 Status CompactionMixin::do_compact_ordered_rowsets() {
     RETURN_IF_ERROR(build_basic_info(true));
     RowsetWriterContext ctx;
+    // only do index compaction for dup_keys and unique_keys with mow enabled
+    if (_should_compact_indexes()) {
+        construct_index_compaction_columns(ctx);
+    }
     RETURN_IF_ERROR(construct_output_rowset_writer(ctx));
     const auto& output_rowset_dir = tablet()->tablet_path();
 
@@ -670,12 +711,14 @@ Status CompactionMixin::build_basic_info(bool is_ordered_compaction) {
     // if enable_vertical_compact_variant_subcolumns is true, we need to compact the variant subcolumns in seperate column groups
     // so get_extended_compaction_schema will extended the schema for variant columns
     // for ordered compaction, we don't need to extend the schema for variant columns
-    if (_enable_vertical_compact_variant_subcolumns && !is_ordered_compaction) {
+    if (_enable_vertical_compact_variant_subcolumns && !is_ordered_compaction &&
+        !variant_util::VariantCompactionUtil::has_values_index(*_cur_tablet_schema)) {
         auto paths = std::make_shared<VariantCompactionPathsMap>();
         RETURN_IF_ERROR(variant_util::VariantCompactionUtil::get_extended_compaction_schema(
                 _input_rowsets, _cur_tablet_schema, *paths));
         _cur_variant_compaction_paths = std::move(paths);
     }
+    snapshot_row_ttl();
     return Status::OK();
 }
 
@@ -684,6 +727,16 @@ bool CompactionMixin::handle_ordered_data_compaction() {
         return false;
     }
     if (!config::enable_ordered_data_compaction) {
+        return false;
+    }
+    // Linking sorted segments never visits their rows. For example, disjoint DUP rowsets
+    // containing expired rows would survive every ordered compaction without TTL reclamation.
+    // Keep the link optimization only when this compaction cannot safely reclaim row TTL.
+    if (_tablet->tablet_schema()->has_ttl_col() &&
+        should_gc_row_ttl(
+                *_tablet->tablet_schema(), _tablet->enable_unique_key_merge_on_write(),
+                _tablet->is_changelog_tablet(), compaction_type(),
+                {_input_rowsets.front()->start_version(), _input_rowsets.back()->end_version()})) {
         return false;
     }
     if (_changelog_ttl_cutoff_tso >= 0 &&
@@ -832,8 +885,11 @@ Status CompactionMixin::execute_compact() {
     int64_t profile_start_time_ms = UnixMillis();
     uint32_t checksum_before;
     uint32_t checksum_after;
-    bool enable_compaction_checksum =
-            config::enable_compaction_checksum && _changelog_ttl_cutoff_tso < 0;
+    // Changelog TTL can remove expired rowsets, so their checksums may change after compaction.
+    // Row TTL tablets are also unsupported by EngineChecksumTask because rows can expire.
+    bool enable_compaction_checksum = config::enable_compaction_checksum &&
+                                      _changelog_ttl_cutoff_tso < 0 &&
+                                      EngineChecksumTask::is_supported(*_tablet->tablet_schema());
     if (enable_compaction_checksum) {
         EngineChecksumTask checksum_task(_engine, _tablet->tablet_id(), _tablet->schema_hash(),
                                          _input_rowsets.back()->end_version(), &checksum_before);
@@ -1622,7 +1678,8 @@ void Compaction::construct_index_compaction_columns(RowsetWriterContext& ctx) {
             }
             const int32_t col_unique_id = col_unique_ids[0];
             if (!_cur_tablet_schema->has_column_unique_id(col_unique_id) ||
-                !field_is_slice_type(_cur_tablet_schema->column_by_uid(col_unique_id).type())) {
+                (!field_is_slice_type(_cur_tablet_schema->column_by_uid(col_unique_id).type()) &&
+                 !destination_index->is_variant_values_index())) {
                 continue;
             }
 
@@ -1910,13 +1967,6 @@ void CompactionMixin::find_longest_consecutive_version(std::vector<RowsetSharedP
 }
 
 Status CompactionMixin::construct_output_rowset_writer(RowsetWriterContext& ctx) {
-    // only do index compaction for dup_keys and unique_keys with mow enabled
-    if (_changelog_ttl_filtered_rows == 0 && _enable_inverted_index_compaction &&
-        (((_tablet->keys_type() == KeysType::UNIQUE_KEYS &&
-           _tablet->enable_unique_key_merge_on_write()) ||
-          _tablet->keys_type() == KeysType::DUP_KEYS))) {
-        construct_index_compaction_columns(ctx);
-    }
     if (_tablet->is_changelog_tablet()) {
         ctx.write_changelog_opt().enable = true;
     }
@@ -1943,9 +1993,7 @@ Status CompactionMixin::modify_rowsets() {
         Version version = tablet()->max_version();
         DeleteBitmap output_rowset_delete_bitmap(_tablet->tablet_id());
         std::unique_ptr<RowLocationSet> missed_rows;
-        if ((config::enable_missing_rows_correctness_check ||
-             config::enable_mow_compaction_correctness_check_core ||
-             config::enable_mow_compaction_correctness_check_fail) &&
+        if (_rowid_conversion->visibility_filtered_rows() != nullptr &&
             !_allow_delete_in_cumu_compaction &&
             compaction_type() == ReaderType::READER_CUMULATIVE_COMPACTION) {
             missed_rows = std::make_unique<RowLocationSet>();
@@ -1969,9 +2017,17 @@ Status CompactionMixin::modify_rowsets() {
                 &output_rowset_delete_bitmap);
         if (missed_rows) {
             missed_rows_size = missed_rows->size();
-            std::size_t merged_missed_rows_size = _stats.merged_rows;
+            // Bitmap conversion excludes the exact source rows removed by visibility filtering,
+            // including rows deleted by concurrent loads after the TTL snapshot. Cluster-key
+            // scans also count these rows as filtered, so subtract them from that count.
+            std::size_t expected_missed_rows_size = _stats.merged_rows;
+            int64_t cluster_key_filtered_rows = 0;
             if (!_tablet->tablet_meta()->tablet_schema()->cluster_key_uids().empty()) {
-                merged_missed_rows_size += _stats.filtered_rows;
+                cluster_key_filtered_rows =
+                        _stats.filtered_rows -
+                        static_cast<int64_t>(_rowid_conversion->visibility_filtered_rows()->size());
+                DORIS_CHECK_GE(cluster_key_filtered_rows, 0);
+                expected_missed_rows_size += cluster_key_filtered_rows;
             }
 
             // Suppose a heavy schema change process on BE converting tablet A to tablet B.
@@ -1997,11 +2053,12 @@ Status CompactionMixin::modify_rowsets() {
             }
 
             if (_tablet->tablet_state() == TabletState::TABLET_RUNNING &&
-                merged_missed_rows_size != missed_rows_size && need_to_check_missed_rows) {
+                expected_missed_rows_size != missed_rows_size && need_to_check_missed_rows) {
                 std::stringstream ss;
-                ss << "cumulative compaction: the merged rows(" << _stats.merged_rows
-                   << "), filtered rows(" << _stats.filtered_rows
-                   << ") is not equal to missed rows(" << missed_rows_size
+                ss << "cumulative compaction: expected missed rows(" << expected_missed_rows_size
+                   << ") from merged rows(" << _stats.merged_rows
+                   << ") and cluster key filtered rows(" << cluster_key_filtered_rows
+                   << "), but found missed rows(" << missed_rows_size
                    << ") in rowid conversion, tablet_id: " << _tablet->tablet_id()
                    << ", table_id:" << _tablet->table_id();
                 if (missed_rows_size == 0) {
@@ -2017,12 +2074,7 @@ Status CompactionMixin::modify_rowsets() {
                     }
                     ss << ", version[0-" << version.second + 1 << "]";
                 }
-                std::string err_msg = fmt::format(
-                        "cumulative compaction: the merged rows({}), filtered rows({})"
-                        " is not equal to missed rows({}) in rowid conversion,"
-                        " tablet_id: {}, table_id:{}",
-                        _stats.merged_rows, _stats.filtered_rows, missed_rows_size,
-                        _tablet->tablet_id(), _tablet->table_id());
+                std::string err_msg = ss.str();
                 LOG(WARNING) << err_msg;
                 if (config::enable_mow_compaction_correctness_check_core) {
                     CHECK(false) << err_msg;
@@ -2236,12 +2288,19 @@ Status CloudCompactionMixin::build_basic_info() {
 
     // if enable_vertical_compact_variant_subcolumns is true, we need to compact the variant subcolumns in seperate column groups
     // so get_extended_compaction_schema will extended the schema for variant columns
-    if (_enable_vertical_compact_variant_subcolumns) {
+    if (_enable_vertical_compact_variant_subcolumns &&
+        !variant_util::VariantCompactionUtil::has_values_index(*_cur_tablet_schema)) {
         auto paths = std::make_shared<VariantCompactionPathsMap>();
         RETURN_IF_ERROR(variant_util::VariantCompactionUtil::get_extended_compaction_schema(
                 _input_rowsets, _cur_tablet_schema, *paths));
         _cur_variant_compaction_paths = std::move(paths);
     }
+    if (_cur_tablet_schema->has_ttl_col() && row_ttl_uses_source_time(*_cur_tablet_schema)) {
+        // FE's metadata-sync notification is asynchronous. Fetch the committed policy so
+        // an explicit compaction immediately after ALTER can reclaim newly expired rows.
+        RETURN_IF_ERROR(cloud_tablet()->sync_meta());
+    }
+    snapshot_row_ttl();
     return Status::OK();
 }
 
@@ -2499,14 +2558,6 @@ Status CloudCompactionMixin::set_storage_resource_from_input_rowsets(RowsetWrite
 }
 
 Status CloudCompactionMixin::construct_output_rowset_writer(RowsetWriterContext& ctx) {
-    // only do index compaction for dup_keys and unique_keys with mow enabled
-    if (_changelog_ttl_filtered_rows == 0 && _enable_inverted_index_compaction &&
-        (((_tablet->keys_type() == KeysType::UNIQUE_KEYS &&
-           _tablet->enable_unique_key_merge_on_write()) ||
-          _tablet->keys_type() == KeysType::DUP_KEYS))) {
-        construct_index_compaction_columns(ctx);
-    }
-
     // Use the storage resource of the previous rowset.
     RETURN_IF_ERROR(set_storage_resource_from_input_rowsets(ctx));
 
