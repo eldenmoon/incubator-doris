@@ -74,6 +74,7 @@
 #include "storage/segment/variant/nested_group_provider.h"
 #include "storage/segment/variant/nested_group_streaming_write_plan.h"
 #include "storage/segment/variant/sparse_column_merge_iterator.h"
+#include "storage/segment/variant/v2/variant_assembler.h"
 #include "storage/segment/variant/v2/variant_column_writer.h"
 #include "storage/segment/variant/v2/variant_path_builder.h"
 #include "storage/segment/variant/v2/variant_shredder.h"
@@ -968,6 +969,92 @@ TEST(VariantPathBuilderTest, ShredderReusesCanonicalPathsAcrossAppends) {
     EXPECT_EQ(selected.type->to_string(*selected.column, 1), "2");
 }
 
+TEST(VariantShredderTest, SparseRowsUseByteOrderWithoutChangingStatisticsSelection) {
+    ColumnPtr source;
+    DataTypePtr source_type;
+    ASSERT_TRUE(create_variant_writer_source(
+                        VariantWriterInput::V2,
+                        {R"({"z":1,"a-b":1,"a b":3,"a$b":4,"a%2Eb":5,"a":{"c":2}})", R"({"z":2})",
+                         R"({"z":3})"},
+                        1, false, {}, &source, &source_type)
+                        .ok());
+    const auto& values = assert_cast<const ColumnVariantV2&>(*source);
+    for (const auto layout : {segment_v2::VariantShredderPhysicalLayout::ORDINARY,
+                              segment_v2::VariantShredderPhysicalLayout::DOC}) {
+        for (const uint32_t buckets : {1, 3}) {
+            SCOPED_TRACE(testing::Message()
+                         << "layout=" << static_cast<int>(layout) << " buckets=" << buckets);
+            segment_v2::VariantShredderOptions options;
+            options.physical_layout = layout;
+            options.max_subcolumns_count = 1;
+            options.sparse_bucket_count = buckets;
+            options.max_sparse_column_statistics_size = 1;
+            options.doc_bucket_count = buckets;
+            options.doc_materialization_min_rows = 4;
+            segment_v2::VariantShredder shredder(options);
+            segment_v2::VariantShredder::TestAccess::set_binary_cells_per_chunk(shredder, 2);
+            ASSERT_TRUE(shredder.append(values.read_view(), 0, values.size()).ok());
+            segment_v2::VariantShreddedColumns output;
+            ASSERT_TRUE(shredder.finish(&output).ok());
+            ASSERT_EQ(output.binary_buckets.size(), buckets);
+            for (const auto& bucket : output.binary_buckets) {
+                const auto& map = assert_cast<const ColumnMap&>(*bucket.column);
+                const auto& keys = assert_cast<const ColumnString&>(map.get_keys());
+                for (size_t row = 0; row < map.size(); ++row) {
+                    std::vector<std::string> actual;
+                    for (size_t cell = map.offset_at(row);
+                         cell < map.offset_at(row) + map.size_at(row); ++cell) {
+                        actual.push_back(keys.get_data_at(cell).to_string());
+                    }
+                    auto expected = actual;
+                    std::ranges::sort(expected);
+                    EXPECT_EQ(actual, expected) << "row=" << row;
+                }
+            }
+            if (layout == segment_v2::VariantShredderPhysicalLayout::ORDINARY) {
+                ASSERT_EQ(output.materialized.size(), 1);
+                EXPECT_EQ(output.materialized.front().path.get_path(), "z");
+                const std::vector<std::pair<std::string, std::string>> cases {
+                        {"a.c", "2"}, {"a-b", "1"}, {"a b", "3"}, {"a$b", "4"}, {"a%2Eb", "5"}};
+                for (const auto& [path, expected] : cases) {
+                    SCOPED_TRACE(path);
+                    const uint32_t bucket = variant_util::variant_binary_shard_of(
+                            {path.data(), path.size()}, buckets);
+                    const auto& map =
+                            assert_cast<const ColumnMap&>(*output.binary_buckets[bucket].column);
+                    segment_v2::variant_v2::VariantAssemblerOptions read_options;
+                    read_options.requested_path = PathInData(path);
+                    read_options.storage_map_kind = segment_v2::variant_v2::StorageMapKind::SPARSE;
+                    auto assembler = segment_v2::variant_v2::VariantAssembler::create(
+                            std::move(read_options));
+                    ASSERT_TRUE(assembler.has_value()) << assembler.error();
+                    ColumnNullable::MutablePtr result;
+                    ASSERT_TRUE((*assembler)
+                                        ->assemble({.num_rows = values.size(),
+                                                    .materialized_columns = {},
+                                                    .storage_map = &map},
+                                                   &result)
+                                        .ok());
+                    const auto& read_values =
+                            assert_cast<const ColumnVariantV2&>(result->get_nested_column());
+                    EXPECT_EQ(variant_v2_json_at(read_values, 0), expected);
+                    EXPECT_FALSE(result->is_null_at(0));
+                    EXPECT_TRUE(result->is_null_at(1));
+                    EXPECT_TRUE(result->is_null_at(2));
+                }
+                if (buckets == 1) {
+                    // Component order encounters a.c first; physical byte order must not
+                    // change which path wins the one-entry statistics budget.
+                    EXPECT_EQ(output.statistics.sparse_column_non_null_size.size(), 1);
+                    EXPECT_EQ(output.statistics.sparse_column_non_null_size.at("a.c"), 1);
+                    EXPECT_EQ(output.binary_buckets.front().statistics.sparse_column_non_null_size,
+                              output.statistics.sparse_column_non_null_size);
+                }
+            }
+        }
+    }
+}
+
 TEST(VariantShredderTest, ReusesRootAndNestedPathsForSharedMetadata) {
     DataTypeVariantV2SerDe serde;
     DataTypeSerDe::FormatOptions format_options;
@@ -1325,6 +1412,36 @@ static Status create_variant_root_reader(const SegmentFooterPB& footer,
                                          file_reader));
     *out = std::move(variant_reader);
     return Status::OK();
+}
+
+TEST(VariantColumnIndexBindingTest, RenamedRootKeepsStoredSubpathIndexSuffix) {
+    TabletSchemaPB schema_pb;
+    schema_pb.set_keys_type(KeysType::DUP_KEYS);
+    construct_column(schema_pb.add_column(), 1, "VARIANT", "v", 1);
+    auto* index = schema_pb.add_index();
+    index->set_index_id(10);
+    index->set_index_name("path_idx");
+    index->set_index_type(IndexType::INVERTED);
+    index->add_col_unique_id(1);
+    (*index->mutable_properties())["parser"] = "english";
+    auto schema = std::make_shared<TabletSchema>();
+    schema->init_from_pb(schema_pb);
+
+    segment_v2::VariantColumnReader reader;
+    reader._tablet_schema = schema;
+    // RENAME changes query paths to payload.s, while old segments still store v.s.
+    for (const std::string& root : {"v", "payload"}) {
+        TabletColumn column;
+        column.set_name(root + ".s");
+        column.set_type(FieldType::OLAP_FIELD_TYPE_VARIANT);
+        column.set_parent_unique_id(1);
+        column.set_path_info(PathInData(root + ".s"));
+        auto indexes =
+                reader.find_subcolumn_tablet_indexes(column, std::make_shared<DataTypeString>());
+        ASSERT_EQ(indexes.size(), 1);
+        EXPECT_EQ(indexes[0]->index_id(), 10);
+        EXPECT_EQ(indexes[0]->get_index_suffix(), "v%2Es");
+    }
 }
 
 class VariantColumnWriterReaderTest : public testing::Test {
@@ -6912,6 +7029,46 @@ TEST_F(VariantColumnWriterReaderTest, test_find_subcolumn_tablet_indexes_branch_
         EXPECT_EQ(nested[0]->index_id(), 10002);
         EXPECT_EQ(nested[0]->get_index_suffix(), "v%2Earr%2Einner%2Ez");
         EXPECT_NE(nested[0]->get_index_suffix(), "arr%2Einner%2Ez");
+    }
+
+    TabletIndexPB values_index_pb;
+    construct_tablet_index(&values_index_pb, 10005, "idx_v_values", root_column.unique_id());
+    (*values_index_pb.mutable_properties())["variant_index_scope"] = "values";
+    (*values_index_pb.mutable_properties())["parser"] = "english";
+    TabletIndex values_index;
+    values_index.init_from_pb(values_index_pb);
+    _tablet_schema->append_index(std::move(values_index));
+
+    std::shared_ptr<segment_v2::ColumnReader> values_index_column_reader;
+    st = create_variant_root_reader(footer, file_reader, _tablet_schema,
+                                    &values_index_column_reader);
+    ASSERT_TRUE(st.ok()) << st.msg();
+    auto* values_index_variant_reader =
+            assert_cast<segment_v2::VariantColumnReader*>(values_index_column_reader.get());
+    ASSERT_NE(values_index_variant_reader, nullptr);
+    {
+        auto sparse_logical_path = values_index_variant_reader->find_subcolumn_tablet_indexes(
+                make_subcolumn("v.sparse", FieldType::OLAP_FIELD_TYPE_VARIANT, "v.sparse",
+                               root_unique_id),
+                std::make_shared<DataTypeVariant>(10, false));
+        EXPECT_TRUE(sparse_logical_path.empty());
+    }
+
+    {
+        auto hierarchical_logical_path = values_index_variant_reader->find_subcolumn_tablet_indexes(
+                make_subcolumn("v.object", FieldType::OLAP_FIELD_TYPE_VARIANT, "v.object",
+                               root_unique_id),
+                std::make_shared<DataTypeVariant>(10, false));
+        EXPECT_TRUE(hierarchical_logical_path.empty());
+    }
+
+    {
+        auto physical_sparse_map = values_index_variant_reader->find_subcolumn_tablet_indexes(
+                make_subcolumn("v.__sparse", FieldType::OLAP_FIELD_TYPE_MAP, "v.__sparse",
+                               root_unique_id),
+                std::make_shared<DataTypeMap>(std::make_shared<DataTypeString>(),
+                                              std::make_shared<DataTypeString>()));
+        EXPECT_TRUE(physical_sparse_map.empty());
     }
 }
 

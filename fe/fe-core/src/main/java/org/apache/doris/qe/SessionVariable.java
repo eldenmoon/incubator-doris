@@ -18,7 +18,6 @@
 package org.apache.doris.qe;
 
 import org.apache.doris.analysis.SetVar;
-import org.apache.doris.analysis.StatementBase;
 import org.apache.doris.analysis.StringLiteral;
 import org.apache.doris.catalog.Env;
 import org.apache.doris.cloud.qe.ComputeGroupException;
@@ -30,9 +29,7 @@ import org.apache.doris.common.io.Text;
 import org.apache.doris.common.io.Writable;
 import org.apache.doris.common.util.TimeUtils;
 import org.apache.doris.common.util.Util;
-import org.apache.doris.nereids.StatementContext;
 import org.apache.doris.nereids.exceptions.AnalysisException;
-import org.apache.doris.nereids.glue.LogicalPlanAdapter;
 import org.apache.doris.nereids.parser.Dialect;
 import org.apache.doris.nereids.rules.RuleType;
 import org.apache.doris.nereids.rules.expression.ExpressionRuleType;
@@ -564,6 +561,8 @@ public class SessionVariable implements Serializable, Writable {
 
     public static final String ENABLE_PAGE_CACHE = "enable_page_cache";
     public static final String ENABLE_PARQUET_FILE_PAGE_CACHE = "enable_parquet_file_page_cache";
+    public static final String ENABLE_PARQUET_WRITE_PAGE_INDEX = "enable_parquet_write_page_index";
+    public static final String PARQUET_WRITE_DATA_PAGE_SIZE = "parquet_write_data_page_size";
 
     public static final String DUMP_NEREIDS_MEMO = "dump_nereids_memo";
 
@@ -596,6 +595,8 @@ public class SessionVariable implements Serializable, Writable {
 
     public static final String NUM_PARTITIONS_IN_BATCH_MODE = "num_partitions_in_batch_mode";
 
+    public static final String SPLIT_PARTITION_BATCH_SIZE = "split_partition_batch_size";
+
     public static final String NUM_FILES_IN_BATCH_MODE = "num_files_in_batch_mode";
 
     public static final String SPLIT_BATCH_SIZE = "split_batch_size";
@@ -603,6 +604,9 @@ public class SessionVariable implements Serializable, Writable {
 
     public static final String SPLIT_QUEUE_CAPACITY = "split_queue_capacity";
 
+    public static final String SPLIT_PRODUCER_PARALLELISM = "split_producer_parallelism";
+
+    public static final String FIRST_SPLIT_WAIT_TIMEOUT_MS = "first_split_wait_timeout_ms";
     public static final String FETCH_SPLITS_MAX_WAIT_TIME = "fetch_splits_max_wait_time_ms";
 
     /**
@@ -1196,8 +1200,9 @@ public class SessionVariable implements Serializable, Writable {
             + "read data of FileScanNode, default 16")
     public int maxFileScannersConcurrency = 16;
 
-    @VarAttrDef.VarAttr(name = ENABLE_FILE_SCANNER_V2, needForward = true, description = "When enabled, "
-            + "FileScanNode uses FileScannerV2 for supported query scans. Enabled by default.")
+    @VarAttrDef.VarAttr(name = ENABLE_FILE_SCANNER_V2, needForward = true,
+            varType = VariableAnnotation.DEPRECATED,
+            description = "Deprecated compatibility variable. File scans always use FileScannerV2.")
     public boolean enableFileScannerV2 = true;
 
     @VarAttrDef.VarAttr(name = LOCAL_EXCHANGE_FREE_BLOCKS_LIMIT, needForward = true)
@@ -1446,16 +1451,16 @@ public class SessionVariable implements Serializable, Writable {
     @VarAttrDef.VarAttr(name = ENABLE_DISTINCT_STREAMING_AGGREGATION, needForward = true, fuzzy = true)
     public boolean enableDistinctStreamingAggregation = true;
 
-    @VarAttrDef.VarAttr(name = ENABLE_STREAMING_AGG_HASH_JOIN_FORCE_PASSTHROUGH, fuzzy = true)
+    @VarAttrDef.VarAttr(name = ENABLE_STREAMING_AGG_HASH_JOIN_FORCE_PASSTHROUGH, needForward = true, fuzzy = true)
     public boolean enableStreamingAggHashJoinForcePassthrough = true;
 
     @VarAttrDef.VarAttr(name = ENABLE_LOCAL_EXCHANGE_BEFORE_AGG, needForward = true, fuzzy = true)
     public boolean enableLocalExchangeBeforeAgg = true;
 
-    @VarAttrDef.VarAttr(name = ENABLE_LOCAL_EXCHANGE_BEFORE_STREAMING_AGG, fuzzy = true)
+    @VarAttrDef.VarAttr(name = ENABLE_LOCAL_EXCHANGE_BEFORE_STREAMING_AGG, needForward = true, fuzzy = true)
     public boolean enableLocalExchangeBeforeStreamingAgg = false;
 
-    @VarAttrDef.VarAttr(name = ENABLE_DISTINCT_STREAMING_AGG_FORCE_PASSTHROUGH, fuzzy = true)
+    @VarAttrDef.VarAttr(name = ENABLE_DISTINCT_STREAMING_AGG_FORCE_PASSTHROUGH, needForward = true, fuzzy = true)
     public boolean enableDistinctStreamingAggForcePassthrough = true;
 
     @VarAttrDef.VarAttr(name = ENABLE_BROADCAST_JOIN_FORCE_PASSTHROUGH, needForward = true, fuzzy = true)
@@ -1772,7 +1777,7 @@ public class SessionVariable implements Serializable, Writable {
 
     @VarAttrDef.VarAttr(
                 name = FORCE_TO_LOCAL_SHUFFLE, fuzzy = false, varType = VariableAnnotation.EXPERIMENTAL,
-                description = "Whether to force to local shuffle on pipelineX engine.")
+                description = "Whether to force to local shuffle on pipelineX engine.", needForward = true)
     private boolean forceToLocalShuffle = false;
 
     @VarAttrDef.VarAttr(
@@ -1878,8 +1883,7 @@ public class SessionVariable implements Serializable, Writable {
 
     @VarAttrDef.VarAttr(name = RUNTIME_FILTER_BROADCAST_JOIN_PRODUCER_NUM, needForward = true,
             description = "Controls the number of producer BEs for each broadcast join runtime filter in "
-                    + "the Nereids distributed planner. Values less than or equal to 0 disable the limit. "
-                    + "The legacy Coordinator path keeps the existing behavior.")
+                    + "the Nereids distributed planner. Values less than or equal to 0 disable the limit.")
     private int runtimeFilterBroadcastJoinProducerNum = 3;
 
     @VarAttrDef.VarAttr(name = RUNTIME_FILTER_TREE_PUBLISH_MAX_SEND_BYTES, needForward = true, fuzzy = true,
@@ -2196,12 +2200,7 @@ public class SessionVariable implements Serializable, Writable {
     public double filterCostFactor = 0.0001;
 
     @VarAttrDef.VarAttr(name = ENABLE_NEREIDS_DISTRIBUTE_PLANNER, needForward = true,
-            fuzzy = false,
-            varType = VariableAnnotation.EXPERIMENTAL,
-            description = "The switch to use new DistributedPlanner of nereids, this planner can planning some "
-                    + "more efficient query plans, e.g. in certain situations, shuffle left side to "
-                    + "right side to do bucket shuffle join"
-    )
+            varType = VariableAnnotation.REMOVED)
     private boolean enableNereidsDistributePlanner = true;
 
     @VarAttrDef.VarAttr(name = REWRITE_OR_TO_IN_PREDICATE_THRESHOLD, fuzzy = true)
@@ -2562,6 +2561,19 @@ public class SessionVariable implements Serializable, Writable {
             needForward = true)
     public boolean enableParquetFilePageCache = true;
 
+    @VarAttrDef.VarAttr(name = ENABLE_PARQUET_WRITE_PAGE_INDEX, needForward = true,
+            description = "Write ColumnIndex and OffsetIndex metadata to new Parquet files. Default is true.")
+    public boolean enableParquetWritePageIndex = true;
+
+    @VarAttrDef.VarAttr(name = PARQUET_WRITE_DATA_PAGE_SIZE, needForward = true,
+            checker = "checkParquetWriteDataPageSize",
+            description = "Target uncompressed Parquet data-page size in bytes. Must be positive; default is 1048576.")
+    public int parquetWriteDataPageSize = 1048576;
+
+    public void checkParquetWriteDataPageSize(String value) throws Exception {
+        checkFieldValue(PARQUET_WRITE_DATA_PAGE_SIZE, 1, value);
+    }
+
     @VarAttrDef.VarAttr(name = ENABLE_FOLD_NONDETERMINISTIC_FN)
     public boolean enableFoldNondeterministicFn = false;
 
@@ -2622,22 +2634,27 @@ public class SessionVariable implements Serializable, Writable {
             description = "If the number of partitions exceeds the threshold, scan ranges will be got through batch "
                     + "mode.",
             needForward = true)
-    public int numPartitionsInBatchMode = 1024;
+    public int numPartitionsInBatchMode = 1;
+
+    @VarAttrDef.VarAttr(name = SPLIT_PARTITION_BATCH_SIZE, checker = "checkSplitPartitionBatchSize",
+            needForward = true, description = "Maximum number of Hive partitions resolved per split producer "
+                    + "batch. This does not control when batch mode is enabled.")
+    public int splitPartitionBatchSize = 16;
 
     @VarAttrDef.VarAttr(
             name = NUM_FILES_IN_BATCH_MODE,
             fuzzy = true,
             description = "If the number of files exceeds the threshold, scan ranges will be got through batch mode.",
             needForward = true)
-    public int numFilesInBatchMode = 1024;
+    public int numFilesInBatchMode = 1;
 
     @VarAttrDef.VarAttr(name = SPLIT_BATCH_SIZE, checker = "checkSplitBatchSize", needForward = true,
             description = "Maximum number of splits in a producer batch.")
-    public int splitBatchSize = 128;
+    public int splitBatchSize = 8;
 
     @VarAttrDef.VarAttr(name = SPLIT_QUEUE_CAPACITY, checker = "checkSplitQueueCapacity", needForward = true,
-            description = "Maximum number of queued split batches per backend.")
-    public int splitQueueCapacity = 32;
+            description = "Maximum number of queued splits per backend.")
+    public int splitQueueCapacity = 1024;
 
     @VarAttrDef.VarAttr(name = SPLIT_INITIAL_BATCH_SIZE, checker = "checkSplitInitialBatchSize", needForward = true,
             description = "Maximum number of splits returned by the first fetch per backend; "
@@ -2648,19 +2665,50 @@ public class SessionVariable implements Serializable, Writable {
         checkFieldValue(SPLIT_INITIAL_BATCH_SIZE, 1, value);
     }
 
+    @VarAttrDef.VarAttr(name = SPLIT_PRODUCER_PARALLELISM, checker = "checkSplitProducerParallelism",
+            needForward = true, description = "Maximum partition-batch split producers per scan node. "
+                    + "Zero uses the FE external metadata loader pool size. Whole-scan streams use one producer.")
+    public int splitProducerParallelism = 0;
+
+    @VarAttrDef.VarAttr(name = FIRST_SPLIT_WAIT_TIMEOUT_MS, checker = "checkFirstSplitWaitTimeout",
+            needForward = true, description = "First split wait timeout in milliseconds.")
+    public long firstSplitWaitTimeoutMs = 30000;
+
+    public void checkFirstSplitWaitTimeout(String value) throws Exception {
+        checkFieldLongValue(FIRST_SPLIT_WAIT_TIMEOUT_MS, 1, value);
+    }
+
+    public long getFirstSplitWaitTimeoutMs() {
+        return firstSplitWaitTimeoutMs;
+    }
+
     public void checkSplitBatchSize(String value) throws Exception {
         checkFieldValue(SPLIT_BATCH_SIZE, 1, value);
+    }
+
+    public void checkSplitPartitionBatchSize(String value) throws Exception {
+        checkFieldValue(SPLIT_PARTITION_BATCH_SIZE, 1, value);
     }
 
     public void checkSplitQueueCapacity(String value) throws Exception {
         checkFieldValue(SPLIT_QUEUE_CAPACITY, 1, value);
     }
 
+    public void checkSplitProducerParallelism(String value) throws Exception {
+        checkFieldValue(SPLIT_PRODUCER_PARALLELISM, 0, value);
+    }
+
     @VarAttrDef.VarAttr(
             name = FETCH_SPLITS_MAX_WAIT_TIME,
-            description = "The max wait time of getting splits in batch mode.",
+            checker = "checkFetchSplitsMaxWaitTime",
+            description = "Maximum wait time per split-fetch RPC in batch mode. A running producer can be retried "
+                    + "after this interval; completion, cancellation and production errors are reported separately.",
             needForward = true)
     public long fetchSplitsMaxWaitTime = 1000;
+
+    public void checkFetchSplitsMaxWaitTime(String value) throws Exception {
+        checkFieldLongValue(FETCH_SPLITS_MAX_WAIT_TIME, 1, value);
+    }
 
     @VarAttrDef.VarAttr(
             name = ENABLE_PARQUET_LAZY_MAT,
@@ -3792,9 +3840,6 @@ public class SessionVariable implements Serializable, Writable {
         this.enableLocalExchange = random.nextBoolean();
         this.enableSharedExchangeSinkBuffer = random.nextBoolean();
         this.useSerialExchange = random.nextBoolean();
-        // Fuzzy sessions must exercise the production-default V2 path consistently. Dedicated
-        // compatibility cases can still select the legacy scanner explicitly after initialization.
-        this.enableFileScannerV2 = true;
         this.disableStreamPreaggregations = random.nextBoolean();
         this.enableStreamingAggHashJoinForcePassthrough = random.nextBoolean();
         this.enableLocalExchangeBeforeAgg = random.nextBoolean();
@@ -5018,6 +5063,10 @@ public class SessionVariable implements Serializable, Writable {
         return numPartitionsInBatchMode;
     }
 
+    public int getSplitPartitionBatchSize() {
+        return splitPartitionBatchSize;
+    }
+
     public int getNumFilesInBatchMode() {
         return numFilesInBatchMode;
     }
@@ -5032,6 +5081,10 @@ public class SessionVariable implements Serializable, Writable {
 
     public int getSplitQueueCapacity() {
         return splitQueueCapacity;
+    }
+
+    public int getSplitProducerParallelism() {
+        return splitProducerParallelism;
     }
 
     public long getFetchSplitsMaxWaitTime() {
@@ -5336,37 +5389,6 @@ public class SessionVariable implements Serializable, Writable {
             }
         }
         return false;
-    }
-
-    /** canUseNereidsDistributePlanner */
-    public static boolean canUseNereidsDistributePlanner() {
-        ConnectContext connectContext = ConnectContext.get();
-        if (connectContext != null) {
-            return canUseNereidsDistributePlanner(connectContext);
-        } else {
-            return true;
-        }
-    }
-
-    /** canUseNereidsDistributePlanner */
-    public static boolean canUseNereidsDistributePlanner(ConnectContext connectContext) {
-        SessionVariable sessionVariable = connectContext.getSessionVariable();
-        StatementContext statementContext = connectContext.getStatementContext();
-        if (statementContext != null) {
-            StatementBase parsedStatement = statementContext.getParsedStatement();
-            if (!(parsedStatement instanceof LogicalPlanAdapter)) {
-                return false;
-            }
-        }
-        return sessionVariable.enableNereidsDistributePlanner;
-    }
-
-    public boolean isEnableNereidsDistributePlanner() {
-        return enableNereidsDistributePlanner;
-    }
-
-    public void setEnableNereidsDistributePlanner(boolean enableNereidsDistributePlanner) {
-        this.enableNereidsDistributePlanner = enableNereidsDistributePlanner;
     }
 
     public int getNthOptimizedPlan() {
@@ -5708,7 +5730,8 @@ public class SessionVariable implements Serializable, Writable {
         tResult.setScanQueueMemLimit(maxScanQueueMemByte);
         tResult.setMaxScannersConcurrency(maxScannersConcurrency);
         tResult.setMaxFileScannersConcurrency(maxFileScannersConcurrency);
-        tResult.setEnableFileScannerV2(enableFileScannerV2);
+        // Older backends still inspect this field; the deprecated session value must not select V1.
+        tResult.setEnableFileScannerV2(true);
         tResult.setMaxColumnReaderNum(maxColumnReaderNum);
         tResult.setParallelPrepareThreshold(parallelPrepareThreshold);
         tResult.setMinScannersConcurrency(minScannersConcurrency);
@@ -5797,6 +5820,9 @@ public class SessionVariable implements Serializable, Writable {
         }
 
         tResult.setEnableParquetLazyMat(enableParquetLazyMat);
+        // Query options carry the same write policy to OUTFILE and catalog sinks.
+        tResult.setEnableParquetWritePageIndex(enableParquetWritePageIndex);
+        tResult.setParquetWriteDataPageSize(parquetWriteDataPageSize);
         tResult.setEnableOrcLazyMat(enableOrcLazyMat);
         tResult.setEnableParquetFilterByMinMax(enableParquetFilterByMinMax);
         tResult.setEnableParquetFilterByBloomFilter(enableParquetFilterByBloomFilter);

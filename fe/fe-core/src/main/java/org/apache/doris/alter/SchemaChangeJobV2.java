@@ -336,7 +336,9 @@ public class SchemaChangeJobV2 extends AlterJobV2 implements GsonPostProcessable
                                     tbl.storagePageSize(), tbl.getTDEAlgorithm(),
                                     tbl.storageDictPageSize(),
                                     columnSeqMapping,
-                                    tbl.getVerticalCompactionNumColumnsPerGroup());
+                                    tbl.getVerticalCompactionNumColumnsPerGroup(),
+                                    tbl.getRowTtlConfig(),
+                                    tbl.getRowTtlTimeZoneOffsetSeconds());
 
                             createReplicaTask.setBaseTablet(partitionIndexTabletMap.get(partitionId, shadowIdxId)
                                     .get(shadowTabletId), originSchemaHash);
@@ -854,6 +856,7 @@ public class SchemaChangeJobV2 extends AlterJobV2 implements GsonPostProcessable
             tbl.setStorageFormat(storageFormat);
         }
         tbl.setColumnSeqMapping(columnSeqMapping);
+        Env.getCurrentEnv().onTableChanged(tbl);
     }
 
     /*

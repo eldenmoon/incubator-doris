@@ -64,6 +64,7 @@ import org.apache.doris.common.util.TimeUtils;
 import org.apache.doris.common.util.UniqueIdUtils;
 import org.apache.doris.common.util.Util;
 import org.apache.doris.datasource.scan.FileScanNode;
+import org.apache.doris.datasource.split.SplitAssignment;
 import org.apache.doris.datasource.tvf.source.TVFScanNode;
 import org.apache.doris.filesystem.FileSystemUtil;
 import org.apache.doris.filesystem.Location;
@@ -205,6 +206,7 @@ public class StmtExecutor {
     private volatile Boolean profileEnabled;
 
     private volatile Coordinator coord = null;
+    private volatile QueryScanTaskScope scanTaskScope = new QueryScanTaskScope();
     // A statement can be cancelled while it is still planning and has no coordinator yet.
     // Keep this state scoped to the coordinator publication handoff: other execution targets
     // retain their existing cancellation contracts.
@@ -750,7 +752,8 @@ public class StmtExecutor {
                     // so we just handle these errors, and throw exception for other errors.
                     throw e;
                 }
-                if (this.coord != null && this.coord.isQueryCancelled()) {
+                if (pendingCoordinatorCancelReason.get() != null
+                        || (this.coord != null && this.coord.isQueryCancelled())) {
                     throw e;
                 }
                 disableCloudVersionCacheOnRetry = shouldDisableCloudVersionCacheOnRetry(e.getMessage());
@@ -779,6 +782,12 @@ public class StmtExecutor {
                 // Drop the old execution state before replanning.
                 planner = null;
                 setCoord(null);
+                // Replanning reuses StatementContext, but the failed attempt's cleanup closes its connector
+                // scope. Old producers retain that scope until termination; new sessions need a fresh one.
+                statementContext.resetConnectorStatementScope();
+                // The failed attempt's partition-policy proofs stay revoked, but this is a real replan: start
+                // the new attempt from fresh planning state instead of failing every later planning step.
+                statementContext.beginPartitionPolicyReplan();
                 profile.clearPlan();
             } catch (Exception e) {
                 profile.getSummaryProfile().recordFailedAttempt(context.queryId());
@@ -816,6 +825,7 @@ public class StmtExecutor {
     }
 
     public void execute(TUniqueId queryId) throws Exception {
+        scanTaskScope = new QueryScanTaskScope();
         profile.getSummaryProfile().startQueryAttempt(queryId, TimeUtils.getStartTimeMs());
         SessionVariable sessionVariable = context.getSessionVariable();
         context.setEffectiveCloudCluster(null);
@@ -856,6 +866,11 @@ public class StmtExecutor {
                 throw e;
             }
         } finally {
+            if (!deferredForArrowFlight) {
+                scanTaskScope.close();
+                // Planning failures and EXPLAIN never enter handleQueryWithRetry's unregister path.
+                QeProcessorImpl.INSTANCE.unregisterQuery(queryId);
+            }
             if (context.getState().getStateType() == MysqlStateType.ERR) {
                 profile.getSummaryProfile().recordFailedAttempt(context.queryId());
             }
@@ -1242,13 +1257,7 @@ public class StmtExecutor {
             }
             parsedStmt = statements.get(originStmt.idx);
         }
-        // In the proxy flow (multi-FE forwarding), the StatementContext is created fresh
-        // without a parsedStatement. Propagate it so that downstream code like
-        // canUseNereidsDistributePlanner can correctly identify the Nereids execution
-        // context, ensuring EnvFactory creates a NereidsCoordinator instead of a legacy
-        // Coordinator (which would fail with "fragment has no children").
-        // Only do this when isProxy is true, because other code paths like
-        // executeInternalQuery() rely on legacy Coordinator behavior with mock backends.
+        // Forwarded statements use a fresh StatementContext; retain the parsed statement for later consumers.
         if (isProxy) {
             this.context.getStatementContext().setParsedStatement(parsedStmt);
         }
@@ -1266,6 +1275,7 @@ public class StmtExecutor {
             // Update before unregistering to keep the final BE reports.
             updateProfile(true);
         }
+        scanTaskScope.close();
         QeProcessorImpl.INSTANCE.unregisterQuery(queryId());
         queryCancelCallbacks.clear();
     }
@@ -1383,7 +1393,8 @@ public class StmtExecutor {
                     throw e;
                 }
                 // If the previous try is timeout or cancelled, then do not need try again.
-                if (this.coord != null && (this.coord.isQueryCancelled() || this.coord.isTimeout())) {
+                if (pendingCoordinatorCancelReason.get() != null
+                        || (this.coord != null && (this.coord.isQueryCancelled() || this.coord.isTimeout()))) {
                     throw e;
                 }
                 LOG.warn("retry due to exception {}. retried {} times. is rpc error: {}, is user error: {}.",
@@ -1639,6 +1650,7 @@ public class StmtExecutor {
             }
         }
         Status coordinatorCancelReason = pendingCoordinatorCancelReason.get();
+        scanTaskScope.cancel(coordinatorCancelReason);
         Consumer<Status> delegate = cancelDelegate;
         if (delegate != null) {
             delegate.accept(cancelReason);
@@ -1666,6 +1678,16 @@ public class StmtExecutor {
         if (cancelableCommand.isPresent() && needWaitCancelComplete) {
             // Wait for the command to run or cancel completion
             cancelableCommand.get().waitNotRunning();
+        }
+    }
+
+    public void registerSplitAssignment(SplitAssignment assignment,
+            Runnable unregister) {
+        QueryScanTaskScope scope = scanTaskScope;
+        scope.register(assignment, unregister);
+        Status reason = pendingCoordinatorCancelReason.get();
+        if (reason != null) {
+            scope.cancel(reason);
         }
     }
 
@@ -1763,6 +1785,7 @@ public class StmtExecutor {
 
     // Process a select statement.
     private void handleQueryStmt() throws Exception {
+        statementContext.validateOrRevalidatePartitionPoliciesForExecution(planner);
         if (LOG.isDebugEnabled()) {
             LOG.debug("Handling query {} with query id {}",
                     originStmt.originStmt, DebugUtil.printId(context.queryId));
@@ -1871,13 +1894,6 @@ public class StmtExecutor {
             coordBase = new PointQueryExecutor(shortCircuitQueryContext,
                     context.getSessionVariable().getMaxMsgSizeOfResultReceiver());
             context.getState().setIsQuery(true);
-        } else if (planner instanceof NereidsPlanner && ((NereidsPlanner) planner).getDistributedPlans() != null) {
-            setCoord(new NereidsCoordinator(context,
-                    (NereidsPlanner) planner, context.getStatsErrorEstimator()));
-            profile.addExecutionProfile(coord.getExecutionProfile());
-            QeProcessorImpl.INSTANCE.registerQuery(context.queryId(),
-                    new QueryInfo(context, originStmt.originStmt, coord));
-            coordBase = coord;
         } else {
             setCoord(EnvFactory.getInstance().createCoordinator(
                     context, planner, context.getStatsErrorEstimator()));
@@ -2401,6 +2417,7 @@ public class StmtExecutor {
             }
             AuditLogHelper.logAuditLog(context, originStmt == null ? null : originStmt.originStmt,
                     parsedStmt, getQueryStatisticsForAuditLog(), true);
+            scanTaskScope.close();
             QeProcessorImpl.INSTANCE.unregisterQuery(context.queryId());
             updateProfile(true);
         }
