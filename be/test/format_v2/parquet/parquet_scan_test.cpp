@@ -31,8 +31,10 @@
 #include <chrono>
 #include <cstdlib>
 #include <cstring>
+#include <ctime>
 #include <filesystem>
 #include <fstream>
+#include <iostream>
 #include <limits>
 #include <memory>
 #include <numeric>
@@ -178,6 +180,55 @@ TEST(ParquetScanMetadataSafetyTest, CheckedChunkRangesDrivePrefetchAndSplitAssig
     metadata.row_groups[0].columns[0].meta_data.__set_data_page_offset(190);
     EXPECT_FALSE(format::parquet::detail::build_native_prefetch_ranges(
                          metadata, file_schema, {field_projection(0)}, 0, 200, false, &ranges)
+                         .ok());
+}
+
+TEST(ParquetScanMetadataSafetyTest, ExactRowGroupUsesPrecomputedFirstRows) {
+    tparquet::FileMetaData metadata;
+    tparquet::RowGroup unrelated_before;
+    unrelated_before.__set_num_rows(-1);
+    tparquet::RowGroup selected_group;
+    selected_group.__set_num_rows(7);
+    tparquet::RowGroup unrelated_after;
+    unrelated_after.__set_num_rows(-1);
+    metadata.__set_row_groups({unrelated_before, selected_group, unrelated_after});
+
+    const std::vector<int64_t> first_rows {0, 10, 17};
+    const format::parquet::ParquetScanRange exact_group {
+            .start_offset = 0, .size = -1, .file_size = 1, .row_group_id = 1};
+    std::vector<int> selected;
+    ASSERT_TRUE(format::parquet::detail::select_native_row_groups_by_scan_range(
+                        metadata, exact_group, first_rows, &selected)
+                        .ok());
+    EXPECT_EQ(selected, std::vector<int>({1}));
+}
+
+TEST(ParquetScanMetadataSafetyTest, CoalescedSplitSelectsExactRowGroups) {
+    tparquet::FileMetaData metadata;
+    tparquet::RowGroup row_group;
+    row_group.__set_num_rows(1);
+    metadata.__set_row_groups({row_group, row_group, row_group, row_group});
+
+    const std::vector<int64_t> first_rows {0, 1, 2, 3};
+    const format::parquet::ParquetScanRange coalesced {.start_offset = 0,
+                                                       .size = -1,
+                                                       .file_size = 1,
+                                                       .row_group_id = 1,
+                                                       .row_group_id_end = 3};
+    std::vector<int> selected;
+    ASSERT_TRUE(format::parquet::detail::select_native_row_groups_by_scan_range(
+                        metadata, coalesced, first_rows, &selected)
+                        .ok());
+    EXPECT_EQ(selected, std::vector<int>({1, 2, 3}));
+
+    auto invalid = coalesced;
+    invalid.row_group_id_end = 0;
+    EXPECT_FALSE(format::parquet::detail::select_native_row_groups_by_scan_range(
+                         metadata, invalid, first_rows, &selected)
+                         .ok());
+    invalid.row_group_id_end = 4;
+    EXPECT_FALSE(format::parquet::detail::select_native_row_groups_by_scan_range(
+                         metadata, invalid, first_rows, &selected)
                          .ok());
 }
 
@@ -1347,17 +1398,19 @@ std::shared_ptr<arrow::Array> build_list_array() {
     return finish_array(&builder);
 }
 
-void write_table(const std::string& file_path, const std::shared_ptr<arrow::Table>& table,
-                 int64_t row_group_size, bool enable_dictionary = false,
-                 bool enable_page_index = false, bool enable_statistics = true,
-                 std::optional<::parquet::Encoding::type> encoding = std::nullopt) {
+void write_table(
+        const std::string& file_path, const std::shared_ptr<arrow::Table>& table,
+        int64_t row_group_size, bool enable_dictionary = false, bool enable_page_index = false,
+        bool enable_statistics = true,
+        std::optional<::parquet::Encoding::type> encoding = std::nullopt,
+        ::parquet::ParquetDataPageVersion page_version = ::parquet::ParquetDataPageVersion::V2) {
     auto file_result = arrow::io::FileOutputStream::Open(file_path);
     ASSERT_TRUE(file_result.ok()) << file_result.status();
     std::shared_ptr<arrow::io::FileOutputStream> out = *file_result;
 
     ::parquet::WriterProperties::Builder builder;
     builder.version(::parquet::ParquetVersion::PARQUET_2_6);
-    builder.data_page_version(::parquet::ParquetDataPageVersion::V2);
+    builder.data_page_version(page_version);
     builder.compression(::parquet::Compression::UNCOMPRESSED);
     if (enable_dictionary) {
         builder.enable_dictionary();
@@ -1377,6 +1430,46 @@ void write_table(const std::string& file_path, const std::shared_ptr<arrow::Tabl
     }
     PARQUET_THROW_NOT_OK(::parquet::arrow::WriteTable(*table, arrow::default_memory_pool(), out,
                                                       row_group_size, builder.build()));
+}
+
+void write_footer_nan_counts(const std::string& file_path,
+                             const std::vector<std::optional<int64_t>>& counts) {
+    std::ifstream input(file_path, std::ios::binary | std::ios::ate);
+    DORIS_CHECK(input.good());
+    const auto size = static_cast<std::streamoff>(input.tellg());
+    std::vector<uint8_t> bytes(cast_set<size_t>(size));
+    input.seekg(0);
+    input.read(reinterpret_cast<char*>(bytes.data()), size);
+    DORIS_CHECK(input.good());
+    uint32_t footer_size = decode_fixed32_le(bytes.data() + bytes.size() - 8);
+    const size_t footer_offset = bytes.size() - 8 - footer_size;
+    tparquet::FileMetaData metadata;
+    DORIS_CHECK(deserialize_thrift_msg(bytes.data() + footer_offset, &footer_size, true, &metadata)
+                        .ok());
+    size_t index = 0;
+    for (auto& row_group : metadata.row_groups) {
+        for (auto& chunk : row_group.columns) {
+            DORIS_CHECK(index < counts.size());
+            if (counts[index].has_value()) {
+                chunk.meta_data.statistics.__set_nan_count(*counts[index]);
+            }
+            ++index;
+        }
+    }
+    DORIS_CHECK(index == counts.size());
+    std::vector<uint8_t> footer;
+    ThriftSerializer serializer(/*compact=*/true, 1024);
+    DORIS_CHECK(serializer.serialize(&metadata, &footer).ok());
+    bytes.resize(footer_offset);
+    bytes.insert(bytes.end(), footer.begin(), footer.end());
+    std::array<uint8_t, 4> encoded_size {};
+    encode_fixed32_le(encoded_size.data(), cast_set<uint32_t>(footer.size()));
+    bytes.insert(bytes.end(), encoded_size.begin(), encoded_size.end());
+    bytes.insert(bytes.end(), {'P', 'A', 'R', '1'});
+    std::ofstream output(file_path, std::ios::binary | std::ios::trunc);
+    output.write(reinterpret_cast<const char*>(bytes.data()), bytes.size());
+    output.close();
+    DORIS_CHECK(output.good());
 }
 
 template <typename T>
@@ -1966,9 +2059,318 @@ protected:
         return request;
     }
 
+    struct FloatingScanResult {
+        ColumnInt32::Container ids;
+        int64_t raw_rows = 0;
+        int64_t filtered_groups = 0;
+        int64_t filtered_page_rows = 0;
+        int64_t read_bytes = 0;
+    };
+
+    void scan_floating(int column_id, const VExprContextSPtr& conjunct, FloatingScanResult* result,
+                       int second_column_id = -1) {
+        const auto bytes_before = DorisMetrics::instance()->local_bytes_read_total->value();
+        RuntimeProfile profile("profile");
+        auto reader = create_reader(0, -1, &profile);
+        RuntimeState state {TQueryOptions(), TQueryGlobals()};
+        ASSERT_TRUE(reader->init(&state).ok());
+        std::vector<format::ColumnDefinition> schema;
+        ASSERT_TRUE(reader->get_schema(&schema).ok());
+        auto request = std::make_shared<format::FileScanRequest>();
+        use_schema_order_positions(request.get(), schema);
+        format::FileScanRequestBuilder builder(request.get());
+        ASSERT_TRUE(builder.add_predicate_column(format::LocalColumnId(column_id)).ok());
+        ASSERT_TRUE(builder.add_non_predicate_column(format::LocalColumnId(2)).ok());
+        request->predicate_only_columns.push_back(format::LocalColumnId(column_id));
+        if (second_column_id >= 0) {
+            ASSERT_TRUE(builder.add_predicate_column(format::LocalColumnId(second_column_id)).ok());
+            request->predicate_only_columns.push_back(format::LocalColumnId(second_column_id));
+        }
+        ASSERT_TRUE(conjunct->prepare(&state, RowDescriptor()).ok());
+        ASSERT_TRUE(conjunct->open(&state).ok());
+        Defer close([&] { conjunct->close(); });
+        request->conjuncts.push_back(conjunct);
+        ASSERT_TRUE(reader->open(request).ok());
+        bool eof = false;
+        while (!eof) {
+            Block block = build_file_block(schema);
+            size_t rows = 0;
+            ASSERT_TRUE(reader->get_block(&block, &rows, &eof).ok());
+            const auto& ids = int32_data_column(*block.get_by_position(2).column).get_data();
+            result->ids.insert(result->ids.end(), ids.begin(), ids.end());
+        }
+        result->raw_rows = counter_value(profile, "RawRowsRead");
+        result->filtered_groups = counter_value(profile, "RowGroupsFilteredByMinMax");
+        result->filtered_page_rows = counter_value(profile, "FilteredRowsByPage");
+        result->read_bytes =
+                DorisMetrics::instance()->local_bytes_read_total->value() - bytes_before;
+    }
+
     std::filesystem::path _test_dir;
     std::string _file_path;
 };
+
+TEST_F(ParquetScanTest, ZeroNanCountRestoresFloatingFooterPruning) {
+    std::vector<float> floats(64, 1.0F);
+    std::vector<double> doubles(64, 1.0);
+    std::fill(floats.begin() + 32, floats.end(), 2.0F);
+    std::fill(doubles.begin() + 32, doubles.end(), 2.0);
+    std::vector<int32_t> ids(64);
+    std::iota(ids.begin(), ids.end(), 0);
+    auto table = arrow::Table::Make(
+            arrow::schema({arrow::field("f", arrow::float32(), false),
+                           arrow::field("d", arrow::float64(), false),
+                           arrow::field("id", arrow::int32(), false)}),
+            {build_float_array(floats), build_double_array(doubles), build_int32_array(ids)});
+    ColumnInt32::Container expected;
+    for (int id = 32; id < 64; ++id) {
+        expected.push_back(id);
+    }
+    for (const auto version :
+         {::parquet::ParquetDataPageVersion::V1, ::parquet::ParquetDataPageVersion::V2}) {
+        for (const auto count : std::vector<std::optional<int64_t>> {std::nullopt, 0, 1, -1, 33}) {
+            SCOPED_TRACE(count.has_value() ? std::to_string(*count) : "missing");
+            write_table(_file_path, table, 32, false, false, true, std::nullopt, version);
+            write_footer_nan_counts(_file_path,
+                                    {count, count, std::nullopt, count, count, std::nullopt});
+            const auto check = [&]<PrimitiveType Type>(int column_id) {
+                const auto one = Field::create_field<Type>(1);
+                const auto two = Field::create_field<Type>(2);
+                std::vector<VExprContextSPtr> predicates {
+                        create_floating_function_conjunct(column_id, Type, "gt", TExprOpcode::GT,
+                                                          one),
+                        create_floating_function_conjunct(column_id, Type, "ge", TExprOpcode::GE,
+                                                          two),
+                        create_floating_function_conjunct(column_id, Type, "ne", TExprOpcode::NE,
+                                                          one),
+                        create_floating_in_conjunct(column_id, Type, {one}, true)};
+                for (const auto& predicate : predicates) {
+                    FloatingScanResult result;
+                    scan_floating(column_id, predicate, &result);
+                    EXPECT_EQ(result.ids, expected);
+                    EXPECT_EQ(result.raw_rows, count == 0 ? 32 : 64);
+                    EXPECT_EQ(result.filtered_groups, count == 0 ? 1 : 0);
+                }
+            };
+            check.template operator()<TYPE_FLOAT>(0);
+            check.template operator()<TYPE_DOUBLE>(1);
+        }
+    }
+}
+
+TEST_F(ParquetScanTest, ZeroNanCountRestoresFloatingPageIndexPruning) {
+    std::vector<float> floats(128, 1.0F);
+    std::vector<double> doubles(128, 1.0);
+    std::fill(floats.begin() + 64, floats.end(), 2.0F);
+    std::fill(doubles.begin() + 64, doubles.end(), 2.0);
+    std::vector<int32_t> ids(128);
+    std::iota(ids.begin(), ids.end(), 0);
+    auto table = arrow::Table::Make(
+            arrow::schema({arrow::field("f", arrow::float32(), false),
+                           arrow::field("d", arrow::float64(), false),
+                           arrow::field("id", arrow::int32(), false)}),
+            {build_float_array(floats), build_double_array(doubles), build_int32_array(ids)});
+    ColumnInt32::Container expected;
+    for (int id = 64; id < 128; ++id) {
+        expected.push_back(id);
+    }
+    for (const auto version :
+         {::parquet::ParquetDataPageVersion::V1, ::parquet::ParquetDataPageVersion::V2}) {
+        for (const auto count : std::vector<std::optional<int64_t>> {std::nullopt, 0, 1, -1, 129}) {
+            write_table(_file_path, table, 128, false, true, true, std::nullopt, version);
+            write_footer_nan_counts(_file_path, {count, count, std::nullopt});
+            const auto check = [&]<PrimitiveType Type>(int column_id) {
+                FloatingScanResult result;
+                scan_floating(
+                        column_id,
+                        create_floating_function_conjunct(column_id, Type, "gt", TExprOpcode::GT,
+                                                          Field::create_field<Type>(1)),
+                        &result);
+                EXPECT_EQ(result.ids, expected);
+                EXPECT_EQ(result.filtered_groups, 0);
+                EXPECT_EQ(result.raw_rows, count == 0 ? 64 : 128);
+                EXPECT_EQ(result.filtered_page_rows, count == 0 ? 64 : 0);
+            };
+            check.template operator()<TYPE_FLOAT>(0);
+            check.template operator()<TYPE_DOUBLE>(1);
+        }
+    }
+}
+
+TEST_F(ParquetScanTest, ZeroNanCountRespectsOrBranchesInPageIndex) {
+    std::vector<float> floats(128, 1.0F);
+    std::vector<double> doubles(128, 1.0);
+    std::fill(floats.begin() + 64, floats.end(), 2.0F);
+    std::fill(doubles.begin() + 64, doubles.end(), 2.0);
+    std::vector<int32_t> ids(128);
+    std::iota(ids.begin(), ids.end(), 0);
+    auto table = arrow::Table::Make(
+            arrow::schema({arrow::field("f", arrow::float32(), false),
+                           arrow::field("d", arrow::float64(), false),
+                           arrow::field("id", arrow::int32(), false)}),
+            {build_float_array(floats), build_double_array(doubles), build_int32_array(ids)});
+    for (const auto double_count : std::vector<std::optional<int64_t>> {0, std::nullopt}) {
+        write_table(_file_path, table, 128, false, true);
+        write_footer_nan_counts(_file_path, {0, double_count, std::nullopt});
+        auto f = create_floating_function_conjunct(0, TYPE_FLOAT, "gt", TExprOpcode::GT,
+                                                   Field::create_field<TYPE_FLOAT>(1));
+        auto d = create_floating_function_conjunct(1, TYPE_DOUBLE, "gt", TExprOpcode::GT,
+                                                   Field::create_field<TYPE_DOUBLE>(1));
+        auto disjunction = create_compound_conjunct(TExprOpcode::COMPOUND_OR, f->root(), d->root());
+        FloatingScanResult result;
+        scan_floating(0, disjunction, &result, 1);
+        ColumnInt32::Container expected;
+        for (int row = 64; row < 128; ++row) {
+            expected.push_back(row);
+        }
+        EXPECT_EQ(result.ids, expected);
+        EXPECT_EQ(result.filtered_groups, 0);
+        EXPECT_EQ(result.raw_rows, double_count == 0 ? 64 : 128);
+        EXPECT_EQ(result.filtered_page_rows, double_count == 0 ? 64 : 0);
+    }
+}
+
+TEST_F(ParquetScanTest, NanCountProofIsScopedToItsColumnAndRowGroup) {
+    // A zero for the finite FLOAT column or the first row group must not hide a DOUBLE NaN.
+    auto table = arrow::Table::Make(
+            arrow::schema({arrow::field("f", arrow::float32(), false),
+                           arrow::field("d", arrow::float64(), false),
+                           arrow::field("id", arrow::int32(), false)}),
+            {build_float_array({1, 1, 1, 1}),
+             build_double_array({1, 1, 1, std::numeric_limits<double>::quiet_NaN()}),
+             build_int32_array({0, 1, 2, 3})});
+    for (const auto count : std::vector<std::optional<int64_t>> {std::nullopt, 1, -1, 3}) {
+        write_table(_file_path, table, 2);
+        write_footer_nan_counts(_file_path, {0, 0, std::nullopt, 0, count, std::nullopt});
+        FloatingScanResult result;
+        scan_floating(1,
+                      create_floating_function_conjunct(1, TYPE_DOUBLE, "gt", TExprOpcode::GT,
+                                                        Field::create_field<TYPE_DOUBLE>(1)),
+                      &result);
+        EXPECT_EQ(result.ids, ColumnInt32::Container({3}));
+        EXPECT_EQ(result.raw_rows, 2);
+        EXPECT_EQ(result.filtered_groups, 1);
+    }
+}
+
+TEST_F(ParquetScanTest, NanCountPreservesNullAndNanRowsAcrossEncodings) {
+    arrow::FloatBuilder floats;
+    arrow::DoubleBuilder doubles;
+    for (int row = 0; row < 12; ++row) {
+        if (row < 4 || row == 8) {
+            ASSERT_TRUE(floats.AppendNull().ok());
+            ASSERT_TRUE(doubles.AppendNull().ok());
+        } else {
+            const double value = row < 8 || row == 10 ? std::numeric_limits<double>::quiet_NaN()
+                                                      : (row == 9 ? 1.0 : 2.0);
+            ASSERT_TRUE(floats.Append(static_cast<float>(value)).ok());
+            ASSERT_TRUE(doubles.Append(value).ok());
+        }
+    }
+    std::vector<int32_t> ids(12);
+    std::iota(ids.begin(), ids.end(), 0);
+    auto table = arrow::Table::Make(
+            arrow::schema({arrow::field("f", arrow::float32()), arrow::field("d", arrow::float64()),
+                           arrow::field("id", arrow::int32(), false)}),
+            {finish_array(&floats), finish_array(&doubles), build_int32_array(ids)});
+    const ColumnInt32::Container expected {4, 5, 6, 7, 10, 11};
+    for (const auto version :
+         {::parquet::ParquetDataPageVersion::V1, ::parquet::ParquetDataPageVersion::V2}) {
+        for (const bool dictionary : {false, true}) {
+            for (const bool page_index : {false, true}) {
+                for (int mode = 0; mode < 3; ++mode) {
+                    // Mode 0 is the statistics-disabled oracle; mode 1 supplies positive counts,
+                    // and mode 2 leaves them absent. Neither may lose NaNs hidden by finite bounds.
+                    write_table(_file_path, table, 4, dictionary, page_index, mode != 0,
+                                std::nullopt, version);
+                    if (mode == 1) {
+                        write_footer_nan_counts(_file_path, {0, 0, std::nullopt, 4, 4, std::nullopt,
+                                                             1, 1, std::nullopt});
+                    }
+                    const auto check = [&]<PrimitiveType Type>(int column_id) {
+                        FloatingScanResult result;
+                        scan_floating(column_id,
+                                      create_floating_function_conjunct(
+                                              column_id, Type, "gt", TExprOpcode::GT,
+                                              Field::create_field<Type>(1)),
+                                      &result);
+                        EXPECT_EQ(result.ids, expected);
+                    };
+                    check.template operator()<TYPE_FLOAT>(0);
+                    check.template operator()<TYPE_DOUBLE>(1);
+                }
+            }
+        }
+    }
+}
+
+TEST_F(ParquetScanTest, ZeroNanCountReaderMicrobench) {
+    if (std::getenv("DORIS_PARQUET_NAN_COUNT_BENCHMARK") == nullptr) {
+        GTEST_SKIP() << "Set DORIS_PARQUET_NAN_COUNT_BENCHMARK=1 to run the reader microbenchmark";
+    }
+    constexpr int GROUPS = 128;
+    constexpr int GROUP_ROWS = 4096;
+    constexpr int ITERATIONS = 8;
+    constexpr int SAMPLES = 7;
+    std::vector<float> floats(GROUPS * GROUP_ROWS, 1.0F);
+    std::vector<double> doubles(GROUPS * GROUP_ROWS, 1.0);
+    std::fill(floats.end() - GROUP_ROWS, floats.end(), 2.0F);
+    std::fill(doubles.end() - GROUP_ROWS, doubles.end(), 2.0);
+    std::vector<int32_t> ids(GROUPS * GROUP_ROWS);
+    std::iota(ids.begin(), ids.end(), 0);
+    auto table = arrow::Table::Make(
+            arrow::schema({arrow::field("f", arrow::float32(), false),
+                           arrow::field("d", arrow::float64(), false),
+                           arrow::field("id", arrow::int32(), false)}),
+            {build_float_array(floats), build_double_array(doubles), build_int32_array(ids)});
+    const auto missing_path = (_test_dir / "missing.parquet").string();
+    const auto zero_path = (_test_dir / "zero.parquet").string();
+    _file_path = missing_path;
+    write_table(_file_path, table, GROUP_ROWS);
+    std::filesystem::copy_file(missing_path, zero_path);
+    std::vector<std::optional<int64_t>> counts;
+    for (int group = 0; group < GROUPS; ++group) {
+        counts.insert(counts.end(), {0, 0, std::nullopt});
+    }
+    write_footer_nan_counts(zero_path, counts);
+    // Compare identical data pages with/without the optional proof. Alternate order after warmup.
+    for (int sample = -1; sample < SAMPLES; ++sample) {
+        for (int turn = 0; turn < 2; ++turn) {
+            const bool zero = (turn + sample + 1) % 2 == 0;
+            _file_path = zero ? zero_path : missing_path;
+            int64_t nanos = 0;
+            std::clock_t cpu_ticks = 0;
+            int64_t read_bytes = 0;
+            for (int iteration = 0; iteration < ITERATIONS; ++iteration) {
+                FloatingScanResult result;
+                auto predicate = create_floating_function_conjunct(
+                        1, TYPE_DOUBLE, "gt", TExprOpcode::GT, Field::create_field<TYPE_DOUBLE>(1));
+                const auto cpu_start = std::clock();
+                const auto start = std::chrono::steady_clock::now();
+                scan_floating(1, predicate, &result);
+                nanos += std::chrono::duration_cast<std::chrono::nanoseconds>(
+                                 std::chrono::steady_clock::now() - start)
+                                 .count();
+                cpu_ticks += std::clock() - cpu_start;
+                ASSERT_EQ(result.ids.size(), GROUP_ROWS);
+                for (int row = 0; row < GROUP_ROWS; ++row) {
+                    ASSERT_EQ(result.ids[row], (GROUPS - 1) * GROUP_ROWS + row);
+                }
+                ASSERT_EQ(result.raw_rows, zero ? GROUP_ROWS : GROUPS * GROUP_ROWS);
+                ASSERT_EQ(result.filtered_groups, zero ? GROUPS - 1 : 0);
+                read_bytes += result.read_bytes;
+            }
+            if (sample >= 0) {
+                std::cout << "PARQUET_NAN_COUNT_WORK sample=" << sample << " zero=" << zero
+                          << " wall_ns=" << nanos / ITERATIONS << " cpu_ns="
+                          << static_cast<double>(cpu_ticks) / CLOCKS_PER_SEC * 1e9 / ITERATIONS
+                          << " read_bytes=" << read_bytes / ITERATIONS
+                          << " raw_rows=" << (zero ? GROUP_ROWS : GROUPS * GROUP_ROWS)
+                          << " filtered_groups=" << (zero ? GROUPS - 1 : 0) << '\n';
+            }
+        }
+    }
+}
 
 TEST_F(ParquetScanTest, FloatingPredicatesPreserveDorisSemanticsWithRealBloomFilters) {
     write_floating_parquet_file_with_bloom_filters(_file_path);
@@ -2215,6 +2617,9 @@ TEST_F(ParquetScanTest, AggregateCountAndMinMaxUseAllSelectedRowGroups) {
     format::FileAggregateResult count_result;
     format::FileAggregateRequest count_request;
     count_request.agg_type = TPushAggOp::COUNT;
+    format::FileAggregateResult metadata_count_result;
+    ASSERT_TRUE(reader->get_metadata_aggregate_result(count_request, &metadata_count_result).ok());
+    EXPECT_EQ(metadata_count_result.count, 6);
     ASSERT_TRUE(reader->get_aggregate_result(count_request, &count_result).ok());
     EXPECT_EQ(count_result.count, 6);
     EXPECT_TRUE(count_result.columns.empty());
@@ -2223,6 +2628,11 @@ TEST_F(ParquetScanTest, AggregateCountAndMinMaxUseAllSelectedRowGroups) {
     format::FileAggregateRequest required_count_request;
     required_count_request.agg_type = TPushAggOp::COUNT;
     required_count_request.columns.push_back({.projection = field_projection(0)});
+    format::FileAggregateResult metadata_required_count_result;
+    ASSERT_TRUE(reader->get_metadata_aggregate_result(required_count_request,
+                                                      &metadata_required_count_result)
+                        .ok());
+    EXPECT_EQ(metadata_required_count_result.count, 6);
     ASSERT_TRUE(reader->get_aggregate_result(required_count_request, &required_count_result).ok());
     // The required scalar projection is retained for logical-type validation, but after that
     // validation COUNT(id) can reuse the same selected-row-group footer count as COUNT(*).
@@ -2233,6 +2643,10 @@ TEST_F(ParquetScanTest, AggregateCountAndMinMaxUseAllSelectedRowGroups) {
     minmax_request.agg_type = TPushAggOp::MINMAX;
     minmax_request.columns.push_back({.projection = field_projection(0)});
     minmax_request.columns.push_back({.projection = field_projection(1)});
+    format::FileAggregateResult metadata_minmax_result;
+    ASSERT_TRUE(
+            reader->get_metadata_aggregate_result(minmax_request, &metadata_minmax_result).ok());
+    ASSERT_EQ(metadata_minmax_result.columns.size(), 2);
     ASSERT_TRUE(reader->get_aggregate_result(minmax_request, &minmax_result).ok());
     EXPECT_EQ(minmax_result.count, 6);
     ASSERT_EQ(minmax_result.columns.size(), 2);
@@ -2424,6 +2838,11 @@ TEST_F(ParquetScanTest, AggregateCountOnStructRecordsSelectedRowsRead) {
     format::FileAggregateRequest aggregate_request;
     aggregate_request.agg_type = TPushAggOp::COUNT;
     aggregate_request.columns.push_back({.projection = field_projection(0)});
+    format::FileAggregateResult metadata_result;
+    const auto metadata_status =
+            reader->get_metadata_aggregate_result(aggregate_request, &metadata_result);
+    EXPECT_TRUE(metadata_status.is<ErrorCode::NOT_IMPLEMENTED_ERROR>()) << metadata_status;
+    EXPECT_EQ(file_reader_stats.read_rows, 0);
     format::FileAggregateResult result;
     ASSERT_TRUE(reader->get_aggregate_result(aggregate_request, &result).ok());
     EXPECT_EQ(result.count, 4);
@@ -2525,8 +2944,8 @@ TEST_F(ParquetScanTest, GlobalRowIdUsesFileLocalPositionForScanRange) {
             const auto location = decode_rowid(rowid_column, row);
             EXPECT_EQ(location.version, context.version);
             EXPECT_EQ(location.backend_id, context.backend_id);
-            EXPECT_EQ(location.file_id, context.file_id);
-            row_ids.push_back(location.row_id);
+            EXPECT_EQ(location.file_local.file_id, context.file_id);
+            row_ids.push_back(location.file_local.row_id);
         }
     }
 
@@ -4848,8 +5267,8 @@ TEST_F(ParquetScanTest, TopNReadsBestRowGroupBeforePublishingBound) {
                         ascending ? (GROUPS - 1 - value / GROUP_ROWS) * GROUP_ROWS +
                                             value % GROUP_ROWS
                                   : value;
-                EXPECT_EQ(location.row_id, expected_position);
-                EXPECT_EQ(location.file_id, rowid_context.file_id);
+                EXPECT_EQ(location.file_local.row_id, expected_position);
+                EXPECT_EQ(location.file_local.file_id, rowid_context.file_id);
             }
             std::ranges::sort(
                     top, [ascending](int32_t a, int32_t b) { return ascending ? a < b : a > b; });

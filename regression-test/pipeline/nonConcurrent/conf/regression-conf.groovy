@@ -124,6 +124,7 @@ kafka_port=19193
 iceberg_rest_uri_port=18181
 iceberg_scan_planning_rest_uri_port=18182
 iceberg_minio_port=19001
+lance_rest_port=19102
 iceberg_rest_uri_port_s3=19181
 iceberg_rest_uri_port_oss=19182
 iceberg_rest_uri_port_cos=19183
@@ -158,3 +159,13 @@ externalEnvIp="127.0.0.1"
 
 // trino-connector catalog test config
 enableTrinoConnectorTest = false
+
+// Backup adapter failures, compaction assertions and suite timeouts must remain
+// visible. Do not exclude those suites to turn this lane green.
+if (System.getenv("DORIS_CI_PRISTINE_FRAMEWORK") == "true") {
+    // Preserve the Hong Kong regression fixtures and their public HTTPS endpoint.
+    s3BucketName = "doris-regression-hk"
+    s3Endpoint = "oss-cn-hongkong.aliyuncs.com"
+    s3Region = "oss-cn-hongkong"
+    s3Provider = "S3"
+}
