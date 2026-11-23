@@ -111,6 +111,9 @@ Status SniiIndexReader::_get_logical_reader(
         return Status::OK();
     }
 
+    // A reader the searcher cache keeps serves later queries, so it keeps their hot terms' lookups
+    // too; memory_usage() then covers that cache at its fullest.
+    opened_reader->enable_term_lookup_cache();
     const size_t reader_size = std::max<size_t>(opened_reader->memory_usage(), 1);
     auto* cache_value = new SniiLogicalReaderCacheValue(std::move(opened_reader), reader_size,
                                                         UnixMillis(), _index_file_reader);
@@ -188,6 +191,21 @@ Status SniiIndexReader::_admit(const IndexQueryContextPtr& /*context*/,
     admission->plan_before_open = false;
     admission->coalesce = true;
     const InvertedIndexQueryType query_type = request.query_type;
+    if (_index_meta.is_variant_values_index()) {
+        if (request.leaf != nullptr || (query_type != InvertedIndexQueryType::MATCH_ANY_QUERY &&
+                                        query_type != InvertedIndexQueryType::MATCH_ALL_QUERY)) {
+            return Status::Error<ErrorCode::INVERTED_INDEX_EVALUATE_SKIPPED, false>(
+                    "VARIANT values index supports only root MATCH_ANY and MATCH_ALL");
+        }
+        // A segment can have an SNII container without this logical values index.
+        admission->open_failed = [](Status status) {
+            if (status.is<ErrorCode::INVERTED_INDEX_SNII_NOT_FOUND>()) {
+                return Status::Error<ErrorCode::INVERTED_INDEX_FILE_NOT_FOUND, false>("{}",
+                                                                                      status.msg());
+            }
+            return status;
+        };
+    }
     if (is_gram_query(query_type)) {
         // Only an index under an analyzer policy can have been written as a gram index.
         if (!gram::may_be_gram_index(_index_meta.properties())) {
@@ -308,8 +326,8 @@ Status SniiIndexReader::_run_leaf(const IndexQueryContextPtr& context,
     auto source = _bind_source(context, field, index);
     const uint32_t doc_count = source->doc_count();
     auto result = std::make_shared<roaring::Roaring>();
-    RETURN_IF_ERROR_OR_CATCH_EXCEPTION(run_leaf(context, field, leaf, candidates, scoring,
-                                                std::move(source), doc_count, result));
+    RETURN_IF_ERROR_OR_CATCH_EXCEPTION(run_leaf(context, _statistics_field(field), leaf, candidates,
+                                                scoring, std::move(source), doc_count, result));
     result->runOptimize();
     *out = std::move(result);
     return Status::OK();

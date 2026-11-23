@@ -116,6 +116,12 @@ public class Config extends ConfigBase {
     @ConfField(description = "Whether to enable compression for FE audit log files")
     public static boolean audit_log_enable_compress = false;
 
+    @ConfField(mutable = true, callback = RegexConfHandler.class, description = "Case-insensitive regex searched in "
+            + "data source property names when masking output. Combined with built-in and provider secret rules. "
+            + "Use (?!) to disable only this additional rule. Applies on each FE without changing connection values.")
+    public static volatile String datasource_sensitive_property_pattern =
+            "password|passwd|secret|token|credential|access[._-]?key|api[._-]?key";
+
     @ConfField(description = "Active lineage plugins. Specify the name returned by LineagePlugin.name()")
     public static String[] activate_lineage_plugin = {};
 
@@ -2533,7 +2539,7 @@ public class Config extends ConfigBase {
      * This is to solve the case that user forgot the password.
      */
     @ConfField(mutable = false)
-    public static boolean skip_localhost_auth_check  = true;
+    public static boolean skip_localhost_auth_check = false;
 
     @ConfField(mutable = true)
     public static boolean enable_round_robin_create_tablet = true;
@@ -2583,6 +2589,10 @@ public class Config extends ConfigBase {
      */
     @ConfField
     public static long stats_cache_size = 50_0000;
+
+    @ConfField(mutable = false, description = "Maximum queued statistics cache loads. Must be positive. "
+            + "When full, new lookups use unknown statistics. Takes effect after restarting FE.")
+    public static int stats_fetch_queue_size = 100000;
 
     /**
      * This config used for ranger cache data mask/row policy
@@ -3384,8 +3394,9 @@ public class Config extends ConfigBase {
             + "whether to enable the active tablet priority scheduling strategy. " + "Default is true.")
     public static boolean enable_cloud_active_tablet_priority_scheduling = true;
 
-    @ConfField(masterOnly = true, description = "Whether to enable active tablet sliding window access statistics "
-            + "feature. Default is true.")
+    @ConfField(mutable = true, masterOnly = true,
+            description = "Whether to enable active tablet sliding window access statistics "
+                    + "feature. Default is true.")
     public static boolean enable_active_tablet_sliding_window_access_stats = true;
 
     @ConfField(mutable = true, masterOnly = true, description = "Time window size in seconds for active tablet "
@@ -3396,7 +3407,10 @@ public class Config extends ConfigBase {
             + "partition-level scheduling processes TopN active "
             + "partitions first, then other active partitions, then "
             + "inactive partitions, and internal databases last. "
-            + "Default is 10000. <=0 disables TopN segmentation.")
+            + "Default is 10000. <=0 disables TopN segmentation. "
+            + "A BE reports at most report_active_tablet_max_num tablets per dimension, so a BE holding "
+            + "a concentrated hot set cannot fill this budget on its own unless that be config is >= this "
+            + "value; watch the BE bvar report.active_tablet_truncated before raising this one.")
     public static int cloud_active_partition_scheduling_topn = 10000;
 
     @ConfField(mutable = true, masterOnly = true, description = "Refresh interval in seconds for the active-tablet "
@@ -3755,7 +3769,7 @@ public class Config extends ConfigBase {
     public static boolean enable_tso_forward_when_counter_full = true;
 
     @ConfField(mutable = true, masterOnly = true)
-    public static boolean enable_notify_be_after_load_txn_commit = false;
+    public static boolean enable_notify_be_after_load_txn_commit = true;
 
     // ATTN: DONOT add any config not related to cloud mode here
     // ATTN: DONOT add any config not related to cloud mode here

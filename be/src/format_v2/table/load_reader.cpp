@@ -38,6 +38,11 @@ LoadTableReader::~LoadTableReader() = default;
 
 Status LoadTableReader::init(TableReadOptions&& options) {
     _scan_params = options.scan_params;
+    const auto& table_format = _scan_params->table_format_params.table_format_type;
+    // Query-only connectors can advertise Parquet without supplying a load source contract.
+    if (table_format == "adbc" || table_format == "fluss") {
+        return Status::NotSupported("Connector {} does not support file loads", table_format);
+    }
     _runtime_state = options.runtime_state;
     _format = options.format;
     RETURN_IF_ERROR(_init_source_columns());
@@ -181,7 +186,8 @@ Status LoadTableReader::prepare_split(const SplitReadOptions& options) {
     return TableReader::prepare_split(source_options);
 }
 
-Status LoadTableReader::refresh_conjuncts(VExprContextSPtrs) {
+Status LoadTableReader::refresh_conjuncts(VExprContextSPtrs, std::optional<uint64_t>, bool,
+                                          std::shared_ptr<const format::PredicateSnapshot>) {
     return Status::OK();
 }
 

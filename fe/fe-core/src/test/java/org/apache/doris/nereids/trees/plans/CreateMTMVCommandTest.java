@@ -496,7 +496,7 @@ public class CreateMTMVCommandTest extends TestWithFeService {
         Assertions.assertTrue(mtmv.isIvm());
         Assertions.assertFalse(mtmv.isIvmAppendOnlyDupTable());
         Assertions.assertNotNull(mtmv.getColumn(Column.SEQUENCE_COL));
-        Assertions.assertNotNull(mtmv.getIvmInfo().getPlanSignature());
+        Assertions.assertNull(mtmv.getIvmInfo().getPlanSignature());
     }
 
     @Test
@@ -624,6 +624,25 @@ public class CreateMTMVCommandTest extends TestWithFeService {
         Assertions.assertEquals("mv_score", createMTMVInfo.getColumns().get(2).getName());
         Assertions.assertTrue(createMTMVInfo.getQuerySql().contains("AS `mv_id`"));
         Assertions.assertTrue(createMTMVInfo.getQuerySql().contains("AS `mv_score`"));
+    }
+
+    @Test
+    public void testCreateMTMVRewritesQuerySqlAfterSupplementaryCharacters() throws Exception {
+        createTable("create table test.mtmv_supplementary_char_base (id int, score int)\n"
+                + "duplicate key(id)\n"
+                + "distributed by hash(id) buckets 1\n"
+                + "properties('replication_num' = '1');");
+
+        // The parser counts a supplementary character such as an emoji as one character, while
+        // the Java string of the query counts it as two.
+        CreateMTMVInfo createMTMVInfo = getPartitionTableInfo("CREATE MATERIALIZED VIEW mtmv_supplementary_char\n"
+                + " BUILD DEFERRED REFRESH COMPLETE ON MANUAL\n"
+                + " PROPERTIES ('replication_num' = '1')\n"
+                + " AS\n"
+                + " SELECT '😀😀' AS e, id FROM mtmv_supplementary_char_base;");
+
+        Assertions.assertEquals("SELECT '😀😀' AS `e`, `internal`.`test`.`mtmv_supplementary_char_base`.`id` "
+                + "FROM `internal`.`test`.`mtmv_supplementary_char_base`", createMTMVInfo.getQuerySql());
     }
 
     @Test
